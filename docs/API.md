@@ -62,3 +62,742 @@
 |10 |Partido                    |Servidor                                |cerrar_conexión                                      |El servidor cierra la conexión con todos los usuarios participantes y espectadores al finalizar el partido|                                                                |
 |11 |Partido                    |Cliente                                 |Iniciar_conexión                                     |El usuario solicita por http (contemplado en rest como parte del protocolo ws) inciar la conexión de websocket al momento de iniciar y/o unirse a un partido|                                                                |
 |12 |Partido                    |Cliente                                 |cerrar_conexión                                      |El usuario solicita por http (contemplado en rest como parte del protocolo ws)  cerrar la conexión con el servidor cuando es usuario espectador y quiere dejar de ver el partido|                                                                |
+
+
+# Behavior API
+
+## 1. Overview
+
+Esta API permite definir comportamientos autónomos para los jugadores BOT del juego FUTBOT.
+
+Cada comportamiento se implementa en Python y cada jugador BOT que lo tenga asignado lo ejecuta una vez por cada instante discreto del juego (tic).
+
+Durante cada ejecución, el comportamiento puede hacer uso de primitivas para:
+
+- consultar el estado actual del partido;
+- consultar capacidades del jugador BOT que está ejecutando el comportamiento;
+- utilizar funciones auxiliares geométricas y físicas;
+- devolver exactamente una primitiva de acción para el próximo tic.
+
+Las únicas acciones válidas que puede devolver el comportamiento son:
+- `move(...)`
+- `kick(...)`
+- `wait()`
+
+Las primitivas de consulta de capacidades del jugador BOT utilizan automáticamente el estado y los PACSS del jugador que está ejecutando el comportamiento.
+
+---
+
+## 2. Behavior entry point
+
+Todo comportamiento debe definir obligatoriamente la función: 
+
+```python
+def play():
+    ...
+```
+
+### `play()`
+
+**Descripción:**
+Es el punto de entrada del comportamiento. El servidor ejecuta esta función una vez por tic para cada jugador BOT que tenga asignado el comportamiento.
+
+La función debe devolver exactamente una de las primitivas de acción:
+
+```python
+move(...)
+kick(...)
+wait()
+```
+
+Cualquier otro valor de retorno se considera inválido.
+
+### Valid example
+
+```python
+def play():
+    ball_position, _ = ball()
+
+    if can_kick():
+        shot_distance = distance(ball_position, OPPONENT_GOAL)
+
+        return kick(
+            direction_to(ball_position, OPPONENT_GOAL),
+            kick_force_for_distance(shot_distance)
+        )
+
+    return wait()
+```
+
+### Invalid example
+
+```python
+def play():
+    return self()
+```
+
+`self()` es una primitiva de consulta y no una acción válida.
+
+---
+
+## 3. Basic data types
+
+### `Position`
+
+```python
+Position = tuple[float, float]
+```
+
+Representa una posición dentro de la cancha.
+
+- Primer componente: coordenada en el eje x
+- Segunda componente: coordenada en el eje y
+
+---
+
+### `Direction`
+
+```python
+Direction = tuple[float, float]
+```
+
+Representa una dirección mediante un vector unitario. Sus componentes pertenecen al intervalo `[-1, 1]` y su magnitud es igual a  `1`. Puede obtenerse mediante la función `direction_to(...)`, aunque el usuario puede construir manualmente un valor de tipo `Direction` siempre que respete dichas restricciones.
+
+Si un valor de tipo `Direction` no cumple estas restricciones, la acción que lo utilice se considerará inválida y no se ejecuta.
+
+Ejemplos:
+
+```python
+(1.0, 0.0)     # derecha
+(-1.0, 0.0)    # izquierda
+(0.0, 1.0)     # arriba
+(0.0, -1.0)    # abajo
+```
+
+---
+
+### `Velocity`
+
+```python
+Velocity = tuple[float, float]
+```
+
+Representa una velocidad en el plano de juego. Sus componentes indican la velocidad sobre los ejes X e Y.
+
+Un valor de tipo  `Velocity` no tiene magnitud fija. Su magnitud representa la rapidez del objeto y sus componentes la dirección en la que se mueve.
+
+En la versión actual de la API, este tipo se utiliza para representar la velocidad de la pelota como parte de `BallState`.
+
+---
+
+### `PlayerState`
+
+```python
+PlayerState = tuple[int, Position]
+```
+
+Representa el identificador y la posición actual de un jugador.
+
+---
+
+### `BallState`
+
+```python
+BallState = tuple[Position, Velocity]
+```
+
+Representa el estado actual de la pelota.
+
+---
+
+### `Period`
+
+Representa el cuarto del partido que se está disputando actualmente.
+
+Valores posibles:
+
+```python
+Period.FIRST_QUARTER
+Period.SECOND_QUARTER
+Period.THIRD_QUARTER
+Period.FOURTH_QUARTER
+```
+
+Este tipo se utiliza únicamente como valor devuelto por `current_period()`
+
+## 4. Match constants
+
+### `FIELD_WIDTH`
+
+```python
+FIELD_WIDTH: float
+```
+
+**Descripción:**  
+Ancho de la cancha.
+
+---
+
+### `FIELD_HEIGHT`
+
+```python
+FIELD_HEIGHT: float
+```
+
+**Descripción:**  
+Alto de la cancha.
+
+---
+
+### `OWN_GOAL`
+
+```python
+OWN_GOAL: Position
+```
+
+**Descripción:**  
+Posición correspondiente al punto medio del arco propio.
+
+---
+
+### `OPPONENT_GOAL`
+
+```python
+OPPONENT_GOAL: Position
+```
+
+**Descripción:**  
+Posición correspondiente al punto medio del arco rival.
+
+---
+
+## 5. Match state primitives
+
+Estas primitivas permiten consultar el estado actual del partido. No modifican el estado.
+
+### `self()`
+
+```python
+self() -> PlayerState
+```
+
+**Descripción:**  
+Devuelve una tupla con el identificador y la posición actual del jugador BOT que está ejecutando el comportamiento.
+
+
+Ejemplo:
+
+```python
+my_id, my_position = self()
+```
+---
+
+### `teammates()`
+
+```python
+teammates() -> list[PlayerState]
+```
+
+**Descripción:**  
+Devuelve una lista de tuplas con el identificador y la posición actual de todos los jugadores BOT compañeros de equipo.
+
+Ejemplo:
+
+```python
+for player_id, player_position in teammates():
+    # usar player_id y player_position
+    ...
+```
+
+---
+
+### `opponents()`
+
+```python
+opponents() -> list[PlayerState]
+```
+
+**Descripción:**  
+Devuelve una lista con el identificador y la posición actual de todos los jugadores BOT rivales.
+
+Ejemplo:
+
+```python
+for player_id, player_position in opponents():
+    # usar player_id y player_position
+    ...
+```
+
+---
+
+### `ball()`
+
+```python
+ball() -> BallState
+```
+
+**Descripción:**  
+Devuelve la posición y la velocidad actuales de la pelota.
+
+Ejemplo:
+
+```python
+ball_position, ball_velocity = ball()
+```
+
+---
+
+### `score()`
+
+```python
+score() -> tuple[int, int]
+```
+
+**Descripción:**  
+Devuelve el resultado actual del partido en el formato:
+
+```python
+(my_team_score, opponent_score)
+```
+
+---
+
+### `match_time_remaining()`
+
+```python
+match_time_remaining() -> float
+```
+
+**Descripción:**  
+Devuelve, en segundos, el tiempo restante del partido.
+
+---
+
+### `current_period()`
+
+```python
+current_period() -> Period
+```
+
+**Descripción:**  
+Devuelve el cuarto del partido que se está disputando actualmente.
+
+---
+
+### `period_time_remaining()`
+
+```python
+period_time_remaining() -> float
+```
+
+**Descripción:**  
+Devuelve, en segundos, el tiempo restante del período actual.
+
+---
+
+### `starting_position()`
+
+```python
+starting_position() -> Position
+```
+
+**Descripción:**  
+Devuelve la posición inicial asignada al jugador BOT en la alineación.
+
+---
+
+## 6. Player capability primitives
+
+Estas primitivas permiten consultar capacidades concretas del jugador BOT que está ejecutando el comportamiento. No modifican el estado.
+
+### `can_kick()`
+
+```python
+can_kick() -> bool
+```
+
+**Descripción:**  
+Indica si el jugador BOT puede intentar patear la pelota en el tic actual.
+
+Para que devuelva `True`, la pelota debe encontrarse dentro del `control_range()` y `tics_until_kick()` debe devolver `0`.
+
+Que `can_kick()` devuelva `True` no garantiza el resultado de la acción. El servidor determina el resultado definitivo teniendo en cuenta el estado actual y las acciones  de los demás jugadores BOT.
+
+---
+
+### `tics_until_kick()`
+
+```python
+tics_until_kick() -> int
+```
+
+**Descripción:**  
+Devuelve la cantidad de tics que faltan para que el jugador BOT pueda volver a patear. 
+
+Este valor está determinado por la estadística `AGILITY`. Mientras mayor sea esta estadística en el jugador BOT, menos tics deberá esperar para volver a patear.
+
+Devuelve `0` si ya está habilitado para hacerlo.
+
+---
+
+### `control_range()`
+
+```python
+control_range() -> float
+```
+
+**Descripción:**  
+Devuelve la distancia máxima a la que puede encontrarse la pelota respecto del jugador BOT para que este pueda interactuar con ella.
+
+Este valor depende de la estadística `CONTROL`.
+
+---
+
+### `can_move_distance(distance)`
+
+```python
+can_move_distance(distance: float) -> bool
+```
+
+**Descripción:**
+Indica si el jugador BOT puede recorrer completamente `distance` durante el próximo tic, teniendo en cuenta su estadística `SPEED` y las reglas de movimiento del servidor.
+
+**Parameters:**
+- `distance`: distancia que se desea recorrer.
+
+**Returns:**
+- `bool`: `True` si el jugador BOT puede recorrer la distancia durante el proximo tic. `False` si no puede recorrerla.
+
+---
+
+### `speed_for_distance(distance)`
+
+```python
+speed_for_distance(distance: float) -> float
+```
+
+**Descripción:**  
+Devuelve el factor de velocidad necesario para que el jugador BOT recorra `distance` durante el próximo tic. El cálculo tiene en cuenta la estadística `SPEED` del jugador BOT y las reglas de movimiento del servidor.
+
+El valor retornado pertenece al intervalo `[0.0, 1.0]`, donde:
+- `0.0` representa no utilizar velocidad de movimiento
+- `1.0` representa utilizar la máxima velocidad disponible para el jugador BOT según su estadística `SPEED`.
+
+Si la distancia no puede recorrerse completamente durante el próximo tic, devuelve `1.0`.
+
+**Parameters:**
+- `distance`: distancia que se desea recorrer.
+
+**Returns:**
+- `float`: factor de velocidad necesario para recorrer la distancia indicada durante el próximo tic. Valor perteneciente al intervalo `[0.0, 1.0]`.
+
+---
+
+### `can_kick_distance(distance)`
+
+```python
+can_kick_distance(distance: float) -> bool
+```
+
+**Descripción:**
+Indica si un único pateo del jugador BOT puede hacer que la pelota recorra `distance`, teniendo en cuenta su estadística `POWER`, el estado actual de la pelota y las reglas físicas definidas en el servidor.
+
+**Parameters:**
+`distance`: distancia que se desea que recorra la pelota.
+
+**Returns:**
+`bool`: `True` si la pelota puede alcanzar la distancia indicada con un único pateo. `False` si no puede alcanzarla.
+
+---
+
+### `kick_force_for_distance(distance)`
+
+```python
+kick_force_for_distance(distance: float) -> float
+```
+
+**Descripción:**  
+Devuelve el factor de fuerza necesario para que un jugador BOT patee la pelota y esta recorra aproximadamente `distance`.
+
+El cálculo tiene en cuenta la estadística `POWER` del jugador BOT, la posición y velocidad actuales de la pelota y las reglas físicas definidas por el servidor. Por lo tanto, el factor necesario para alcanzar una misma distancia puede variar según la velocidad y dirección que tenga la pelota al momento de patear.
+
+El valor retornado pertenece al intervalo `[0.0, 1.0]`, donde:
+- `0.0` representa no aplicar ninguna fuerza sobre la pelota
+- `1.0` representa utilizar la máxima fuerza de pateo del jugador BOT según su estadística `POWER`.
+
+Si la distancia requerida no puede alcanzarse utilizando la máxima fuerza disponible, devuelve `1.0`.
+
+Una vez realizada la acción de patear, la pelota continúa desplazándose de acuerdo con su velocidad resultante y las reglas físicas del servidor.
+
+**Parameters:**
+- `distance`: distancia que se desea que recorra la pelota.
+
+**Returns:**
+- `float`: factor de fuerza necesario para que la pelota alcance la distancia indicada. Valor perteneciente al intervalo `[0.0, 1.0]`.
+
+---
+
+## 7. Actions primitives
+
+Estas son las únicas primitivas que puede devolver `play()`. 
+
+Cada ejecución de `play()` debe devolver exactamente una de ellas.
+
+Pueden modificar el estado.
+
+
+### `move(direction, speed_factor)`
+
+```python
+move(
+    direction: Direction,
+    speed_factor: float
+)
+```
+
+**Descripción:**  
+Solicita que el jugador BOT se mueva en `direction` durante el próximo tic utilizando una fracción de su capacidad máxima de movimiento.
+
+El parámetro `speed_factor` debe pertenecer al intervalo `[0.0, 1.0]`. El valor `1.0` indica que el jugador BOT debe utilizar su máxima velocidad disponible, determinada por su estadística `SPEED`.
+
+**Parameters:**
+- `direction`: dirección en la que debe desplazarse el jugador. Valor de tipo `Direction`.
+- `speed_factor`: fracción de la velocidad máxima que se desea utilizar, entre `0.0` y `1.0`.
+
+**State effect:**  
+Puede modificar la posición del jugador en el siguiente estado de la partida.
+
+---
+
+### `kick(direction, force_factor)`
+
+```python
+kick(
+    direction: Direction,
+    force_factor: float
+)
+```
+
+**Descripción:**  
+Solicita que el jugador BOT intente patear la pelota en `direction` utilizando una fracción de su fuerza.
+
+El parámetro `force_factor` debe pertenecer al intervalo `[0.0, 1.0]`. El valor `1.0` representa utilizar la máxima fuerza disponible, determinada por la estadística `POWER`.
+
+**Parameters:**
+- `direction`: dirección en la que se desea impulsar la pelota. Valor de tipo `Direction`.
+- `force_factor`: fracción de la fuerza máxima del jugador BOT que se desea utilizar, entre `0.0` y `1.0`.
+
+**State effect:**  
+Si la acción es válida, puede modificar la velocidad de la pelota en el siguiente estado de la partida.
+
+Si la pelota ya se encuentra en movimiento, el servidor tendrá en cuenta la velocidad actual para calcular la velocidad resultante luego de que el jugador BOT patee.
+
+El servidor determina el resultado definitivo de la acción teniendo en cuenta el estado actual del partido y las acciones de los demás jugadores BOT.
+
+---
+
+### `wait()`
+
+```python
+wait()
+```
+
+**Descripción:**  
+Indica que el jugador BOT no realizará ninguna acción voluntaria durante el próximo tic.
+
+**State effect:**  
+No produce modificaciones voluntarias sobre el estado.
+
+---
+
+## 8. Geometry and physics helpers
+
+Estas funciones facilitan cálculos frecuentes para definir comportamientos. No modifican el estado de la partida.
+
+### `distance(from_position, to_position)`
+
+```python
+distance(
+    from_position: Position,
+    to_position: Position
+) -> float
+```
+
+**Descripción:**  
+Devuelve la distancia entre dos posiciones.
+
+**Parameters:**
+- `from_position`: posición de origen.
+- `to_position`: posición de destino.
+
+**Returns:**
+- `float`: distancia entre ambas posiciones.
+
+---
+
+### `direction_to(from_position, to_position)`
+
+```python
+direction_to(
+    from_position: Position,
+    to_position: Position
+) -> Direction
+```
+
+**Descripción:**  
+Devuelve una dirección unitaria desde `from_position` hacia `to_position`.
+
+**Parameters:**
+- `from_position`: posición de origen.
+- `to_position`: posición de destino.
+
+**Returns:**
+- `Direction`: dirección desde el origen hacia el destino.
+
+---
+
+### `next_ball_position()`
+
+```python
+next_ball_position() -> Position
+```
+
+**Descripción:**  
+Devuelve la posición estimada de la pelota en el próximo tic a partir de su posición, velocidad actuales y reglas físicas definidas en el servidor.
+
+La estimación contempla posibles rebotes contra los límites de la cancha, pero no considera posibles interacciones de otros jugadores BOT durante el tic actual.
+
+**Returns:**
+- `Position`: posición estimada de la pelota en el próximo tic.
+
+---
+
+## 9. Complete behavior example
+
+```python
+def play():
+    _, my_position = self()
+    ball_position, _ = ball()
+
+    ball_distance = distance(my_position, ball_position)
+
+    # Pelota dentro del rango de control
+    if ball_distance <= control_range():
+
+        if can_kick():
+            goal_distance = distance(ball_position, OPPONENT_GOAL)
+
+            # Patea si el arco está al alcance
+            if can_kick_distance(goal_distance):
+                return kick(
+                    direction_to(ball_position, OPPONENT_GOAL),
+                    1.0
+                )
+
+            # Si no puede patear al arco, busca al compañero más cercano al que
+            # pueda hacer llegar la pelota
+            closest_teammate = None
+            closest_distance = None
+
+            for _, teammate_position in teammates():
+                teammate_distance = distance(
+                    ball_position,
+                    teammate_position
+                )
+
+                if can_kick_distance(teammate_distance):
+                    if (
+                        closest_distance is None
+                        or teammate_distance < closest_distance
+                    ):
+                        closest_teammate = teammate_position
+                        closest_distance = teammate_distance
+
+            if closest_teammate is not None:
+                return kick(
+                    direction_to(ball_position, closest_teammate),
+                    kick_force_for_distance(closest_distance)
+                )
+
+            # Si no llega a pasar la pelota, espera
+            return wait()
+
+        # La pelota está dentro del rango de control, pero el jugador BOT
+        # todavía está en cooldown de pateo. Acompaña la trayectoria de la pelota.
+        target = next_ball_position()
+        move_distance = distance(my_position, target)
+
+        return move(
+            direction_to(my_position, target),
+            speed_for_distance(move_distance)
+        )
+
+    # Intenta quedar dentro del rango de control de la pelota en el próximo tic
+    target = next_ball_position()
+    target_distance = distance(my_position, target)
+
+    required_distance = max(
+        0.0,
+        target_distance - control_range()
+    )
+
+    if required_distance == 0.0:
+        return wait()
+
+    if can_move_distance(required_distance):
+        return move(
+            direction_to(my_position, target),
+            speed_for_distance(required_distance)
+        )
+
+    # Si no puede entrar en rango de control en el siguiente tic
+    # Buscar rival cercano alcanzable en el próximo tic
+    closest_opponent = None
+    closest_distance = None
+
+    for _, opponent_position in opponents():
+        opponent_distance = distance(
+            my_position,
+            opponent_position
+        )
+
+        if can_move_distance(opponent_distance):
+            if (
+                closest_distance is None
+                or opponent_distance < closest_distance
+            ):
+                closest_opponent = opponent_position
+                closest_distance = opponent_distance
+
+    if closest_opponent is not None:
+        return move(
+            direction_to(my_position, closest_opponent),
+            speed_for_distance(closest_distance)
+        )
+
+    # Si no hay rival cercano alcanzable en el proximo tic
+    # Volver a la posición inicial
+    initial_position = starting_position()
+    initial_distance = distance(my_position, initial_position)
+
+    if initial_distance > 0:
+        return move(
+            direction_to(my_position, initial_position),
+            speed_for_distance(initial_distance)
+        )
+
+    return wait()
+```
+
+---
+
+## 10. Execution rules
+
+- `play()` se ejecuta una vez por tic para cada jugador BOT que tenga asignado el comportamiento.
+- En cada ejecución, `play()` debe devolver exactamente una de las primitivas de acción válidas: `move(...)`, `kick(...)` o `wait()`.
+- Cada jugador BOT evalúa su comportamiento utilizando el estado actual de la partida correspondiente al mismo tic.
+- Las primitivas de consulta y las funciones auxiliares no modifican el estado de la partida. Las primitivas de acción representan una solicitud de acción para el tic actual. El servidor es el responsable de resolverlas y calcular el siguiente estado de la partida.
+- Las acciones no persisten entre tics. En cada nuevo tic, `play()` se ejecuta nuevamente y debe devolver una nueva acción.
+- Un mismo comportamiento puede ser asignado a distintos jugadores BOT. Las primitivas relativas al jugador BOT actual utilizan automáticamente el estado y las capacidades del jugador que está ejecutando el comportamiento.
+- Cada ejecución de `play()` debe finalizar dentro del límite de tiempo establecido por el servidor. Si supera dicho límite, no finaliza correctamente o devuelve un valor distinto de una acción válida, la ejecución se considera inválida para ese tic.
+- El usuario debe evitar operaciones cuyo tiempo de ejecución no esté acotado, como bucles infinitos o cálculos excesivamente costosos.
