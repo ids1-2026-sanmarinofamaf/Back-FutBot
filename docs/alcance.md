@@ -34,3 +34,50 @@ Todos los partidos de liga como amistosos que sean públicos generarán estadís
 - El usuario podrá crear y almacenar una plantilla default de juego. La misma estará compuesta por una formación, tres jugadores titulares, tres jugadores suplentes y un comportamiento inicialmente asignado a cada jugador titular.
 - La plantilla podrá ser creada y editada, y se le solicitará al usuario que elija entre esa plantilla o poder editarla al momento de participar en ligas o partidos amistosos.  Al momento de entrar a una liga, el usuario elige si utilizar esa plantilla predeterminada o editarla para “generar” una nueva, la cual mantendrá durante toda la liga. Al unirse a un partido amistoso, podrá o utilizar la plantilla predeterminada o editarla para “generar” una nueva plantilla que se mantendrá durante ese partido.
 
+### Partido:
+
+- Los partidos siempre se juegan entre dos usuarios en tiempo real, y deben poder observarse en la aplicación mientras suceden. 
+- Los jugadores dentro de un partido ejecutan su comportamiento asignado en determinados momentos del partido.
+- Los comportamientos se almacenan y computan completamente en el servidor cuando se efectúan en un partido. El cliente solo indica cual utilizar.
+- La cancha es representada por una matriz rectangular, inmutable y definida por el sistema.
+- Durante los partidos, el usuario puede cambiar los comportamientos que tienen asignados sus jugadores tantas veces como quiera. El cambio de comportamiento ocurre inmediatamente.
+- Cada partido tiene una duración previamente establecida por el usuario anfitrión, ya sea al crear una liga o al crear un partido amistoso.
+- El partido está dividido en tiempos (dos pausas de hidratación y un entretiempo), en los cuales el usuario puede realizar solo una sustitución por cada uno de estos. 
+- Un usuario  puede salir y volver a entrar a visualizar el partido que aún se esté jugando.
+- Un usuario puede participar en múltiples partidos al mismo tiempo, y cada jugador seguirá ejecutando el comportamiento que le haya sido asignado incluso si el usuario deja de visualizar el partido.
+- Un usuario puede observar partidos en curso entre otros usuarios. Esto se permite sólo si tales partidos pertenecen a ligas públicas o partidos amistosos , o si estos partidos forman parte de las ligas privadas en las que el usuario participa.
+
+### Ligas y partidos amistosos:
+
+- Un usuario puede crear o unirse a dos modos de juego: Ligas o Partidos amistosos.
+- Las ligas consisten en competencias de múltiples usuarios (mínimo tres), donde cada usuario juega un partido con cada usuario diferente de él (con un fixture generado por el sistema) y disputa una tabla de posiciones. 
+- Los partidos amistosos consisten en un partido uno contra uno.
+- Los partidos amistosos son exclusivamente públicos, mientras que las ligas pueden ser públicas o privadas (en donde se requerirá una contraseña)
+- Ganar un partido le otorga al usuario 3 puntos, empatarlo 1 punto y perderlo 0 puntos. Estos puntos cuentan tanto para el ranking de la liga a  la que pertenezca el partido, como para el ranking global (mientras la liga sea publica).
+- El usuario debe presentar un equipo predeterminado para unirse a ligas o partidos amistosos. Esto implica elegir tres jugadores titulares (cada uno con su propio comportamiento) y tres suplentes. Para ello se le permitirá a cada usuario formar una plantilla predeterminada,  las cuales definen los seis jugadores, los comportamientos iniciales de los jugadores titulares y el posicionamiento de los mismos (elegido a partir de opciones dadas por el sistema)
+
+
+## Restricciones:
+
+### Técnicas:
+
+- No está permitido utilizar polling.
+- El backend deberá realizarse utilizando FastAPI y SQLAlchemy.
+- El frontend deberá realizarse utilizando React.
+- La arquitectura del sistema debe ser cliente-servidor.
+- El código de los comportamientos de los jugadores deberá ejecutarse en el -servidor y no en el cliente.
+- Los rankings deberán mantenerse actualizados por el sistema, y no calcularse completamente cada vez que el usuario quiera verlo.
+- Una vez que el usuario está participando dentro de un partido, no puede crear, editar o eliminar comportamientos y jugadores. Tampoco puede renombrar el club o editar el avatar del mismo.
+
+### Características:
+
+- Edición de características extras de equipo más allá de quitar o agregar jugadores y comportamientos (limitar cantidad de jugadores en partido, etc.).
+- El partido entre dos jugadores no cuenta con árbitros, faltas, offside, laterales, penales y la pelota no abandona el campo de juego.
+- Exportar/importar datos sobre el propio club u otros.
+- No se proveerá sistema de notificaciones.
+- El código de los comportamientos de los jugadores deberá estar regulado y construirse a partir de primitivas por motivos de seguridad y comunicación con el servidor.
+- Modo invitado / Guest Mode (permite jugar sin crear/iniciar sesión con una cuenta) 
+- No hay partidos amistosos con contraseña.
+- No se pueden visualizar partidos concluidos.
+- Las estadísticas obtenidas de ligas privadas no se utilizan para actualizar los valores del ranking global de clubes.
+- Un usuario espectador (participante del partido o no) no puede ser expulsado por otro (sea anfitrión o no).
