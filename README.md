@@ -65,3 +65,26 @@ pip freeze > requirements.txt
 Los tests del backend se encuentran en:
 
 tests/
+
+Para que `pytest` detecte los test automáticamente:
+
+- Los archivos de test deben llamarse `test_*.py`.
+- Las funciones del test deben comenzar con `test_`.
+
+### Ejecutar todos los tests:
+
+```bash
+pytest
+```
+
+### Ejecutar un archivo de test especifico:
+
+```bash
+pytest tests/ruta/al/test_archivo.py
+```
+
+### Ejecutar un test específico:
+
+```bash
+pytest tests/ruta/al/test_archivo.py::test_nombre_del_test
+```
