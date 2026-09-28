@@ -20,6 +20,8 @@ from app.game.primitives import (
     can_kick,
     tics_until_kick,
     control_range,
+    can_move_distance,
+    speed_for_distance,
     distance, 
     direction_to
 )
@@ -213,6 +215,87 @@ def test_can_kick_returns_true_when_ball_is_exactly_at_control_range(
     mock_get_current_context.return_value = context
 
     assert can_kick() is True
+
+
+def test_can_move_distance_raises_error_for_negative_distance():
+    
+    with pytest.raises(ValueError):
+        can_move_distance(-2.0)
+
+
+@patch("app.game.primitives.get_current_context")
+def test_can_move_distance_returns_true_below_max_distance(
+    mock_get_current_context,
+    context
+):
+    mock_get_current_context.return_value = context
+
+    assert can_move_distance(0.4) is True
+
+
+@patch("app.game.primitives.get_current_context")
+def test_can_move_distance_returns_true_at_max_distance(
+    mock_get_current_context,
+    context
+):
+    mock_get_current_context.return_value = context
+
+    assert can_move_distance(0.8) is True
+
+
+@patch("app.game.primitives.get_current_context")
+def test_can_move_distance_returns_false_above_max_distance(
+    mock_get_current_context,
+    context
+):
+    mock_get_current_context.return_value = context
+
+    assert can_move_distance(1.0) is False
+
+
+def test_speed_for_distance_raises_error_for_negative_distance():
+    with pytest.raises(ValueError):
+        speed_for_distance(-2.0)
+
+
+@patch("app.game.primitives.get_current_context")
+def test_speed_for_distance_returns_zero_for_zero_distance(
+    mock_get_current_context,
+    context
+):
+    mock_get_current_context.return_value = context
+
+    assert speed_for_distance(0.0) == 0.0
+
+
+@patch("app.game.primitives.get_current_context")
+def test_speed_for_distance_returns_proportional_factor(
+    mock_get_current_context,
+    context
+):
+    mock_get_current_context.return_value = context
+
+    assert speed_for_distance(0.4) == 0.5
+
+
+@patch("app.game.primitives.get_current_context")
+def test_speed_for_distance_returns_one_at_max_distance(
+    mock_get_current_context,
+    context
+):
+    mock_get_current_context.return_value = context
+
+    assert speed_for_distance(0.8) == 1.0
+
+
+@patch("app.game.primitives.get_current_context")
+def test_speed_for_distance_returns_one_above_max_distance(
+    mock_get_current_context,
+    context
+):
+    mock_get_current_context.return_value = context
+
+    assert speed_for_distance(1.0) == 1.0
 
 
 def test_distance_between_two_points():
