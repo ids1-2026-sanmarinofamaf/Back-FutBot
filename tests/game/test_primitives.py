@@ -25,7 +25,8 @@ from app.game.primitives import (
     can_kick_distance,
     kick_force_for_distance,
     distance, 
-    direction_to
+    direction_to,
+    next_ball_position
 )
 
 
@@ -403,3 +404,20 @@ def test_direction_to_diagonal():
 def test_direction_to_same_position_raises_error():
     with pytest.raises(ValueError):
         direction_to((2.0, 2.0), (2.0, 2.0))
+
+
+@patch("app.game.primitives.calculate_ball_next_position")
+@patch("app.game.primitives.get_current_context")
+def test_next_ball_position_returns_calculated_position(
+    mock_get_current_context,
+    mock_calculate_ball_next_position,
+    context,
+):
+    mock_get_current_context.return_value = context
+    mock_calculate_ball_next_position.return_value = (8.0, 5.0)
+
+    assert next_ball_position() == (8.0, 5.0)
+
+    mock_calculate_ball_next_position.assert_called_once_with(
+        context.ball
+    )

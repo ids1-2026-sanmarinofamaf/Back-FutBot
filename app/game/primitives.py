@@ -11,6 +11,7 @@ from .physics import(
     calculate_speed_factor,
     calculate_kick_travel_distance,
     calculate_kick_force_factor,
+    calculate_ball_next_position
 )
 
 def self() -> PlayerState:
@@ -312,6 +313,19 @@ def direction_to(from_position: Position, to_position: Position) -> Direction:
         delta_x/distance_to_target, 
         delta_y/distance_to_target
     )
+
+def next_ball_position() -> Position:
+    """
+    Return the estimated position of the ball during the next tic.
+
+    Returns:
+        Estimated ball position for the next tic according to the
+        current ball state and the game physics.
+    """
+    context = get_current_context()
+    ball_state = context.ball
+
+    return calculate_ball_next_position(ball_state)
 
 
 def _validate_distance(distance: float) -> None:
