@@ -17,6 +17,9 @@ from app.game.primitives import (
     current_period,
     period_time_remaining,
     starting_position,
+    can_kick,
+    tics_until_kick,
+    control_range,
     distance, 
     direction_to
 )
@@ -130,6 +133,86 @@ def test_starting_position_returns_current_player_starting_position(
     mock_get_current_context.return_value = context
 
     assert starting_position() == (3.0, 3.0)
+
+
+@patch("app.game.primitives.get_current_context")
+def test_tics_until_kick_returns_remaining_tics(
+    mock_get_current_context, 
+    context
+):
+    mock_get_current_context.return_value = context
+
+    assert tics_until_kick() == 0
+
+
+@patch("app.game.primitives.get_current_context")
+def test_control_range_returns_current_player_range_control(
+    mock_get_current_context, 
+    context
+):
+    mock_get_current_context.return_value = context
+
+    assert control_range() == 0.8
+
+
+@patch("app.game.primitives.get_current_context")
+def test_can_kick_returns_true_when_ball_is_in_range_and_cooldown_is_zero(
+    mock_get_current_context,
+    context
+):
+    # Ball is within control range and kick cooldown is zero.
+    context.player = (1, (5.0, 4.0))
+    context.ball = ((5.3, 4.0), (0.0, 0.0))
+    context.control_range = 0.5
+    context.tics_until_kick = 0
+    mock_get_current_context.return_value = context
+
+    assert can_kick() is True
+
+
+@patch("app.game.primitives.get_current_context")
+def test_can_kick_returns_false_when_ball_is_out_of_range(
+    mock_get_current_context,
+    context
+):
+    # Ball is outside the control range and kick cooldown is zero.
+    context.player = (1, (5.0, 4.0))
+    context.ball = ((10.0, 10.0), (0.0, 0.0))
+    context.control_range = 0.5
+    context.tics_until_kick = 0
+    mock_get_current_context.return_value = context
+
+    assert can_kick() is False
+
+
+@patch("app.game.primitives.get_current_context")
+def test_can_kick_returns_false_when_cooldown_is_not_zero(
+    mock_get_current_context,
+    context
+):
+    # Ball is within control range and kick cooldown is not zero.
+    context.player = (1, (5.0, 4.0))
+    context.ball = ((5.3, 4.0), (0.0, 0.0))
+    context.control_range = 0.5
+    context.tics_until_kick = 2
+    mock_get_current_context.return_value = context
+
+    assert can_kick() is False
+
+
+@patch("app.game.primitives.get_current_context")
+def test_can_kick_returns_true_when_ball_is_exactly_at_control_range(
+    mock_get_current_context,
+    context
+):
+    # Ball is exactly at control range and kick cooldown is zero.
+    context.player = (1, (5.0, 4.0))
+    context.ball = ((5.5, 4.0), (0.0, 0.0))
+    context.control_range = 0.5
+    context.tics_until_kick = 0
+    mock_get_current_context.return_value = context
+
+    assert can_kick() is True
 
 
 def test_distance_between_two_points():

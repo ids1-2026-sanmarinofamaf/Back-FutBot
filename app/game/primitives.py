@@ -100,6 +100,44 @@ def starting_position() -> Position:
     """
     return get_current_context().starting_position
 
+def can_kick() -> bool:
+    """
+    Return whether the current BOT player can attempt to kick the ball.
+
+    Returns:
+        True if the ball is within control range and the kick cooldown is zero.
+        False otherwise.
+    """
+    context = get_current_context()
+    player_position = context.player[1]
+    ball_position = context.ball[0]
+    cooldown = tics_until_kick()
+    control_distance = control_range()
+
+    return (
+        distance(ball_position, player_position) <= control_distance
+        and cooldown == 0
+    )
+
+
+def tics_until_kick() -> int:
+    """
+    Return the numbers of tics until the BOT player can kick the ball again.
+
+    Returns:
+        Numbers of tics remaining until the BOT player can kick again.
+    """
+    return get_current_context().tics_until_kick
+
+
+def control_range() -> float:
+    """
+    Return the maximum distance at which the BOT player can control the ball.
+    Returns:
+        Maximum ball control distance for the current BOT player.
+    """
+    return get_current_context().control_range
+
 
 def distance(from_position: Position, to_position: Position) -> float:
     """
