@@ -4,6 +4,7 @@ Behavior API primitives and helpers available to player behaviors.
 
 from math import hypot, isclose
 
+from .models import MoveAction, KickAction, WaitAction
 from .context import get_current_context
 from .types import Direction, Position, PlayerState, BallState, Period
 from .physics import(
@@ -269,6 +270,65 @@ def kick_force_for_distance(direction: Direction, distance: float) -> float:
     )
 
 
+def move(direction: Direction, speed_factor: float) -> MoveAction:
+    """
+    Create a movement action for the current BOT player.
+
+    Args:
+        direction: Direction in which the player should move.
+        speed_factor: Fraction of the player's maximum movement speed,
+            between 0.0 and 1.0.
+
+    Returns:
+        MoveAction containing the requested movement direction and speed factor.
+
+    Raises:
+        ValueError: If direction is not a valid unit vector.
+        ValueError: If speed_factor is outside the interval [0.0, 1.0].
+    """
+    _validate_direction(direction)
+    _validate_factor(speed_factor)
+
+    return MoveAction(
+        move_direction=direction,
+        move_speed_factor=speed_factor
+    )
+
+def kick(direction: Direction, force_factor: float) -> KickAction:
+    """
+    Create a kick action for the current BOT player.
+
+    Args:
+        direction: Direction in which the player should kick.
+        force_factor: Fraction of the player's maximum kick force,
+            between 0.0 and 1.0.
+
+    Returns:
+        KickAction containing the requested movement direction and force factor.
+
+    Raises:
+        ValueError: If direction is not a valid unit vector.
+        ValueError: If force_factor is outside the interval [0.0, 1.0].
+    """
+    _validate_direction(direction)
+    _validate_factor(force_factor)
+
+    return KickAction(
+        kick_direction=direction,
+        kick_force_factor=force_factor
+    )
+
+
+def wait() -> WaitAction:
+    """
+    Create a wait action for the current BOT player.
+
+    Returns:
+        WaitAction representing no voluntary action for the next tic.
+    """
+    return WaitAction()    
+
+
 def distance(from_position: Position, to_position: Position) -> float:
     """
     Return the distance between two positions.
@@ -363,3 +423,16 @@ def _validate_direction(direction: Direction) -> None:
         abs_tol=1e-9
     ):
         raise ValueError("Direction must be a unit vector.")
+
+def _validate_factor(factor: float) -> None:
+    """
+    Validate that a factor belongs to the interval [0.0, 1.0].
+
+    Args:
+        factor: Factor to validate.
+
+    Raises:
+        ValueError: If the factor is outside the interval [0.0, 1.0].
+    """
+    if not 0.0 <= factor <= 1.0:
+        raise ValueError("Factor must be between 0.0 and 1.0.")

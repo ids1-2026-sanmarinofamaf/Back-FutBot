@@ -5,6 +5,7 @@ Unit tests for Behavior API primitives and helper functions.
 import pytest
 from unittest.mock import patch
 
+from app.game.models import MoveAction, KickAction, WaitAction
 from app.game.context import BehaviorContext
 from app.game.types import Period
 from app.game.primitives import (
@@ -24,6 +25,9 @@ from app.game.primitives import (
     speed_for_distance,
     can_kick_distance,
     kick_force_for_distance,
+    move,
+    kick,
+    wait,
     distance, 
     direction_to,
     next_ball_position
@@ -379,6 +383,120 @@ def test_kick_force_for_distance_returns_calculated_factor(
         context.max_kick_force,
         8.0
     )
+
+
+def test_move_returns_move_action_with_expected_values(): 
+    direction = (1.0, 0.0)
+    speed_factor = 0.5
+    action = move(direction, speed_factor)
+
+    assert isinstance(action, MoveAction)
+    assert action.move_direction == direction
+    assert action.move_speed_factor == speed_factor
+
+
+def test_move_raises_error_for_invalid_direction():
+    direction = (0.0, 0.0)
+    speed_factor = 0.5
+
+    with pytest.raises(ValueError):
+        move(direction, speed_factor)
+
+
+def test_move_raises_error_for_speed_factor_below_zero():
+    direction = (1.0, 0.0)
+    speed_factor = -0.1
+
+    with pytest.raises(ValueError):
+        move(direction, speed_factor)
+
+
+def test_move_raises_error_for_speed_factor_above_one():
+    direction = (1.0, 0.0)
+    speed_factor = 1.5
+
+    with pytest.raises(ValueError):
+        move(direction, speed_factor)
+
+
+def test_move_accepts_zero_speed_factor():
+    direction = (1.0, 0.0)
+    speed_factor = 0.0
+    action = move(direction, speed_factor)
+
+    assert isinstance(action, MoveAction)
+    assert action.move_direction == direction
+    assert action.move_speed_factor == speed_factor
+
+
+def test_move_accepts_max_speed_factor():
+    direction = (1.0, 0.0)
+    speed_factor = 1.0
+    action = move(direction, speed_factor)
+
+    assert isinstance(action, MoveAction)
+    assert action.move_direction == direction
+    assert action.move_speed_factor == speed_factor  
+
+
+def test_kick_returns_kick_action_with_expected_values():
+    direction = (1.0, 0.0)
+    force_factor = 0.5
+    action = kick(direction, force_factor)
+
+    assert isinstance(action, KickAction)
+    assert action.kick_direction == direction
+    assert action.kick_force_factor == force_factor
+
+
+def test_kick_raises_error_for_invalid_direction():
+    direction = (0.0, 0.0)
+    force_factor = 0.5
+
+    with pytest.raises(ValueError):
+        kick(direction, force_factor)
+
+
+def test_kick_raises_error_for_force_factor_below_zero():
+    direction = (1.0, 0.0)
+    force_factor = -0.1
+
+    with pytest.raises(ValueError):
+        kick(direction, force_factor)
+
+
+def test_kick_raises_error_for_force_factor_above_one():
+    direction = (1.0, 0.0)
+    force_factor = 1.5
+
+    with pytest.raises(ValueError):
+        kick(direction, force_factor)
+
+
+def test_kick_accepts_zero_force_factor():
+    direction = (1.0, 0.0)
+    force_factor = 0.0
+    action = kick(direction, force_factor)
+
+    assert isinstance(action, KickAction)
+    assert action.kick_direction == direction
+    assert action.kick_force_factor == force_factor
+
+
+def test_kick_accepts_max_force_factor():
+    direction = (1.0, 0.0)
+    force_factor = 1.0
+    action = kick(direction, force_factor)
+
+    assert isinstance(action, KickAction)
+    assert action.kick_direction == direction
+    assert action.kick_force_factor == force_factor
+
+
+def test_wait_return_wait_action():
+    action = wait()
+
+    assert isinstance(action, WaitAction)
 
 
 def test_distance_between_two_points():
