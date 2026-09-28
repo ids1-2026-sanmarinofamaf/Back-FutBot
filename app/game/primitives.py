@@ -4,9 +4,12 @@ Behavior API primitives and helpers available to player behaviors.
 
 from math import hypot
 
-from .constants import TIC_DURATION
 from .context import get_current_context
 from .types import Direction, Position, PlayerState, BallState, Period
+from .physics import(
+    calculate_max_move_distance,
+    calculate_speed_factor,
+)
 
 def self() -> PlayerState:
     """
@@ -173,10 +176,7 @@ def can_move_distance(distance: float) -> bool:
     
     context = get_current_context()
     max_speed = context.max_move_speed
-
-    # Convert maximum speed (m/s) into the maximum distance
-    # the player can travel during one simulation tic.
-    max_distance = max_speed * TIC_DURATION
+    max_distance = calculate_max_move_distance(max_speed)
 
     return distance <= max_distance
 
@@ -200,18 +200,8 @@ def speed_for_distance(distance: float) -> float:
     
     context = get_current_context()
     max_speed = context.max_move_speed
-
-    # Convert maximum speed (m/s) into the maximum distance
-    # the player can travel during one simulation tic.
-    max_distance = max_speed * TIC_DURATION
-
-    # Normalize the requested distance against the maximum reachable distance.
-    factor = distance / max_distance
-
-    # Values above 1.0 mean the distance cannot be fully covered in one tic,
-    # so the maximum available speed factor is returned.
-    return min(factor, 1.0)
-
+    
+    return calculate_speed_factor(max_speed, distance)
 
 
 def distance(from_position: Position, to_position: Position) -> float:
