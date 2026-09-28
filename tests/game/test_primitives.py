@@ -22,6 +22,8 @@ from app.game.primitives import (
     control_range,
     can_move_distance,
     speed_for_distance,
+    can_kick_distance,
+    kick_force_for_distance,
     distance, 
     direction_to
 )
@@ -50,6 +52,7 @@ def context():
         control_range=0.8,
         tics_until_kick=0,
         max_move_speed=8.0,
+        max_kick_force=20.0,
     )
 
 
@@ -218,7 +221,6 @@ def test_can_kick_returns_true_when_ball_is_exactly_at_control_range(
 
 
 def test_can_move_distance_raises_error_for_negative_distance():
-    
     with pytest.raises(ValueError):
         can_move_distance(-2.0)
 
@@ -286,6 +288,95 @@ def test_speed_for_distance_returns_proportional_factor(
     mock_calculate_speed_factor.assert_called_once_with(
         context.max_move_speed,
         0.4
+    )
+
+
+def test_can_kick_distance_raises_error_for_negative_distance():
+    with pytest.raises(ValueError):
+        can_kick_distance((1.0, 0.0), -0.1)
+
+
+def test_can_kick_distance_raises_error_for_invalid_direction():
+    with pytest.raises(ValueError):
+        can_kick_distance((2.0, 0.0), 3.0)
+
+
+@patch("app.game.primitives.calculate_kick_travel_distance")
+@patch("app.game.primitives.get_current_context")
+def test_can_kick_distance_returns_true_below_max_distance(
+    mock_get_current_context,
+    mock_calculate_kick_travel_distance,
+    context,
+):
+    mock_get_current_context.return_value = context
+    mock_calculate_kick_travel_distance.return_value = 10.0
+    direction = (1.0, 0.0)
+
+    assert can_kick_distance(direction, 8.0) is True
+
+    mock_calculate_kick_travel_distance.assert_called_once_with(
+        context.ball[1],
+        direction,
+        context.max_kick_force,
+    )
+
+
+@patch("app.game.primitives.calculate_kick_travel_distance")
+@patch("app.game.primitives.get_current_context")
+def test_can_kick_distance_returns_true_at_max_distance(
+    mock_get_current_context,
+    mock_calculate_kick_travel_distance,
+    context,
+):
+    mock_get_current_context.return_value = context
+    mock_calculate_kick_travel_distance.return_value = 10.0
+    direction = (1.0, 0.0)
+
+    assert can_kick_distance(direction, 10.0) is True
+
+
+@patch("app.game.primitives.calculate_kick_travel_distance")
+@patch("app.game.primitives.get_current_context")
+def test_can_kick_distance_returns_false_above_max_distance(
+    mock_get_current_context,
+    mock_calculate_kick_travel_distance,
+    context,
+):
+    mock_get_current_context.return_value = context
+    mock_calculate_kick_travel_distance.return_value = 10.0
+    direction = (1.0, 0.0)
+
+    assert can_kick_distance(direction, 12.0) is False
+
+
+def test_kick_force_for_distance_raises_error_for_negative_distance():
+    with pytest.raises(ValueError):
+        kick_force_for_distance((1.0, 0.0), -0.1)
+
+
+def test_kick_force_for_distance_raises_error_for_invalid_direction():
+    with pytest.raises(ValueError):
+        kick_force_for_distance((0.0, 0.0), 5.0)
+
+
+@patch("app.game.primitives.calculate_kick_force_factor")
+@patch("app.game.primitives.get_current_context")
+def test_kick_force_for_distance_returns_calculated_factor(
+    mock_get_current_context,
+    mock_calculate_kick_force_factor,
+    context,
+):
+    mock_get_current_context.return_value = context
+    mock_calculate_kick_force_factor.return_value = 0.5
+    direction = (1.0, 0.0)
+
+    assert kick_force_for_distance(direction, 8.0) == 0.5
+
+    mock_calculate_kick_force_factor.assert_called_once_with(
+        context.ball[1],
+        direction,
+        context.max_kick_force,
+        8.0
     )
 
 

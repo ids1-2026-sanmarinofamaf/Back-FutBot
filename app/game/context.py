@@ -24,6 +24,7 @@ class BehaviorContext:
     control_range: float
     tics_until_kick: int
     max_move_speed: float
+    max_kick_force: float
 
 
 def get_current_context() -> BehaviorContext:
