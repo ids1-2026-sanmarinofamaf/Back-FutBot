@@ -4,7 +4,7 @@ Behavior API primitives and helpers available to player behaviors.
 
 from math import hypot, isclose
 
-from .models import MoveAction, KickAction, WaitAction
+from .models.actions import MoveAction, KickAction, WaitAction
 from .context import get_current_context
 from .types import Direction, Position, PlayerState, BallState, Period
 from .physics import(

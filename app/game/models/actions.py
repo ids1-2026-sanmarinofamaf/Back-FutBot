@@ -2,7 +2,7 @@
 
 from dataclasses import dataclass
 
-from .types import Direction
+from app.game.types import Direction
 
 
 @dataclass(frozen=True)

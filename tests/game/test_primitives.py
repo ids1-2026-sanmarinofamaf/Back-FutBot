@@ -5,7 +5,7 @@ Unit tests for Behavior API primitives and helper functions.
 import pytest
 from unittest.mock import patch
 
-from app.game.models import MoveAction, KickAction, WaitAction
+from app.game.models.actions import MoveAction, KickAction, WaitAction
 from app.game.context import BehaviorContext
 from app.game.types import Period
 from app.game.primitives import (
