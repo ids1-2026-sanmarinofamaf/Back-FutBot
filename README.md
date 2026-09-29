@@ -66,6 +66,22 @@ Los tests del backend se encuentran en:
 
 tests/
 
+Se corren con:
+
+```bash
+pytest
+```
+
+Los tests **no usan la base de desarrollo**: `tests/conftest.py` apunta `DATABASE_URL` a una
+base SQLite propia (`tests/futbot_test.db`), le aplica las migraciones al empezar y la borra al
+terminar. No hace falta tener el contenedor de Postgres levantado.
+
+Para correrlos contra otra base (por ejemplo, un Postgres de test), definí `TEST_DATABASE_URL`:
+
+```bash
+TEST_DATABASE_URL=postgresql+psycopg://futbot:futbot@localhost:5432/futbot_test pytest
+```
+
 ## Base de datos y migraciones (Alembic)
 
 El esquema de la base se maneja **exclusivamente con Alembic**. No se usa `Base.metadata.create_all()`.
