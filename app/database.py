@@ -3,8 +3,12 @@
 import os
 from sqlalchemy import create_engine
 from sqlalchemy.orm import DeclarativeBase, sessionmaker
+from dotenv import load_dotenv
 
+# busca el .env y carga sus variables
+load_dotenv()
 
+# Busca la variable de entorno "DATABASE_URL" 
 DATABASE_URL = os.getenv("DATABASE_URL")
 if not DATABASE_URL:
     raise RuntimeError(
