@@ -72,16 +72,29 @@ El esquema de la base se maneja **exclusivamente con Alembic**. No se usa `Base.
 
 ### Setup inicial
 
+Requisitos: [Docker](https://docs.docker.com/get-docker/) con el plugin `docker compose`
+(en Ubuntu: `sudo apt install docker-compose-v2`).
+
 ```bash
+cp .env.example .env             # ya viene apuntando al Postgres de Docker
+docker compose up -d             # levanta PostgreSQL en localhost:5432
 python -m venv .venv
-source .venv/bin/activate        # Windows: .venv\Scripts\activate
-pip install -e .                 # instala el proyecto en modo editable
+source .venv/bin/activate        
+pip install -r requirements.txt
 alembic upgrade head             # crea/actualiza la base a la última versión
 ```
 
-> `pip install -e .` permite que Alembic (y pytest) importen el paquete `app`.
+> El `.env` se carga automáticamente (`python-dotenv`), no hace falta exportar nada.
 > Si aparece `ModuleNotFoundError: No module named 'app'`, verificá que el venv
 > esté activado y que corriste `alembic` desde la raíz del repo.
+
+### Base de datos con Docker
+
+* `docker compose up -d` : Levanta la base (en segundo plano)
+* `docker compose down` : La frena. Los datos se conservan 
+* `docker compose down -v` : La frena **y borra todos los datos** (base limpia)
+* `docker compose logs -f db` :  Muestra los logs de Postgres
+* `docker exec -it futbot-db psql -U futbot` : Abre una consola SQL
 
 ### Después de cada `git pull`
 
@@ -102,20 +115,3 @@ Si alguien agregó una migración, esto actualiza tu base local sin perder datos
    El autogenerate no detecta todo (renombres de columnas, algunos cambios de enums).
 4. Aplicala localmente: `alembic upgrade head`.
 5. Commiteá la migración **en el mismo PR** que el cambio del modelo.
-
-### Reglas del equipo
-
-- Una migración por PR.
-- Nunca editar una migración que ya está mergeada en `main`: si hay que corregir algo, se crea una nueva.
-- Si al hacer rebase aparece el error de *multiple heads*, borrá tu migración,
-  hacé `alembic upgrade head` y volvé a generarla encima de la última.
-- Los datos iniciales (ej. comportamientos por defecto) se cargan como migración, no con scripts sueltos.
-
-### Comandos útiles
-
-| Comando | Qué hace |
-|---|---|
-| `alembic current` | Muestra en qué versión está tu base |
-| `alembic history` | Lista todas las migraciones |
-| `alembic downgrade -1` | Deshace la última migración |
-| `alembic heads` | Muestra las "puntas" (debería haber una sola) |
