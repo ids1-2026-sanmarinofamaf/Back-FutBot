@@ -70,25 +70,51 @@ tests/
 
 El esquema de la base se maneja **exclusivamente con Alembic**. No se usa `Base.metadata.create_all()`.
 
+La base es PostgreSQL y corre en un contenedor Docker, así que no hace falta instalar Postgres.
+
+### Requisitos
+
+- [Docker](https://docs.docker.com/get-docker/) con el plugin `docker compose`
+  (en Ubuntu: `sudo apt install docker-compose-v2`).
+- Haber seguido los pasos de [Instalación](#instalación): entorno virtual creado y
+  activado, y dependencias instaladas.
+
 ### Setup inicial
 
-Requisitos: [Docker](https://docs.docker.com/get-docker/) con el plugin `docker compose`
-(en Ubuntu: `sudo apt install docker-compose-v2`).
+Todos los comandos se corren desde la raíz del repo y con el entorno virtual activado.
+
+#### 1. Crear el archivo `.env`
 
 ```bash
-cp .env.example .env             # ya viene apuntando al Postgres de Docker
-docker compose up -d             # levanta PostgreSQL en localhost:5432
-python -m venv .venv
-source .venv/bin/activate        
-pip install -r requirements.txt
-alembic upgrade head             # crea/actualiza la base a la última versión
+cp .env.example .env
 ```
 
-> El `.env` se carga automáticamente (`python-dotenv`), no hace falta exportar nada.
+El `.env` ya viene apuntando al Postgres de Docker. Se carga automáticamente
+con `python-dotenv`, así que no hace falta exportar ninguna variable.
+
+#### 2. Levantar la base de datos
+
+```bash
+docker compose up -d
+```
+
+Levanta PostgreSQL en `localhost:5432` (usuario `futbot`, contraseña `futbot`, base `futbot`).
+Estas credenciales son solo para desarrollo local.
+
+#### 3. Aplicar las migraciones
+
+```bash
+alembic upgrade head
+```
+
+Crea las tablas o las actualiza a la última versión.
+
+Con esto ya se puede [ejecutar el backend](#ejecutar).
+
 > Si aparece `ModuleNotFoundError: No module named 'app'`, verificá que el venv
 > esté activado y que corriste `alembic` desde la raíz del repo.
 
-### Base de datos con Docker
+### Comandos de Docker
 
 * `docker compose up -d` : Levanta la base (en segundo plano)
 * `docker compose down` : La frena. Los datos se conservan 
