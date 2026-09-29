@@ -13,34 +13,34 @@ from app.main import app
 from conftest import ROOT_DIR
 
 
-def test_la_app_inicia_con_la_url_del_entorno():
+def test_app_starts_with_database_url_from_env():
     with TestClient(app) as client:
         response = client.get("/")
     assert response.status_code == 200
 
 
-def test_falla_con_mensaje_claro_si_falta_database_url(monkeypatch):
+def test_fails_with_clear_message_when_database_url_is_missing(monkeypatch):
     monkeypatch.delenv("DATABASE_URL", raising=False)
-    # Evita que se cargue el .env del repo, que sí define la variable
+    # Prevent loading the repo's .env, which does define the variable
     monkeypatch.setattr("dotenv.load_dotenv", lambda *args, **kwargs: False)
 
-    # Se carga una copia aparte del módulo para no romper el engine que usan los demás tests
-    spec = importlib.util.spec_from_file_location("database_sin_url", ROOT_DIR / "app" / "database.py")
+    # Load a separate copy of the module so the engine used by other tests is not replaced
+    spec = importlib.util.spec_from_file_location("database_without_url", ROOT_DIR / "app" / "database.py")
     module = importlib.util.module_from_spec(spec)
     with pytest.raises(RuntimeError, match="DATABASE_URL"):
         spec.loader.exec_module(module)
 
 
-def test_los_modelos_generan_su_tabla():
+def test_models_create_their_table():
     assert inspect(engine).has_table("user_account")
 
 
-def test_los_tests_usan_una_base_distinta_a_la_de_desarrollo():
+def test_tests_use_a_different_database_than_development():
     dev_url = dotenv_values(ROOT_DIR / ".env").get("DATABASE_URL")
     assert engine.url.render_as_string(hide_password=False) != dev_url
 
 
-def test_get_db_cierra_la_sesion_al_terminar_el_request(monkeypatch):
+def test_get_db_closes_session_after_request(monkeypatch):
     session = MagicMock()
     monkeypatch.setattr(database, "SessionLocal", lambda: session)
 
@@ -55,16 +55,16 @@ def test_get_db_cierra_la_sesion_al_terminar_el_request(monkeypatch):
     session.close.assert_called_once()
 
 
-def test_get_db_cierra_la_sesion_aunque_haya_error(monkeypatch):
+def test_get_db_closes_session_even_on_error(monkeypatch):
     session = MagicMock()
     monkeypatch.setattr(database, "SessionLocal", lambda: session)
 
     test_app = FastAPI()
 
-    @test_app.get("/falla")
-    def falla(db=Depends(get_db)):
-        raise ValueError("error en el endpoint")
+    @test_app.get("/fail")
+    def fail(db=Depends(get_db)):
+        raise ValueError("endpoint error")
 
     with TestClient(test_app, raise_server_exceptions=False) as client:
-        assert client.get("/falla").status_code == 500
+        assert client.get("/fail").status_code == 500
     session.close.assert_called_once()
