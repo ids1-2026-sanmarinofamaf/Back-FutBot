@@ -5,6 +5,10 @@ from sqlalchemy import text
 
 from app.database import engine
 
+from app.api.match_websocket import router as match_websocket_router
+
+
+
 # Se ejecuta una vez al arrancar la app y una vez al apagar
 @asynccontextmanager
 async def lifespan(app: FastAPI):
