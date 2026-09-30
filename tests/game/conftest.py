@@ -4,6 +4,9 @@ Shared fixtures for game-related unit tests.
 
 import pytest
 
+from app.game.models.actions import MoveAction, KickAction, WaitAction
+from app.game.models.runtime_behavior import RuntimeBehavior
+from app.game.primitives import ball
 from app.game.context import BehaviorContext
 from app.game.types import Period, Side
 
@@ -41,6 +44,7 @@ def context():
         max_kick_force=20.0,
     )
 
+
 @pytest.fixture
 def other_context():
     """
@@ -71,4 +75,58 @@ def other_context():
         tics_until_kick=2,
         max_move_speed=9.5,
         max_kick_force=25.0,
+    )
+
+
+@pytest.fixture
+def move_behavior():
+    """Return a runtime behavior whose play() returns a MoveAction."""
+    return RuntimeBehavior(
+        id=1,
+        play=lambda: MoveAction(
+            move_direction=(1.0, 0.0),
+            move_speed_factor=1.0,
+        ),
+    )
+
+
+@pytest.fixture
+def kick_behavior():
+    """Return a runtime behavior whose play() returns a KickAction."""
+    return RuntimeBehavior(
+        id=2,
+        play=lambda: KickAction(
+            kick_direction=(1.0, 0.0),
+            kick_force_factor=1.0,
+        ),
+    )
+
+
+@pytest.fixture
+def wait_behavior():
+    """Return a runtime behavior whose play() returns a WaitAction."""
+    return RuntimeBehavior(
+        id=3,
+        play=lambda: WaitAction(),
+    )
+
+
+@pytest.fixture
+def invalid_behavior():
+    """Return a runtime behavior whose play() returns a non-action value."""
+    return RuntimeBehavior(
+        id=4,
+        play=lambda: ball(),
+    )
+
+
+@pytest.fixture
+def failing_behavior():
+    """Return a runtime behavior whose play() raises an exception."""
+    def failing_play():
+        raise RuntimeError("Behavior execution failed")
+
+    return RuntimeBehavior(
+        id=5,
+        play=failing_play,
     )
