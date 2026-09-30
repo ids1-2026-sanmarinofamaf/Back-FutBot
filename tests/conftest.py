@@ -1,19 +1,41 @@
+import os
+from pathlib import Path
+
+# Test database configuration must happen before importing any app module,
+# because app.database reads DATABASE_URL when it is imported.
+ROOT_DIR = Path(__file__).resolve().parents[1]
+TEST_DB_PATH = ROOT_DIR / "tests" / "futbot_test.db"
+
+os.environ["DATABASE_URL"] = os.getenv(
+    "TEST_DATABASE_URL",
+    f"sqlite:///{TEST_DB_PATH}",
+)
+
 import pytest
 
+from alembic import command
+from alembic.config import Config
+
+from app.database import engine
+from app.game.context import BehaviorContext
+from app.game.formations import Formation
+from app.game.models.actions import KickAction, MoveAction, WaitAction
 from app.game.models.player_in_match import PlayerInMatch
+from app.game.models.runtime_behavior import RuntimeBehavior
+from app.game.primitives import ball
+from app.game.types import Period, Side
 from app.models.player_on_roster import PlayerOnRoster, RosterSlot
 from app.models.roster import Roster
-from app.game.formations import Formation
 
-# file for defining fixtures to be used by multiple tests
 
 def make_player(player_id: int, is_on_field: bool) -> PlayerInMatch:
     return PlayerInMatch(
-        # if it is a substitute, it has neither a position nor an initial behavior.
+        # If it is a substitute, it has neither a starting position
+        # nor an initial behavior.
         player_id=player_id,
         position=(0.0, 0.0),
         velocity=(0.0, 0.0),
-        starting_position=(8.0, 5.0) if is_on_field else None,  
+        starting_position=(8.0, 5.0) if is_on_field else None,
         power=60,
         agility=60,
         control=60,
@@ -24,8 +46,23 @@ def make_player(player_id: int, is_on_field: bool) -> PlayerInMatch:
     )
 
 
+@pytest.fixture(scope="session", autouse=True)
+def test_database():
+    """Create the test database schema before tests and remove it afterwards."""
+    alembic_cfg = Config(str(ROOT_DIR / "alembic.ini"))
+
+    command.upgrade(alembic_cfg, "head")
+
+    yield
+
+    command.downgrade(alembic_cfg, "base")
+    engine.dispose()
+    TEST_DB_PATH.unlink(missing_ok=True)
+
+
 @pytest.fixture
-def six_players():      # 3 starters and 3 substitutes
+def six_players():
+    """Return three starters and three substitutes."""
     return [
         make_player(1, True),
         make_player(2, True),
@@ -35,8 +72,10 @@ def six_players():      # 3 starters and 3 substitutes
         make_player(6, False),
     ]
 
+
 @pytest.fixture
 def valid_roster():
+    """Return a valid roster with three starters and three substitutes."""
     roster = Roster(
         club_id=1,
         formation=Formation.DEFENSIVE,
@@ -82,31 +121,116 @@ def valid_roster():
     ]
 
     return roster
-import os
-from pathlib import Path
 
 
-ROOT_DIR = Path(__file__).resolve().parents[1]
-TEST_DB_PATH = ROOT_DIR / "tests" / "futbot_test.db"
+@pytest.fixture
+def context():
+    """Return a valid BehaviorContext for game-related unit tests."""
+    return BehaviorContext(
+        player=(1, (5.0, 4.0)),
+        teammates=[
+            (2, (6.0, 4.0)),
+            (3, (7.0, 5.0)),
+        ],
+        opponents=[
+            (4, (10.0, 8.0)),
+            (5, (11.0, 6.0)),
+            (6, (12.0, 4.0)),
+        ],
+        ball=((7.0, 5.0), (1.0, 0.0)),
+        my_team_score=1,
+        opponent_score=0,
+        starting_position=(3.0, 3.0),
+        current_period=Period.FIRST_QUARTER,
+        side=Side.LEFT,
+        match_time_remaining=120.0,
+        period_time_remaining=30.0,
+        control_range=0.8,
+        tics_until_kick=0,
+        max_move_speed=8.0,
+        max_kick_force=20.0,
+    )
 
-# Los tests usan una base propia, nunca la de desarrollo.
-# Se setea ANTES de importar app.database, que lee DATABASE_URL al importarse
-# (load_dotenv no pisa variables que ya están definidas).
-# Se puede apuntar a otra base (ej. un Postgres de test) con TEST_DATABASE_URL.
-os.environ["DATABASE_URL"] = os.getenv("TEST_DATABASE_URL", f"sqlite:///{TEST_DB_PATH}")
 
-from alembic import command
-from alembic.config import Config
+@pytest.fixture
+def other_context():
+    """Return a second BehaviorContext with different values."""
+    return BehaviorContext(
+        player=(7, (15.0, 10.0)),
+        teammates=[
+            (8, (14.0, 9.0)),
+            (9, (13.0, 8.0)),
+        ],
+        opponents=[
+            (10, (4.0, 3.0)),
+            (11, (5.0, 5.0)),
+            (12, (6.0, 7.0)),
+        ],
+        ball=((12.0, 10.0), (-1.0, 0.5)),
+        my_team_score=2,
+        opponent_score=1,
+        starting_position=(17.0, 10.0),
+        current_period=Period.SECOND_QUARTER,
+        side=Side.RIGHT,
+        match_time_remaining=90.0,
+        period_time_remaining=20.0,
+        control_range=1.2,
+        tics_until_kick=2,
+        max_move_speed=9.5,
+        max_kick_force=25.0,
+    )
 
-from app.database import engine
+
+@pytest.fixture
+def move_behavior():
+    """Return a runtime behavior whose play() returns a MoveAction."""
+    return RuntimeBehavior(
+        id=1,
+        play=lambda: MoveAction(
+            move_direction=(1.0, 0.0),
+            move_speed_factor=1.0,
+        ),
+    )
 
 
-@pytest.fixture(scope="session", autouse=True)
-def test_database():
-    """Crea el esquema con las migraciones de Alembic al inicio y lo borra al final."""
-    alembic_cfg = Config(str(ROOT_DIR / "alembic.ini"))
-    command.upgrade(alembic_cfg, "head")
-    yield
-    command.downgrade(alembic_cfg, "base")
-    engine.dispose()
-    TEST_DB_PATH.unlink(missing_ok=True)
+@pytest.fixture
+def kick_behavior():
+    """Return a runtime behavior whose play() returns a KickAction."""
+    return RuntimeBehavior(
+        id=2,
+        play=lambda: KickAction(
+            kick_direction=(1.0, 0.0),
+            kick_force_factor=1.0,
+        ),
+    )
+
+
+@pytest.fixture
+def wait_behavior():
+    """Return a runtime behavior whose play() returns a WaitAction."""
+    return RuntimeBehavior(
+        id=3,
+        play=lambda: WaitAction(),
+    )
+
+
+@pytest.fixture
+def invalid_behavior():
+    """Return a runtime behavior whose play() returns a non-action value."""
+    return RuntimeBehavior(
+        id=4,
+        play=lambda: ball(),
+    )
+
+
+@pytest.fixture
+def failing_behavior():
+    """Return a runtime behavior whose play() raises an exception."""
+
+    def failing_play():
+        raise RuntimeError("Behavior execution failed")
+
+    return RuntimeBehavior(
+        id=5,
+        play=failing_play,
+    )
