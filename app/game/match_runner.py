@@ -1,6 +1,8 @@
 from typing import Protocol, Any
+import time, asyncio
 
 from app.game.models.match import Match, MatchState, MatchSnapshot
+from app.game.constants import TIC_DURATION
 
 
 class BehaviorExecutorProtocol(Protocol):
@@ -46,8 +48,19 @@ class MatchRunner:
         # change the matchState and execute ticks
         match.state = MatchState.IN_PROGRESS
 
-        while match.current_tick < match.duration_ticks: 
+        while match.current_tick < match.duration_ticks:
+            # start the tick
+            tick_start = time.monotonic()
+            # execute the tick and all the workers
             await self.execute_tick(match)
+
+            # then we have to check if the tick ends before the TIC_DURATION
+            elapsed = time.monotonic() - tick_start
+
+            remaining_time = TIC_DURATION - elapsed
+            # if the tick ends before TIC_DURATION, we hae to wait the remaining_time
+            if remaining_time > 0:
+                await asyncio.sleep(remaining_time)
 
         # when the match ended, change its state to finished
         match.state = MatchState.FINISHED
