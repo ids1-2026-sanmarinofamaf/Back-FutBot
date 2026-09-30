@@ -4,9 +4,10 @@ Behavior API primitives and helpers available to player behaviors.
 
 from math import hypot, isclose
 
+from .constants import LEFT_GOAL, RIGHT_GOAL
 from .models.actions import MoveAction, KickAction, WaitAction
 from .context import get_current_context
-from .types import Direction, Position, PlayerState, BallState, Period
+from .types import Direction, Position, PlayerState, BallState, Period, Side
 from .physics import(
     calculate_max_move_distance,
     calculate_speed_factor,
@@ -34,7 +35,7 @@ def teammates() -> list[PlayerState]:
         Teammates' ids and positions.
     """
 
-    return get_current_context().teammates
+    return list(get_current_context().teammates)
 
 
 def opponents() -> list[PlayerState]:
@@ -45,7 +46,7 @@ def opponents() -> list[PlayerState]:
         Opponents' ids and positions.
     """
 
-    return get_current_context().opponents
+    return list(get_current_context().opponents)
 
 
 def ball() -> BallState:
@@ -116,6 +117,31 @@ def starting_position() -> Position:
     """
 
     return get_current_context().starting_position
+
+
+def own_goal() -> Position:
+    """
+    Return the center position of the current player's own goal.
+
+    Returns:
+        Center position of the current player's own goal.
+    """
+    context = get_current_context()
+
+    return LEFT_GOAL if context.side == Side.LEFT else RIGHT_GOAL
+
+
+def opponent_goal() -> Position:
+    """
+    Return the center position of the current player's opponent's goal.
+
+    Returns:
+        Center position of the current player's opponent's goal.
+    """
+    context = get_current_context()
+
+    return RIGHT_GOAL if context.side == Side.LEFT else LEFT_GOAL
+
 
 def can_kick() -> bool:
     """

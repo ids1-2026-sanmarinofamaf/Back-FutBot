@@ -2,8 +2,8 @@
 Global constants used by the game simulation.
 """
 
-# Field with in meters
-FIELD_WITH = 40.0
+# Field width in meters
+FIELD_WIDTH = 40.0
 
 
 # Field height in meters
@@ -56,3 +56,7 @@ BALL_DECELERATION_MAX = 0.8
 
 # Ball speed below this value are treated as zero
 BALL_STOP_THRESHOLD = 0.5
+
+# Center position of each goal
+LEFT_GOAL = (0.0, FIELD_HEIGHT / 2)
+RIGHT_GOAL = (FIELD_WIDTH, FIELD_HEIGHT / 2)

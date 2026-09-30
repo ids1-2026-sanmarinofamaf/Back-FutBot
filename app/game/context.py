@@ -2,7 +2,7 @@
 
 from dataclasses import dataclass
 
-from .types import BallState, PlayerState, Position, Period
+from .types import BallState, PlayerState, Position, Period, Side
 
 
 @dataclass
@@ -18,6 +18,7 @@ class BehaviorContext:
     starting_position: Position
 
     current_period: Period
+    side: Side
     match_time_remaining: float
     period_time_remaining: float
 

@@ -119,12 +119,13 @@ def play():
     ball_position, _ = ball()
 
     if can_kick():
-        shot_distance = distance(ball_position, OPPONENT_GOAL)
-        shot_direction = direction_to(ball_position, OPPONENT_GOAL)
+        goal = opponent_goal()
+        shot_distance = distance(ball_position, goal)
+        shot_direction = direction_to(ball_position, goal)
 
         return kick(
             shot_direction,
-            kick_force_for_distance(shot_distance)
+            kick_force_for_distance(shot_direction, shot_distance)
         )
 
     return wait()
@@ -250,28 +251,6 @@ Alto de la cancha.
 
 ---
 
-### `OWN_GOAL`
-
-```python
-OWN_GOAL: Position
-```
-
-**Descripción:**  
-Posición correspondiente al punto medio del arco propio.
-
----
-
-### `OPPONENT_GOAL`
-
-```python
-OPPONENT_GOAL: Position
-```
-
-**Descripción:**  
-Posición correspondiente al punto medio del arco rival.
-
----
-
 ## 5. Match state primitives
 
 Estas primitivas permiten consultar el estado actual del partido. No modifican el estado.
@@ -291,6 +270,7 @@ Ejemplo:
 ```python
 my_id, my_position = self()
 ```
+
 ---
 
 ### `teammates()`
@@ -404,6 +384,28 @@ starting_position() -> Position
 
 **Descripción:**  
 Devuelve la posición inicial asignada al jugador BOT en la alineación.
+
+---
+
+### `own_goal()`
+
+```python
+own_goal() -> Position
+```
+
+**Descripción:**  
+Devuelve la posición correspondiente al punto medio del arco propio según el lado actual del jugador.
+
+---
+
+### `opponent_goal()`
+
+```python
+opponent_goal() -> Position
+```
+
+**Descripción:**  
+Devuelve la posición correspondiente al punto medio del arco rival según el lado actual del jugador.
 
 ---
 
@@ -688,8 +690,9 @@ def play():
     if ball_distance <= control_range():
 
         if can_kick():
-            goal_distance = distance(ball_position, OPPONENT_GOAL)
-            goal_direction = direction_to(ball_position, OPPONENT_GOAL)
+            goal = opponent_goal()
+            goal_distance = distance(ball_position, goal)
+            goal_direction = direction_to(ball_position, goal)
 
             # Patea si el arco está al alcance
             if can_kick_distance(goal_direction, goal_distance):

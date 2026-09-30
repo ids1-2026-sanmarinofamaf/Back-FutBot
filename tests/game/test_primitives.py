@@ -5,9 +5,10 @@ Unit tests for Behavior API primitives and helper functions.
 import pytest
 from unittest.mock import patch
 
+from app.game.constants import RIGHT_GOAL, LEFT_GOAL
 from app.game.models.actions import MoveAction, KickAction, WaitAction
 from app.game.context import BehaviorContext
-from app.game.types import Period
+from app.game.types import Period, Side
 from app.game.primitives import (
     self,
     teammates,
@@ -18,6 +19,8 @@ from app.game.primitives import (
     current_period,
     period_time_remaining,
     starting_position,
+    own_goal,
+    opponent_goal,
     can_kick,
     tics_until_kick,
     control_range,
@@ -52,6 +55,7 @@ def context():
         opponent_score=0,
         starting_position=(3.0, 3.0),
         current_period=Period.FIRST_QUARTER,
+        side=Side.LEFT,
         match_time_remaining=120.0,
         period_time_remaining=30.0,
         control_range=0.8,
@@ -79,6 +83,19 @@ def test_teammates_returns_current_player_teammates(
 
 
 @patch("app.game.primitives.get_current_context")
+def test_teammates_returns_copy_of_context_teammates(
+    mock_get_current_context,
+    context
+):
+    mock_get_current_context.return_value = context
+
+    result = teammates()
+    result.clear()
+
+    assert context.teammates == [(2, (6.0, 4.0)), (3, (7.0, 5.0))]
+
+
+@patch("app.game.primitives.get_current_context")
 def test_opponents_returns_current_player_opponents(
     mock_get_current_context,
     context
@@ -86,6 +103,23 @@ def test_opponents_returns_current_player_opponents(
     mock_get_current_context.return_value = context
 
     assert opponents() == [(4, (10.0, 8.0)), (5, (11.0, 6.0)), (6, (12.0, 4.0)),]
+
+
+@patch("app.game.primitives.get_current_context")
+def test_opponents_returns_copy_of_context_opponents(
+    mock_get_current_context,
+    context
+):
+    mock_get_current_context.return_value = context
+
+    result = opponents()
+    result.clear()
+
+    assert context.opponents == [
+        (4, (10.0, 8.0)),
+        (5, (11.0, 6.0)),
+        (6, (12.0, 4.0)),
+    ]
 
 
 @patch("app.game.primitives.get_current_context")
@@ -143,6 +177,48 @@ def test_starting_position_returns_current_player_starting_position(
     mock_get_current_context.return_value = context
 
     assert starting_position() == (3.0, 3.0)
+
+
+@patch("app.game.primitives.get_current_context")
+def test_own_goal_returns_left_goal_when_player_is_on_left_side(
+    mock_get_current_context,
+    context
+):
+    mock_get_current_context.return_value = context
+
+    assert own_goal() == LEFT_GOAL
+
+
+@patch("app.game.primitives.get_current_context")
+def test_opponent_goal_returns_right_goal_when_player_is_on_left_side(
+    mock_get_current_context,
+    context
+):
+    mock_get_current_context.return_value = context
+
+    assert opponent_goal() == RIGHT_GOAL
+
+
+@patch("app.game.primitives.get_current_context")
+def test_own_goal_returns_right_goal_when_player_is_on_right_side(
+    mock_get_current_context,
+    context
+):
+    context.side = Side.RIGHT
+    mock_get_current_context.return_value = context
+
+    assert own_goal() == RIGHT_GOAL
+
+
+@patch("app.game.primitives.get_current_context")
+def test_opponent_goal_returns_left_goal_when_player_is_on_right_side(
+    mock_get_current_context,
+    context
+):
+    context.side = Side.RIGHT
+    mock_get_current_context.return_value = context
+
+    assert opponent_goal() == LEFT_GOAL
 
 
 @patch("app.game.primitives.get_current_context")
