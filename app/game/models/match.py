@@ -2,21 +2,22 @@ from dataclasses import dataclass
 from enum import Enum
 import copy
 
-from app.game.models.ball import Ball
+from app.game.models.ball import Ball, BallSnapshot
 from app.game.models.match_participation import MatchParticipation
-from app.game.models.player_in_match import PlayerInMatch
+from app.game.models.player_in_match import PlayerInMatchSnapshot
 
 class MatchState(str, Enum):
     NOT_STARTED = "not_started"
     IN_PROGRESS = "in_progress"
     FINISHED = "finished"
 
+# we use snapshots of ball and player in match to make sure we work with immutable values
 @dataclass(frozen=True)
 class MatchSnapshot:
-    players_a: tuple[PlayerInMatch, ...]
-    players_b: tuple[PlayerInMatch, ...]
+    players_a: tuple[PlayerInMatchSnapshot, ...]
+    players_b: tuple[PlayerInMatchSnapshot, ...]
 
-    ball: Ball
+    ball: BallSnapshot
 
     duration_ticks: int
     current_tick: int
@@ -31,7 +32,7 @@ class Match:
     participation_b: MatchParticipation
     ball: Ball
 
-    duration_ticks: int  # Total duration of the match expressed in simulation ticks
+    duration_ticks: int  # total duration of the match expressed in simulation ticks
 
     current_tick: int = 0
 
@@ -52,6 +53,7 @@ class Match:
             score_b=self.participation_b.goals,
         )
 
+    
 
 
     
