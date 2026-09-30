@@ -261,7 +261,52 @@ def calculate_kick_force_factor(
 
 
 def calculate_ball_next_position(ball_state: BallState) -> Position:
-    raise NotImplementedError
+    """
+    Calculate the ball position after one tic.
+
+    The displacement is estimated using the average speed between the
+    beginning and the end of the tic while preserving the current
+    direction of movement.
+
+    Args:
+        ball_state: Current ball position and velocity.
+
+    Returns:
+        Predicted ball position after one tic.
+    """
+    position, velocity = ball_state
+
+    speed = _vector_magnitude(velocity)
+
+    if speed <= BALL_STOP_THRESHOLD:
+        return position
+
+    deceleration = _ball_deceleration(speed)
+
+    new_speed = max(
+        speed - deceleration * TIC_DURATION,
+        0.0,
+    )
+
+    if new_speed <= BALL_STOP_THRESHOLD:
+        new_speed = 0.0
+
+    # Unit vector in the current direction of movement.
+    direction = (
+        velocity[0] / speed,
+        velocity[1] / speed,
+    )
+
+    # We use the average speed during the tic to approximate
+    # the displacement while the ball is decelerating.
+    average_speed = (speed + new_speed) / 2
+
+    displacement = average_speed * TIC_DURATION
+
+    return (
+        position[0] + direction[0] * displacement,
+        position[1] + direction[1] * displacement,
+    )
 
 
 def validate_distance(distance: float) -> None:

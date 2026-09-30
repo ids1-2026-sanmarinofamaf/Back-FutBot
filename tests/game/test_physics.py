@@ -16,7 +16,8 @@ from app.game.constants import (
     MAX_CONTROL_RANGE,
     MIN_KICK_COOLDOWN_TICS,
     MAX_KICK_COOLDOWN_TICS,
-    TIC_DURATION
+    TIC_DURATION,
+    BALL_STOP_THRESHOLD
 )
 from app.game.physics import (
     _smoothstep,
@@ -27,7 +28,8 @@ from app.game.physics import (
     calculate_max_move_distance,
     calculate_speed_factor,
     calculate_kick_travel_distance,
-    calculate_kick_force_factor
+    calculate_kick_force_factor,
+    calculate_ball_next_position
 )
 
 
@@ -353,3 +355,62 @@ def test_calculate_kick_force_factor_returns_factor_that_reaches_target_distance
     )
 
     assert actual_distance >= target_distance
+
+
+def test_calculate_ball_next_position_returns_same_position_when_ball_is_stopped():
+    ball_state = (
+        (10.0, 5.0),
+        (0.0, 0.0),
+    )
+
+    assert calculate_ball_next_position(ball_state) == (10.0, 5.0)
+
+
+def test_calculate_ball_next_position_returns_same_position_below_stop_threshold():
+    ball_state = (
+        (10.0, 5.0),
+        (BALL_STOP_THRESHOLD / 2, 0.0),
+    )
+
+    assert calculate_ball_next_position(ball_state) == (10.0, 5.0)
+
+
+def test_calculate_ball_next_position_moves_ball_in_x_direction():
+    position = (0.0, 0.0)
+    velocity = (10.0, 0.0)
+
+    next_position = calculate_ball_next_position(
+        (position, velocity)
+    )
+
+    assert next_position[0] > position[0]
+    assert isclose(next_position[1], position[1])
+
+
+def test_calculate_ball_next_position_moves_ball_in_y_direction():
+    position = (0.0, 0.0)
+    velocity = (0.0, 10.0)
+
+    next_position = calculate_ball_next_position(
+        (position, velocity)
+    )
+
+    assert isclose(next_position[0], position[0])
+    assert next_position[1] > position[1]
+
+
+def test_calculate_ball_next_position_preserves_movement_direction():
+    position = (0.0, 0.0)
+    velocity = (3.0, 4.0)
+
+    next_position = calculate_ball_next_position(
+        (position, velocity)
+    )
+
+    displacement_x = next_position[0] - position[0]
+    displacement_y = next_position[1] - position[1]
+
+    assert isclose(
+        displacement_y / displacement_x,
+        4.0 / 3.0,
+    )
