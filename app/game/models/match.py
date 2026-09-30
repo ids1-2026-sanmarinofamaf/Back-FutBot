@@ -40,15 +40,21 @@ class Match:
 
     def snapshot(self) -> MatchSnapshot:  # returns a copy of match in the state it was in when made
         return MatchSnapshot(
+            # we get the status of the players from each team at a certain tick
             players_a=tuple(
-                copy.deepcopy(self.participation_a.players)
+                player.snapshot()
+                for player in self.participation_a.players
             ),
             players_b=tuple(
-                copy.deepcopy(self.participation_b.players)
+                player.snapshot()
+                for player in self.participation_b.players
             ),
-            ball=copy.deepcopy(self.ball),
+            # we get the state of the ball for each team at a certain tick
+            ball=self.ball.snapshot(),
+
             duration_ticks=self.duration_ticks,
             current_tick=self.current_tick,
+            # we get the scores of each team at a ceratin tick
             score_a=self.participation_a.goals,
             score_b=self.participation_b.goals,
         )
