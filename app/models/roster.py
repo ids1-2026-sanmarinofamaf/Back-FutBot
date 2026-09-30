@@ -35,3 +35,45 @@ class Roster(Base):
         back_populates="roster",
         cascade="all, delete-orphan"  # delete associations when removed from the roster
     )
+
+    # validations
+    def validate_roster(self):
+        if len(self.players) != 6:
+            raise ValueError(
+                "A roster must have exactly 6 players"
+            )
+
+        if sum(player.is_starter for player in self.players) != 3:
+            raise ValueError(
+                "A roster must have exactly 3 starters and 3 substitutes"
+            )
+
+        for i in range(len(self.players)):
+            for j in range(i + 1, len(self.players)):
+                if self.players[i].player_id == self.players[j].player_id:
+                    raise ValueError(
+                        "A roster cannot contain duplicate players"
+                    )
+
+        for player in self.players:
+            if player.is_starter:
+                if player.slot is None:
+                    raise ValueError(
+                        "A starter must have a roster slot"
+                    )
+
+                if player.initial_behavior_id is None:
+                    raise ValueError(
+                        "A starter must have an initial behavior"
+                    )
+            else:
+                if player.slot is not None:
+                    raise ValueError(
+                        "A substitute cannot have a roster slot"
+                    )
+
+                if player.initial_behavior_id is not None:
+                    raise ValueError(
+                        "A substitute cannot have an initial behavior"
+                    )
+        
