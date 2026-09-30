@@ -32,7 +32,7 @@ class MatchRunner:
 
         self.game_engine.step(match,snapshot,actions)   # we update the match state, using the snapshot and actions
 
-        return match
+        match.current_tick += 1 # update the tick
 
 
     async def run_match(self, match: Match) -> Match:

@@ -37,9 +37,6 @@ class Match:
 
     state: MatchState = MatchState.NOT_STARTED
 
-    def snapshot(self) -> "Match":  # returns a copy of match in the state it was in when made
-        return copy.deepcopy(self)
-
     def snapshot(self) -> MatchSnapshot:  # returns a copy of match in the state it was in when made
         return MatchSnapshot(
             players_a=tuple(
