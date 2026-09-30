@@ -1,5 +1,7 @@
 """Physics calculations used by the game simulation."""
 
+from math import hypot, isclose
+
 from .types import Direction, Velocity, Position, BallState
 from .constants import (
     MIN_MOVE_SPEED,
@@ -10,6 +12,7 @@ from .constants import (
     MAX_CONTROL_RANGE,
     MIN_KICK_COOLDOWN_TICS,
     MAX_KICK_COOLDOWN_TICS,
+    TIC_DURATION
 )
 
 def max_move_speed(speed: int) -> float:
@@ -98,15 +101,51 @@ def kick_cooldown_tics(agility: int) -> int:
 
 
 def calculate_max_move_distance(max_move_speed: float) -> float:
-    raise NotImplementedError
+    """
+    Calculate the maximum distance a player can move during one tic.
+
+    Args:
+        max_move_speed: Player's maximum movement speed in meters per second.
+
+    Returns:
+        Maximum distance the player can travel during one tic, in meters.
+    
+    Raises:
+        ValueError: If max_move_speed is outside the valid range.
+    """
+    if not MIN_MOVE_SPEED <= max_move_speed <= MAX_MOVE_SPEED :
+        raise ValueError(f"Velocidad invalida: {max_move_speed}")
+
+    return max_move_speed * TIC_DURATION
 
 
 def calculate_speed_factor(
     max_move_speed: float,
     distance: float
 ) -> float:
-    raise NotImplementedError
+    """
+    Calculate the movement speed factor required to cover a distance in one tic.
 
+    Args:
+        max_move_speed: Player's maximum movement speed in meters per second.
+        distance: Distance to cover in meters.
+
+    Returns:
+        Speed factor in the range [0.0, 1.0]. Returns 1.0 if the requested
+        distance exceeds the maximum distance the player can cover in one tic.
+
+    Raises:
+        ValueError: If distance is negative or max_move_speed is not positive.
+    """
+    validate_distance(distance)
+
+    if distance == 0:
+        return 0.0
+
+    return min(
+        distance / calculate_max_move_distance(max_move_speed),
+        1.0
+    )
 
 def calculate_kick_travel_distance(
     ball_velocity: Velocity,
@@ -127,6 +166,57 @@ def calculate_kick_force_factor(
 
 def calculate_ball_next_position(ball_state: BallState) -> Position:
     raise NotImplementedError
+
+
+def validate_distance(distance: float) -> None:
+    """
+    Validate that a distance is non-negative.
+
+    Args:
+        distance: Distance value to validate.
+
+    Raises:
+        ValueError: If the distance is negative.
+    """
+    if distance < 0:
+        raise ValueError("Distance cannot be negative.")
+
+
+def validate_direction(direction: Direction) -> None:
+    """
+    Validate that a direction is a unit vector.
+
+    Floating-point comparisons use a small tolerance to account for
+    numerical precision errors.
+
+    Args:
+        direction: Direction vector to validate.
+
+    Raises:
+        ValueError: If the direction is not approximately a unit vector.
+    """
+    magnitude = hypot(direction[0], direction[1])
+
+    if not isclose(
+        magnitude,
+        1.0,rel_tol=1e-9,
+        abs_tol=1e-9
+    ):
+        raise ValueError("Direction must be a unit vector.")
+    
+
+def validate_factor(factor: float) -> None:
+    """
+    Validate that a factor belongs to the interval [0.0, 1.0].
+
+    Args:
+        factor: Factor to validate.
+
+    Raises:
+        ValueError: If the factor is outside the interval [0.0, 1.0].
+    """
+    if not 0.0 <= factor <= 1.0:
+        raise ValueError("Factor must be between 0.0 and 1.0.")
 
 
 def _validate_pacss(pacss: int) -> None:

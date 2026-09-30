@@ -2,7 +2,7 @@
 Behavior API primitives and helpers available to player behaviors.
 """
 
-from math import hypot, isclose
+from math import hypot
 
 from .constants import LEFT_GOAL, RIGHT_GOAL
 from .models.actions import MoveAction, KickAction, WaitAction
@@ -13,7 +13,10 @@ from .physics import(
     calculate_speed_factor,
     calculate_kick_travel_distance,
     calculate_kick_force_factor,
-    calculate_ball_next_position
+    calculate_ball_next_position,
+    validate_distance,
+    validate_direction,
+    validate_factor
 )
 
 def self() -> PlayerState:
@@ -201,7 +204,7 @@ def can_move_distance(distance: float) -> bool:
     Raises:
         ValueError: If distance is negative.
     """
-    _validate_distance(distance)
+    validate_distance(distance)
     
     context = get_current_context()
     max_speed = context.max_move_speed
@@ -224,7 +227,7 @@ def speed_for_distance(distance: float) -> float:
     Raises:
         ValueError: If distance is negative.
     """
-    _validate_distance(distance)
+    validate_distance(distance)
     
     context = get_current_context()
     max_speed = context.max_move_speed
@@ -249,8 +252,8 @@ def can_kick_distance(direction: Direction, distance: float) -> bool:
         ValueError: If distance is negative.
         ValueError: If direction is not a valid unit vector.
     """
-    _validate_distance(distance)
-    _validate_direction(direction)
+    validate_distance(distance)
+    validate_direction(direction)
 
     context = get_current_context()
     ball_velocity = context.ball[1]
@@ -281,8 +284,8 @@ def kick_force_for_distance(direction: Direction, distance: float) -> float:
         ValueError: If distance is negative.
         ValueError: If direction is not a valid unit vector.
     """
-    _validate_distance(distance)
-    _validate_direction(direction)
+    validate_distance(distance)
+    validate_direction(direction)
 
     context = get_current_context()
     ball_velocity = context.ball[1]
@@ -312,8 +315,8 @@ def move(direction: Direction, speed_factor: float) -> MoveAction:
         ValueError: If direction is not a valid unit vector.
         ValueError: If speed_factor is outside the interval [0.0, 1.0].
     """
-    _validate_direction(direction)
-    _validate_factor(speed_factor)
+    validate_direction(direction)
+    validate_factor(speed_factor)
 
     return MoveAction(
         move_direction=direction,
@@ -336,8 +339,8 @@ def kick(direction: Direction, force_factor: float) -> KickAction:
         ValueError: If direction is not a valid unit vector.
         ValueError: If force_factor is outside the interval [0.0, 1.0].
     """
-    _validate_direction(direction)
-    _validate_factor(force_factor)
+    validate_direction(direction)
+    validate_factor(force_factor)
 
     return KickAction(
         kick_direction=direction,
@@ -412,53 +415,3 @@ def next_ball_position() -> Position:
     ball_state = context.ball
 
     return calculate_ball_next_position(ball_state)
-
-
-def _validate_distance(distance: float) -> None:
-    """
-    Validate that a distance is non-negative.
-
-    Args:
-        distance: Distance value to validate.
-
-    Raises:
-        ValueError: If the distance is negative.
-    """
-    if distance < 0:
-        raise ValueError("Distance cannot be negative.")
-
-
-def _validate_direction(direction: Direction) -> None:
-    """
-    Validate that a direction is a unit vector.
-
-    Floating-point comparisons use a small tolerance to account for
-    numerical precision errors.
-
-    Args:
-        direction: Direction vector to validate.
-
-    Raises:
-        ValueError: If the direction is not approximately a unit vector.
-    """
-    magnitude = hypot(direction[0], direction[1])
-
-    if not isclose(
-        magnitude,
-        1.0,rel_tol=1e-9,
-        abs_tol=1e-9
-    ):
-        raise ValueError("Direction must be a unit vector.")
-
-def _validate_factor(factor: float) -> None:
-    """
-    Validate that a factor belongs to the interval [0.0, 1.0].
-
-    Args:
-        factor: Factor to validate.
-
-    Raises:
-        ValueError: If the factor is outside the interval [0.0, 1.0].
-    """
-    if not 0.0 <= factor <= 1.0:
-        raise ValueError("Factor must be between 0.0 and 1.0.")

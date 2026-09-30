@@ -15,15 +15,19 @@ from app.game.constants import (
     MIN_CONTROL_RANGE,
     MAX_CONTROL_RANGE,
     MIN_KICK_COOLDOWN_TICS,
-    MAX_KICK_COOLDOWN_TICS
+    MAX_KICK_COOLDOWN_TICS,
+    TIC_DURATION
 )
 from app.game.physics import (
     _smoothstep,
     max_move_speed,
     max_kick_force,
     control_range,
-    kick_cooldown_tics
+    kick_cooldown_tics,
+    calculate_max_move_distance,
+    calculate_speed_factor
 )
+
 
 def test_smoothstep_returns_zero_for_minimum_pacss():
     assert _smoothstep(MIN_PACSS) == 0.0
@@ -37,15 +41,17 @@ def test_smoothstep_returns_one_for_maximum_pacss():
     assert _smoothstep(MAX_PACSS) == 1.0
 
 
-def test_smoothstep_raises_value_error_below_minimum_pacss():
+@pytest.mark.parametrize(
+    "invalid_pacss",
+    [
+        MIN_PACSS - 1,
+        MAX_PACSS + 1,
+    ],
+)
+def test_smoothstep_raises_value_error_for_invalid_pacss(invalid_pacss):
     with pytest.raises(ValueError):
-        _smoothstep(MIN_PACSS - 1)
-
-
-def test_smoothstep_raises_value_error_above_maximum_pacss():
-    with pytest.raises(ValueError):
-        _smoothstep(MAX_PACSS + 1)
-
+        _smoothstep(invalid_pacss)
+        
 
 def test_max_move_speed_returns_minimum_speed_for_minimum_pacss():
     assert max_move_speed(MIN_PACSS) == MIN_MOVE_SPEED
@@ -63,10 +69,16 @@ def test_max_move_speed_returns_middle_speed_for_middle_pacss():
 def test_max_move_speed_returns_maximum_speed_for_maximum_pacss():
     assert max_move_speed(MAX_PACSS) == MAX_MOVE_SPEED
 
-
-def test_max_move_speed_raises_value_error_for_invalid_pacss():
+@pytest.mark.parametrize(
+    "invalid_pacss",
+    [
+        MIN_PACSS - 1,
+        MAX_PACSS + 1,
+    ],
+)
+def test_max_move_speed_raises_value_error_for_invalid_pacss(invalid_pacss):
     with pytest.raises(ValueError):
-        max_move_speed( MAX_PACSS + 1)
+        max_move_speed(invalid_pacss)
 
 
 def test_max_kick_force_returns_minimum_force_for_minimum_pacss():
@@ -86,9 +98,16 @@ def test_max_kick_force_returns_maximum_force_for_maximum_pacss():
     assert max_kick_force(MAX_PACSS) == MAX_KICK_FORCE
 
 
-def test_max_kick_force_raises_value_error_for_invalid_pacss():
+@pytest.mark.parametrize(
+    "invalid_pacss",
+    [
+        MIN_PACSS - 1,
+        MAX_PACSS + 1,
+    ],
+)
+def test_max_kick_force_raises_value_error_for_invalid_pacss(invalid_pacss):
     with pytest.raises(ValueError):
-        max_kick_force( MAX_PACSS + 1)
+        max_kick_force(invalid_pacss)
 
 
 def test_control_range_returns_minimum_range_for_minimum_pacss():
@@ -108,9 +127,18 @@ def test_control_range_returns_maximum_range_for_maximum_pacss():
     assert control_range(MAX_PACSS) == MAX_CONTROL_RANGE
 
 
-def test_control_range_raises_value_error_for_invalid_pacss():
+@pytest.mark.parametrize(
+    "invalid_pacss",
+    [
+        MIN_PACSS - 0.1,
+        MAX_PACSS + 0.1,
+    ],
+)
+def test_control_range_raises_value_error_for_invalid_pacss(
+    invalid_pacss
+):
     with pytest.raises(ValueError):
-        control_range(MAX_PACSS + 1)
+        control_range(invalid_pacss)
 
 
 def test_kick_cooldown_returns_maximum_cooldown_for_minimum_pacss():
@@ -135,3 +163,86 @@ def test_kick_cooldown_returns_minimum_cooldown_for_maximum_pacss():
 def test_kick_cooldown_raises_value_error_for_invalid_pacss():
     with pytest.raises(ValueError):
         kick_cooldown_tics(MAX_PACSS + 1)
+
+
+def test_calculate_max_move_distance_returns_distance_for_minimum_speed():
+    expected = MIN_MOVE_SPEED * TIC_DURATION
+
+    assert isclose(
+        calculate_max_move_distance(MIN_MOVE_SPEED),
+        expected
+    )
+
+
+def test_calculate_max_move_distance_returns_distance_for_maximum_speed():
+    expected = MAX_MOVE_SPEED * TIC_DURATION
+
+    assert isclose(
+        calculate_max_move_distance(MAX_MOVE_SPEED),
+        expected
+    )
+
+
+@pytest.mark.parametrize(
+    "invalid_speed",
+    [
+        MIN_MOVE_SPEED - 1,
+        MAX_MOVE_SPEED + 1,
+    ],
+)
+def test_calculate_max_move_distance_raises_value_error_for_invalid_speed(
+    invalid_speed
+):
+    with pytest.raises(ValueError):
+        calculate_max_move_distance(invalid_speed)
+
+
+def test_calculate_speed_factor_returns_zero_for_zero_distance():
+    assert calculate_speed_factor(MIN_MOVE_SPEED, 0.0) == 0.0
+
+
+def test_calculate_speed_factor_returns_half_for_half_max_distance():
+    max_distance = calculate_max_move_distance(MAX_MOVE_SPEED)
+    distance = max_distance / 2
+
+    factor = calculate_speed_factor(MAX_MOVE_SPEED, distance)
+
+    assert isclose(factor, 0.5)
+
+
+def test_calculate_speed_factor_returns_one_for_max_distance():
+    max_distance = calculate_max_move_distance(MAX_MOVE_SPEED)
+
+    factor = calculate_speed_factor(MAX_MOVE_SPEED, max_distance)
+
+    assert isclose(factor, 1.0)
+
+
+def test_calculate_speed_factor_returns_one_when_distance_exceeds_maximum():
+    max_distance = calculate_max_move_distance(MAX_MOVE_SPEED)
+
+    factor = calculate_speed_factor(
+        MAX_MOVE_SPEED,
+        max_distance * 2
+    )
+
+    assert isclose(factor, 1.0)
+
+
+def test_calculate_speed_factor_raises_value_error_for_negative_distance():
+    with pytest.raises(ValueError):
+        calculate_speed_factor(MAX_MOVE_SPEED, -1.0)
+
+
+@pytest.mark.parametrize(
+    "invalid_speed",
+    [
+        MIN_MOVE_SPEED - 0.1,
+        MAX_MOVE_SPEED + 0.1,
+    ],
+)
+def test_calculate_speed_factor_raises_value_error_for_invalid_speed(
+    invalid_speed
+):
+    with pytest.raises(ValueError):
+        calculate_speed_factor(invalid_speed, 1.0)
