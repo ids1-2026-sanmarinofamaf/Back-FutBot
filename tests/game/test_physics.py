@@ -25,7 +25,9 @@ from app.game.physics import (
     control_range,
     kick_cooldown_tics,
     calculate_max_move_distance,
-    calculate_speed_factor
+    calculate_speed_factor,
+    calculate_kick_travel_distance,
+    calculate_kick_force_factor
 )
 
 
@@ -51,7 +53,7 @@ def test_smoothstep_returns_one_for_maximum_pacss():
 def test_smoothstep_raises_value_error_for_invalid_pacss(invalid_pacss):
     with pytest.raises(ValueError):
         _smoothstep(invalid_pacss)
-        
+
 
 def test_max_move_speed_returns_minimum_speed_for_minimum_pacss():
     assert max_move_speed(MIN_PACSS) == MIN_MOVE_SPEED
@@ -246,3 +248,108 @@ def test_calculate_speed_factor_raises_value_error_for_invalid_speed(
 ):
     with pytest.raises(ValueError):
         calculate_speed_factor(invalid_speed, 1.0)
+
+
+def test_calculate_kick_travel_distance_returns_zero_when_initial_speed_is_below_stop_threshold():
+    distance = calculate_kick_travel_distance(
+        ball_velocity=(0.0, 0.0),
+        kick_direction=(1.0, 0.0),
+        kick_force=0.0,
+    )
+
+    assert distance == 0.0
+
+
+def test_calculate_kick_travel_distance_increases_with_kick_force():
+    low_force_distance = calculate_kick_travel_distance(
+        ball_velocity=(0.0, 0.0),
+        kick_direction=(1.0, 0.0),
+        kick_force=10.0,
+    )
+
+    high_force_distance = calculate_kick_travel_distance(
+        ball_velocity=(0.0, 0.0),
+        kick_direction=(1.0, 0.0),
+        kick_force=20.0,
+    )
+
+    assert high_force_distance > low_force_distance
+
+
+def test_calculate_kick_travel_distance_uses_ball_inertia_in_kick_direction():
+    without_inertia = calculate_kick_travel_distance(
+        ball_velocity=(0.0, 0.0),
+        kick_direction=(1.0, 0.0),
+        kick_force=20.0,
+    )
+
+    with_inertia = calculate_kick_travel_distance(
+        ball_velocity=(10.0, 0.0),
+        kick_direction=(1.0, 0.0),
+        kick_force=20.0,
+    )
+
+    assert with_inertia > without_inertia
+
+
+def test_calculate_kick_travel_distance_reduces_distance_when_ball_moves_against_kick():
+    without_inertia = calculate_kick_travel_distance(
+        ball_velocity=(0.0, 0.0),
+        kick_direction=(1.0, 0.0),
+        kick_force=20.0,
+    )
+
+    against_inertia = calculate_kick_travel_distance(
+        ball_velocity=(-10.0, 0.0),
+        kick_direction=(1.0, 0.0),
+        kick_force=20.0,
+    )
+
+    assert against_inertia < without_inertia
+
+
+def test_calculate_kick_force_factor_returns_zero_for_zero_distance():
+    factor = calculate_kick_force_factor(
+        ball_velocity=(0.0, 0.0),
+        kick_direction=(1.0, 0.0),
+        kick_force=20.0,
+        distance=0.0,
+    )
+
+    assert factor == 0.0
+
+
+def test_calculate_kick_force_factor_returns_one_when_distance_exceeds_maximum():
+    max_distance = calculate_kick_travel_distance(
+        ball_velocity=(0.0, 0.0),
+        kick_direction=(1.0, 0.0),
+        kick_force=20.0,
+    )
+
+    factor = calculate_kick_force_factor(
+        ball_velocity=(0.0, 0.0),
+        kick_direction=(1.0, 0.0),
+        kick_force=20.0,
+        distance=max_distance + 1.0,
+    )
+
+    assert factor == 1.0
+
+
+def test_calculate_kick_force_factor_returns_factor_that_reaches_target_distance():
+    target_distance = 20.0
+
+    factor = calculate_kick_force_factor(
+        ball_velocity=(0.0, 0.0),
+        kick_direction=(1.0, 0.0),
+        kick_force=20.0,
+        distance=target_distance,
+    )
+
+    actual_distance = calculate_kick_travel_distance(
+        ball_velocity=(0.0, 0.0),
+        kick_direction=(1.0, 0.0),
+        kick_force=20.0 * factor,
+    )
+
+    assert actual_distance >= target_distance

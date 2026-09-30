@@ -1,6 +1,6 @@
 """Physics calculations used by the game simulation."""
 
-from math import hypot, isclose
+from math import hypot, isclose, sqrt
 
 from .types import Direction, Velocity, Position, BallState
 from .constants import (
@@ -12,7 +12,12 @@ from .constants import (
     MAX_CONTROL_RANGE,
     MIN_KICK_COOLDOWN_TICS,
     MAX_KICK_COOLDOWN_TICS,
-    TIC_DURATION
+    TIC_DURATION,
+    MAX_BALL_SPEED,
+    MIN_BALL_DECELERATION,
+    MAX_BALL_DECELERATION,
+    KICK_INERTIA_FACTOR,
+    BALL_STOP_THRESHOLD
 )
 
 def max_move_speed(speed: int) -> float:
@@ -152,8 +157,45 @@ def calculate_kick_travel_distance(
     kick_direction: Direction,
     kick_force: float
 ) -> float:
-    raise NotImplementedError
+    """
+    Calculate the estimated distance the ball will travel after a kick.
 
+    The estimate considers the ball's current velocity in the kick direction,
+    the applied kick force, and an average deceleration between the initial
+    deceleration and the minimum ball deceleration.
+
+    Args:
+        ball_velocity: Ball velocity before the kick.
+        kick_direction: Unit vector representing the kick direction.
+        kick_force: Effective kick force applied to the ball.
+
+    Returns:
+        Estimated travel distance of the ball in meters.
+    """
+    validate_direction(kick_direction)
+
+    initial_speed = _kick_initial_speed(
+        ball_velocity,
+        kick_direction,
+        kick_force,
+    )
+
+    if initial_speed == 0.0:
+        return 0.0
+
+    initial_deceleration = _ball_deceleration(initial_speed)
+
+    # As the ball slows down, its deceleration approaches the minimum.
+    # We use the average as a simple approximation for the whole trajectory.
+    average_deceleration = (
+        initial_deceleration + MIN_BALL_DECELERATION
+    ) / 2
+
+    # From v² = (v0² -vf²) + 2ad, with final velocity equal to BALL_STOP_THRESHOLD
+    return (
+        initial_speed**2 - BALL_STOP_THRESHOLD**2
+    ) / (2 * average_deceleration)
+    
 
 def calculate_kick_force_factor(
     ball_velocity: Velocity,
@@ -161,7 +203,61 @@ def calculate_kick_force_factor(
     kick_force: float,
     distance: float
 ) -> float:
-    raise NotImplementedError
+    """
+    Calculate the kick force factor required to reach a target distance.
+
+    Args:
+        ball_velocity: Ball velocity before the kick.
+        kick_direction: Unit vector representing the kick direction.
+        max_kick_force: Player's maximum effective kick force.
+        distance: Target travel distance in meters.
+
+    Returns:
+        Kick force factor in the range [0.0, 1.0]. Returns 1.0 if the
+        requested distance cannot be reached with the available kick force.
+
+    Raises:
+        ValueError: If distance is negative or max_kick_force is not positive.
+    """
+    validate_distance(distance)
+    validate_direction(kick_direction)
+
+    if kick_force <= 0:
+        raise ValueError(f"Fuerza maxima invalida: {kick_force}")
+
+    if distance == 0:
+        return 0.0
+
+    max_distance = calculate_kick_travel_distance(
+        ball_velocity,
+        kick_direction,
+        kick_force,
+    )
+
+    if distance >= max_distance:
+        return 1.0
+
+    low = 0.0
+    high = 1.0
+
+    # Binary search to found the smallest factor which reach the target
+    for _ in range(12):
+        middle = (low + high) / 2
+
+        test_force = kick_force * middle
+
+        travel_distance = calculate_kick_travel_distance(
+            ball_velocity,
+            kick_direction,
+            test_force,
+        )
+
+        if travel_distance < distance:
+            low = middle
+        else:
+            high = middle
+
+    return high
 
 
 def calculate_ball_next_position(ball_state: BallState) -> Position:
@@ -242,9 +338,10 @@ def _smoothstep(pacss: int) -> float:
     """
     _validate_pacss(pacss)
 
-    # Convertimos el PACSS de [20, 100] a [0,1]
+    # Normalize PACSS to [0,1]
     n = (pacss - 20) / 80
-    # Calculamos smoothstep
+
+    # Smoothstep
     smooth = 3 * n**2 - 2 * n**3
 
     return smooth
@@ -268,3 +365,102 @@ def _interpolate_pacss(
     """
 
     return minimum + _smoothstep(pacss) * (maximum - minimum)
+
+
+def _dot_product(
+    vector_a: tuple[float, float],
+    vector_b: tuple[float, float],
+) -> float:
+    """
+    Calculate the dot product between two 2D vectors.
+
+    Args:
+        vector_a: First 2D vector.
+        vector_b: Second 2D vector.
+
+    Returns:
+        Dot product of the two vectors.
+    """
+    return (
+        vector_a[0] * vector_b[0]
+        + vector_a[1] * vector_b[1]
+    )
+
+
+def _vector_magnitude(vector: tuple[float, float]) -> float:
+    """
+    Calculate the magnitude of a 2D vector.
+
+    Args:
+        vector: Two-dimensional vector.
+
+    Returns:
+        Magnitude of the vector.
+    """
+    return sqrt(vector[0] ** 2 + vector[1] ** 2)
+
+
+def _ball_deceleration(speed: float) -> float:
+    """
+    Calculate the ball deceleration based on its current speed.
+
+    Args:
+        speed: Current ball speed in meters per second.
+
+    Returns:
+        Ball deceleration in meters per second squared.
+
+    Raises:
+        ValueError: If speed is negative or exceeds MAX_BALL_SPEED.
+    """
+    if not 0.0 <= speed <= MAX_BALL_SPEED:
+        raise ValueError(f"Velocidad de pelota invalida: {speed}")
+
+    # Normalize speed to [0, 1].
+    n = speed / MAX_BALL_SPEED
+
+    # Smoothstep
+    smooth = 3 * n**2 - 2 * n**3
+
+    return (
+        MIN_BALL_DECELERATION
+        + smooth * (MAX_BALL_DECELERATION - MIN_BALL_DECELERATION)
+    )
+
+
+def _kick_initial_speed(
+    ball_velocity: Velocity,
+    kick_direction: Direction,
+    kick_force: float,
+) -> float:
+    """
+    Calculate the ball's initial speed in the kick direction after a kick.
+
+    Args:
+        ball_velocity: Ball velocity before the kick.
+        kick_direction: Unit vector representing the kick direction.
+        kick_force: Effective kick force applied to the ball.
+
+    Returns:
+        Initial ball speed after the kick, limited by MAX_BALL_SPEED.
+
+    Raises:
+        ValueError: If kick_force is negative.
+    """
+    if kick_force < 0:
+        raise ValueError(f"Fuerza de pateo invalida: {kick_force}")
+
+    # Velocity aligned with kick
+    parallel_velocity = _dot_product(
+        ball_velocity,
+        kick_direction,
+    )
+
+    # Kick conserved some ball inertia 
+    inherited_velocity = parallel_velocity * KICK_INERTIA_FACTOR
+
+    # Velocity cannot be negative or faster than MAX_BALL_SPEED
+    return min(
+        max(kick_force + inherited_velocity, 0.0),
+        MAX_BALL_SPEED,
+    )
