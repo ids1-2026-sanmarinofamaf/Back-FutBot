@@ -9,6 +9,7 @@ from app.api.match_websocket import router as match_websocket_router
 
 
 
+
 # Se ejecuta una vez al arrancar la app y una vez al apagar
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -24,3 +25,5 @@ app = FastAPI(lifespan=lifespan)
 @app.get("/")
 def root():
     return{"message": "FutBot backend running"}
+
+app.include_router(match_websocket_router)

@@ -44,7 +44,7 @@ class MatchRunner:
         message = build_match_state_message(new_snapshot)
 
         # we sent that new status to everyone connected
-        await match_connection_manager.broadcast(match.match_id, message,)
+        await match_connection_manager.broadcast(match.match_id, message)
 
     async def run_match(self, match: Match) -> Match:
         # first, check that it's a valid match to start
@@ -62,7 +62,7 @@ class MatchRunner:
 
         initial_message = build_match_state_message(initial_snapshot)
 
-        await match_connection_manager.broadcast(match.match_id,initial_message,)
+        await match_connection_manager.broadcast(match.match_id,initial_message)
 
         while match.current_tick < match.duration_ticks:
             # start the tick
