@@ -25,3 +25,9 @@ class Period(Enum):
     SECOND_QUARTER = 2
     THIRD_QUARTER = 3
     FOURTH_QUARTER = 4
+    
+
+# Enum representing the field's sides
+class Side(Enum):
+    LEFT = "left"
+    RIGHT = "right"
