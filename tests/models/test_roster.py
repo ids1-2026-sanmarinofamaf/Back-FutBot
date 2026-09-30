@@ -143,6 +143,34 @@ def test_roster_and_players_on_roster_are_stored_and_retrieved():
             for player in saved_roster.players
         } == {1, 2, 3, 4, 5, 6}
 
+        # verify that starter slots were persisted
+        assert {
+            player.slot
+            for player in starters
+        } == {
+            RosterSlot.LEFT,
+            RosterSlot.CENTER,
+            RosterSlot.RIGHT,
+        }
+
+        # verify that initial behavior was persisted
+        assert all(
+            player.initial_behavior_id == 1
+            for player in starters
+        )
+
+        # verify substitues doesnt have slot and behavior
+        assert all(
+            player.slot is None
+            for player in substitutes
+        )
+
+        assert all(
+            player.initial_behavior_id is None
+            for player in substitutes
+        )
+
+
     finally:
         session.close()
 

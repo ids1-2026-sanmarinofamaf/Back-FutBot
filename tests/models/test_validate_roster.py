@@ -7,7 +7,6 @@ from tests.models.stubs import Club, Player, Behavior
 def test_valid_roster(valid_roster):
     valid_roster.validate_roster()
 
-
 def test_roster_rejects_less_than_six_players(valid_roster):
     valid_roster.players.pop()
 
@@ -15,7 +14,6 @@ def test_roster_rejects_less_than_six_players(valid_roster):
         match="A roster must have exactly 6 players",
     ):
         valid_roster.validate_roster()
-
 
 def test_roster_rejects_more_than_six_players(valid_roster):
     valid_roster.players.append(
@@ -32,7 +30,6 @@ def test_roster_rejects_more_than_six_players(valid_roster):
     ):
         valid_roster.validate_roster()
 
-
 def test_roster_rejects_wrong_number_of_starters(valid_roster):
     valid_roster.players[3].is_starter = True
 
@@ -40,7 +37,6 @@ def test_roster_rejects_wrong_number_of_starters(valid_roster):
         match="A roster must have exactly 3 starters",
     ):
         valid_roster.validate_roster()
-
 
 def test_roster_rejects_duplicate_players(valid_roster):
     valid_roster.players[5].player_id = (
@@ -52,7 +48,6 @@ def test_roster_rejects_duplicate_players(valid_roster):
     ):
         valid_roster.validate_roster()
 
-
 def test_roster_rejects_starter_without_slot(valid_roster):
     valid_roster.players[0].slot = None
 
@@ -60,7 +55,6 @@ def test_roster_rejects_starter_without_slot(valid_roster):
         match="A starter must have a roster slot",
     ):
         valid_roster.validate_roster()
-
 
 def test_roster_rejects_starter_without_behavior(valid_roster):
     valid_roster.players[0].initial_behavior_id = None
@@ -70,7 +64,6 @@ def test_roster_rejects_starter_without_behavior(valid_roster):
     ):
         valid_roster.validate_roster()
 
-
 def test_roster_rejects_substitute_with_slot(valid_roster):
     valid_roster.players[3].slot = RosterSlot.LEFT
 
@@ -79,11 +72,19 @@ def test_roster_rejects_substitute_with_slot(valid_roster):
     ):
         valid_roster.validate_roster()
 
-
 def test_roster_rejects_substitute_with_behavior(valid_roster):
     valid_roster.players[3].initial_behavior_id = 1
 
     with pytest.raises(ValueError,
         match="A substitute cannot have an initial behavior",
+    ):
+        valid_roster.validate_roster()
+
+def test_roster_rejects_duplicate_starter_slots(valid_roster):
+    valid_roster.players[1].slot = RosterSlot.LEFT
+
+    with pytest.raises(
+        ValueError,
+        match="Starter roster slots must be unique",
     ):
         valid_roster.validate_roster()

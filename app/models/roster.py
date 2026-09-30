@@ -76,4 +76,17 @@ class Roster(Base):
                     raise ValueError(
                         "A substitute cannot have an initial behavior"
                     )
-        
+                
+                for i in range(len(self.players)):
+                    if not self.players[i].is_starter:
+                        continue
+
+                    for j in range(i + 1, len(self.players)):
+                        if not self.players[j].is_starter:
+                            continue
+
+                        if self.players[i].slot == self.players[j].slot:
+                            raise ValueError(
+                                "Starter roster slots must be unique"
+                            )
+                    
