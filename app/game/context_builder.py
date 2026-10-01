@@ -8,7 +8,6 @@ state exposed through the Behavior API.
 from typing import Protocol, Callable
 
 from app.game.constants import TIC_DURATION, COLLISION_PENALTY
-from app.game.models.runtime_behavior import RuntimeBehavior
 from app.game.context import BehaviorContext
 from app.game.types import Position, Velocity, PlayerState, Side, Period
 from app.game.physics import (
@@ -31,7 +30,7 @@ class PlayerInMatchSnapshotLike(Protocol):
     speed: int
     strength: int
 
-    current_behavior: RuntimeBehavior | None
+    current_behavior_id: int | None
     is_on_field: bool
 
     kick_cooldown_remaining: int

@@ -250,7 +250,7 @@ class PlayerSnapshotStub:
     speed: int
     strength: int
 
-    current_behavior: RuntimeBehavior | None
+    current_behavior_id: int | None
     is_on_field: bool
 
     kick_cooldown_remaining: int = 0
@@ -293,7 +293,7 @@ def player_a_snapshot():
         speed=60,
         strength=50,
 
-        current_behavior=None,
+        current_behavior_id=1,
         is_on_field=True,
 
         kick_cooldown_remaining=2,
@@ -315,7 +315,7 @@ def player_b_snapshot():
         speed=80,
         strength=40,
 
-        current_behavior=None,
+        current_behavior_id=2,
         is_on_field=True,
 
         kick_cooldown_remaining=1,
@@ -338,7 +338,7 @@ def match_snapshot(
         control=60,
         speed=60,
         strength=60,
-        current_behavior=None,
+        current_behavior_id=1,
         is_on_field=True,
     )
 
@@ -352,7 +352,7 @@ def match_snapshot(
         control=60,
         speed=60,
         strength=60,
-        current_behavior=None,
+        current_behavior_id=1,
         is_on_field=True,
     )
 
@@ -367,7 +367,7 @@ def match_snapshot(
         control=60,
         speed=60,
         strength=60,
-        current_behavior=None,
+        current_behavior_id=None,
         is_on_field=False,
     )
 
@@ -381,7 +381,7 @@ def match_snapshot(
         control=60,
         speed=60,
         strength=60,
-        current_behavior=None,
+        current_behavior_id=3,
         is_on_field=False,
     )
 
@@ -395,7 +395,7 @@ def match_snapshot(
         control=60,
         speed=60,
         strength=60,
-        current_behavior=None,
+        current_behavior_id=None,
         is_on_field=False,
     )
 
@@ -410,7 +410,7 @@ def match_snapshot(
         control=60,
         speed=60,
         strength=60,
-        current_behavior=None,
+        current_behavior_id=1,
         is_on_field=True,
     )
 
@@ -424,7 +424,7 @@ def match_snapshot(
         control=60,
         speed=60,
         strength=60,
-        current_behavior=None,
+        current_behavior_id=2,
         is_on_field=True,
     )
 
@@ -439,7 +439,7 @@ def match_snapshot(
         control=60,
         speed=60,
         strength=60,
-        current_behavior=None,
+        current_behavior_id=None,
         is_on_field=False,
     )
 
@@ -453,7 +453,7 @@ def match_snapshot(
         control=60,
         speed=60,
         strength=60,
-        current_behavior=None,
+        current_behavior_id=None,
         is_on_field=False,
     )
 
@@ -467,7 +467,7 @@ def match_snapshot(
         control=60,
         speed=60,
         strength=60,
-        current_behavior=None,
+        current_behavior_id=None,
         is_on_field=False,
     )
 
@@ -519,6 +519,6 @@ def substitute_player_snapshot():
         control=60,
         speed=60,
         strength=60,
-        current_behavior=None,
+        current_behavior_id=None,
         is_on_field=False,
     )
