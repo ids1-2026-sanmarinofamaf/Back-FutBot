@@ -15,6 +15,7 @@ import pytest
 
 from alembic import command
 from alembic.config import Config
+from dataclasses import dataclass, replace
 
 from app.database import engine
 from app.game.context import BehaviorContext
@@ -23,7 +24,7 @@ from app.game.models.actions import KickAction, MoveAction, WaitAction
 from app.game.models.player_in_match import PlayerInMatch
 from app.game.models.runtime_behavior import RuntimeBehavior
 from app.game.primitives import ball
-from app.game.types import Period, Side
+from app.game.types import Period, Side, Position, Velocity
 from app.models.player_on_roster import PlayerOnRoster, RosterSlot
 from app.models.roster import Roster
 
@@ -233,4 +234,291 @@ def failing_behavior():
     return RuntimeBehavior(
         id=5,
         play=failing_play,
+    )
+
+
+@dataclass(frozen=True)
+class PlayerSnapshotStub:
+    player_id: int
+    position: Position
+    velocity: Velocity
+    starting_position: Position | None
+
+    power: int
+    agility: int
+    control: int
+    speed: int
+    strength: int
+
+    current_behavior: RuntimeBehavior | None
+    is_on_field: bool
+
+    kick_cooldown_remaining: int = 0
+    forced_wait_remaining: int = 0
+    collision_penalty_remaining: int = 0
+
+
+@dataclass(frozen=True)
+class BallSnapshotStub:
+    position: Position
+    velocity: Velocity
+
+
+@dataclass(frozen=True)
+class MatchSnapshotStub:
+    players_a: tuple[PlayerSnapshotStub, ...]
+    players_b: tuple[PlayerSnapshotStub, ...]
+
+    ball: BallSnapshotStub
+
+    duration_ticks: int
+    current_tick: int
+
+    score_a: int
+    score_b: int
+
+
+@pytest.fixture
+def player_a_snapshot():
+    return PlayerSnapshotStub(
+        player_id=1,
+        position=(5.0, 4.0),
+        velocity=(0.0, 0.0),
+        starting_position=(3.0, 3.0),
+
+        # Total PACSS = 300
+        power=80,
+        agility=40,
+        control=70,
+        speed=60,
+        strength=50,
+
+        current_behavior=None,
+        is_on_field=True,
+
+        kick_cooldown_remaining=2,
+    )
+
+
+@pytest.fixture
+def player_b_snapshot():
+    return PlayerSnapshotStub(
+        player_id=7,
+        position=(30.0, 10.0),
+        velocity=(0.0, 0.0),
+        starting_position=(35.0, 10.0),
+
+        # Total PACSS = 300
+        power=50,
+        agility=70,
+        control=60,
+        speed=80,
+        strength=40,
+
+        current_behavior=None,
+        is_on_field=True,
+
+        kick_cooldown_remaining=1,
+    )
+
+
+@pytest.fixture
+def match_snapshot(
+    player_a_snapshot,
+    player_b_snapshot,
+):
+    # Team A starters
+    teammate_a_1 = PlayerSnapshotStub(
+        player_id=2,
+        position=(6.0, 4.0),
+        velocity=(0.0, 0.0),
+        starting_position=(4.0, 5.0),
+        power=60,
+        agility=60,
+        control=60,
+        speed=60,
+        strength=60,
+        current_behavior=None,
+        is_on_field=True,
+    )
+
+    teammate_a_2 = PlayerSnapshotStub(
+        player_id=3,
+        position=(7.0, 5.0),
+        velocity=(0.0, 0.0),
+        starting_position=(4.0, 7.0),
+        power=60,
+        agility=60,
+        control=60,
+        speed=60,
+        strength=60,
+        current_behavior=None,
+        is_on_field=True,
+    )
+
+    # Team A substitutes
+    substitute_a_1 = PlayerSnapshotStub(
+        player_id=4,
+        position=(0.0, 0.0),
+        velocity=(0.0, 0.0),
+        starting_position=None,
+        power=60,
+        agility=60,
+        control=60,
+        speed=60,
+        strength=60,
+        current_behavior=None,
+        is_on_field=False,
+    )
+
+    substitute_a_2 = PlayerSnapshotStub(
+        player_id=5,
+        position=(0.0, 0.0),
+        velocity=(0.0, 0.0),
+        starting_position=None,
+        power=60,
+        agility=60,
+        control=60,
+        speed=60,
+        strength=60,
+        current_behavior=None,
+        is_on_field=False,
+    )
+
+    substitute_a_3 = PlayerSnapshotStub(
+        player_id=6,
+        position=(0.0, 0.0),
+        velocity=(0.0, 0.0),
+        starting_position=None,
+        power=60,
+        agility=60,
+        control=60,
+        speed=60,
+        strength=60,
+        current_behavior=None,
+        is_on_field=False,
+    )
+
+    # Team B starters
+    teammate_b_1 = PlayerSnapshotStub(
+        player_id=8,
+        position=(31.0, 8.0),
+        velocity=(0.0, 0.0),
+        starting_position=(35.0, 8.0),
+        power=60,
+        agility=60,
+        control=60,
+        speed=60,
+        strength=60,
+        current_behavior=None,
+        is_on_field=True,
+    )
+
+    teammate_b_2 = PlayerSnapshotStub(
+        player_id=9,
+        position=(32.0, 6.0),
+        velocity=(0.0, 0.0),
+        starting_position=(35.0, 6.0),
+        power=60,
+        agility=60,
+        control=60,
+        speed=60,
+        strength=60,
+        current_behavior=None,
+        is_on_field=True,
+    )
+
+    # Team B substitutes
+    substitute_b_1 = PlayerSnapshotStub(
+        player_id=10,
+        position=(0.0, 0.0),
+        velocity=(0.0, 0.0),
+        starting_position=None,
+        power=60,
+        agility=60,
+        control=60,
+        speed=60,
+        strength=60,
+        current_behavior=None,
+        is_on_field=False,
+    )
+
+    substitute_b_2 = PlayerSnapshotStub(
+        player_id=11,
+        position=(0.0, 0.0),
+        velocity=(0.0, 0.0),
+        starting_position=None,
+        power=60,
+        agility=60,
+        control=60,
+        speed=60,
+        strength=60,
+        current_behavior=None,
+        is_on_field=False,
+    )
+
+    substitute_b_3 = PlayerSnapshotStub(
+        player_id=12,
+        position=(0.0, 0.0),
+        velocity=(0.0, 0.0),
+        starting_position=None,
+        power=60,
+        agility=60,
+        control=60,
+        speed=60,
+        strength=60,
+        current_behavior=None,
+        is_on_field=False,
+    )
+
+    return MatchSnapshotStub(
+        players_a=(
+            player_a_snapshot,
+            teammate_a_1,
+            teammate_a_2,
+            substitute_a_1,
+            substitute_a_2,
+            substitute_a_3,
+        ),
+        players_b=(
+            player_b_snapshot,
+            teammate_b_1,
+            teammate_b_2,
+            substitute_b_1,
+            substitute_b_2,
+            substitute_b_3,
+        ),
+        ball=BallSnapshotStub(
+            position=(20.0, 10.0),
+            velocity=(1.0, 0.0),
+        ),
+        duration_ticks=1200,
+        current_tick=200,
+        score_a=2,
+        score_b=1,
+    )
+
+
+@pytest.fixture
+def penalized_player_a_snapshot(player_a_snapshot):
+    return replace(
+        player_a_snapshot,
+        collision_penalty_remaining=10,
+    )
+
+
+@pytest.fixture
+def substitute_player_snapshot():
+    return PlayerSnapshotStub(
+        player_id=100,
+        position=(0.0, 0.0),
+        velocity=(0.0, 0.0),
+        starting_position=None,
+        power=60,
+        agility=60,
+        control=60,
+        speed=60,
+        strength=60,
+        current_behavior=None,
+        is_on_field=False,
     )
