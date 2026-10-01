@@ -132,10 +132,20 @@ def test_estado_partido_contains_required_fields(match):
         == snapshot.ball.velocity[1]
     )
 
-    for player in message["players"]:
-        assert "player_id" in player
-        assert "x" in player
-        assert "y" in player
+    expected_players = [
+        player for player in (*snapshot.players_a, *snapshot.players_b)
+        if player.is_on_field
+    ]
+
+    assert len(message["players"]) == len(expected_players)
+
+    for i in range(len(expected_players)):
+        sent_player = message["players"][i]
+        expected_player = expected_players[i]
+
+    assert sent_player["player_id"] == expected_player.player_id
+    assert sent_player["x"] == expected_player.position[0]
+    assert sent_player["y"] == expected_player.position[1]
 
 def test_estado_partido_reflects_updated_state(match):
     first_snapshot = match.snapshot()
