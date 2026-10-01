@@ -179,3 +179,23 @@ async def test_close_match_connection_closes_all_websockets():
 
     # we check that this match isn't in the connections after closing it
     assert (match_id not in manager.active_connections)
+
+@pytest.mark.asyncio
+async def test_connect_accepts_and_saves_websocket():
+    manager = MatchConnectionManager()
+    websocket = AsyncMock()
+
+    await manager.connect(1, websocket)
+    # we checked that the ws were called by accept only once
+    websocket.accept.assert_awaited_once()
+    assert manager.active_connections[1] == [websocket]
+
+def test_disconnect_removes_websocket():
+    manager = MatchConnectionManager()
+    websocket = AsyncMock()
+
+    manager.active_connections[1] = [websocket]
+
+    manager.disconnect(1, websocket)
+    # check if 1 is not more in the active_connections
+    assert 1 not in manager.active_connections
