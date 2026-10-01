@@ -42,7 +42,7 @@ def make_player(player_id: int, is_on_field: bool) -> PlayerInMatch:
         control=60,
         speed=60,
         strength=60,
-        current_behavior=wait_behavior if is_on_field else None,
+        current_behavior_id=1 if is_on_field else None,
         is_on_field=is_on_field,
     )
 

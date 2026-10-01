@@ -1,7 +1,6 @@
 from dataclasses import dataclass
 
 from app.game.types import Position, Velocity
-from app.game.models.runtime_behavior import RuntimeBehavior
 
 
 @dataclass     # non-persistent class
@@ -18,7 +17,7 @@ class PlayerInMatch:
     speed: int
     strength: int
 
-    current_behavior: RuntimeBehavior | None     # it depends on whether he's on the field or not
+    current_behavior_id: int | None     # it depends on whether he's on the field or not
 
     is_on_field: bool
 
