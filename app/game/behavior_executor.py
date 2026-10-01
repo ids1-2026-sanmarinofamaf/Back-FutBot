@@ -14,11 +14,12 @@ from app.game.context import (
     clear_current_context,
     )
 
+Action = MoveAction | KickAction | WaitAction
 
 def execute_behavior(
         context: BehaviorContext,
         behavior: RuntimeBehavior,
-) -> MoveAction | KickAction | WaitAction:
+) -> Action:
     """
     Execute a runtime behavior within the given BehaviorContext.
 
