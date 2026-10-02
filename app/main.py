@@ -1,6 +1,8 @@
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
+from app.api import auth, users
+
 from sqlalchemy import text
 
 from app.database import engine
@@ -16,6 +18,9 @@ async def lifespan(app: FastAPI):
     engine.dispose()
 
 app = FastAPI(lifespan=lifespan)
+
+app.include_router(auth.router)
+app.include_router(users.router)
 
 @app.get("/")
 def root():
