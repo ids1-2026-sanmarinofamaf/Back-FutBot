@@ -1,0 +1,35 @@
+"""Physics calculations used by the game simulation."""
+
+from .types import Direction, Velocity, Position, BallState
+
+
+def calculate_max_move_distance(max_move_speed: float) -> float:
+    raise NotImplementedError
+
+
+def calculate_speed_factor(
+    max_move_speed: float,
+    distance: float
+) -> float:
+    raise NotImplementedError
+
+
+def calculate_kick_travel_distance(
+    ball_velocity: Velocity,
+    kick_direction: Direction,
+    kick_force: float
+) -> float:
+    raise NotImplementedError
+
+
+def calculate_kick_force_factor(
+    ball_velocity: Velocity,
+    kick_direction: Direction,
+    kick_force: float,
+    distance: float
+) -> float:
+    raise NotImplementedError
+
+
+def calculate_ball_next_position(ball_state: BallState) -> Position:
+    raise NotImplementedError

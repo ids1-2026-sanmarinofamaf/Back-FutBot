@@ -119,11 +119,13 @@ def play():
     ball_position, _ = ball()
 
     if can_kick():
-        shot_distance = distance(ball_position, OPPONENT_GOAL)
+        goal = opponent_goal()
+        shot_distance = distance(ball_position, goal)
+        shot_direction = direction_to(ball_position, goal)
 
         return kick(
-            direction_to(ball_position, OPPONENT_GOAL),
-            kick_force_for_distance(shot_distance)
+            shot_direction,
+            kick_force_for_distance(shot_direction, shot_distance)
         )
 
     return wait()
@@ -249,28 +251,6 @@ Alto de la cancha.
 
 ---
 
-### `OWN_GOAL`
-
-```python
-OWN_GOAL: Position
-```
-
-**Descripción:**  
-Posición correspondiente al punto medio del arco propio.
-
----
-
-### `OPPONENT_GOAL`
-
-```python
-OPPONENT_GOAL: Position
-```
-
-**Descripción:**  
-Posición correspondiente al punto medio del arco rival.
-
----
-
 ## 5. Match state primitives
 
 Estas primitivas permiten consultar el estado actual del partido. No modifican el estado.
@@ -290,6 +270,7 @@ Ejemplo:
 ```python
 my_id, my_position = self()
 ```
+
 ---
 
 ### `teammates()`
@@ -406,6 +387,28 @@ Devuelve la posición inicial asignada al jugador BOT en la alineación.
 
 ---
 
+### `own_goal()`
+
+```python
+own_goal() -> Position
+```
+
+**Descripción:**  
+Devuelve la posición correspondiente al punto medio del arco propio según el lado actual del jugador.
+
+---
+
+### `opponent_goal()`
+
+```python
+opponent_goal() -> Position
+```
+
+**Descripción:**  
+Devuelve la posición correspondiente al punto medio del arco rival según el lado actual del jugador.
+
+---
+
 ## 6. Player capability primitives
 
 Estas primitivas permiten consultar capacidades concretas del jugador BOT que está ejecutando el comportamiento. No modifican el estado.
@@ -493,33 +496,34 @@ Si la distancia no puede recorrerse completamente durante el próximo tic, devue
 
 ---
 
-### `can_kick_distance(distance)`
+### `can_kick_distance(direction, distance)`
 
 ```python
-can_kick_distance(distance: float) -> bool
+can_kick_distance(direction: Direction, distance: float) -> bool
 ```
 
 **Descripción:**
-Indica si un único pateo del jugador BOT puede hacer que la pelota recorra `distance`, teniendo en cuenta su estadística `POWER`, el estado actual de la pelota y las reglas físicas definidas en el servidor.
+Indica si un único pateo del jugador BOT en `direction` puede hacer que la pelota recorra `distance`, teniendo en cuenta su estadística `POWER`, la velocidad actual de la pelota y las reglas físicas definidas en el servidor.
 
 **Parameters:**
-`distance`: distancia que se desea que recorra la pelota.
+- `direction`: dirección en la que se desea patear la pelota
+- `distance`: distancia que se desea que recorra la pelota.
 
 **Returns:**
-`bool`: `True` si la pelota puede alcanzar la distancia indicada con un único pateo. `False` si no puede alcanzarla.
+`bool`: `True` si la pelota puede alcanzar la distancia indicada con un único pateo en la dirección especificada. `False` si no puede alcanzarla.
 
 ---
 
-### `kick_force_for_distance(distance)`
+### `kick_force_for_distance(direction, distance)`
 
 ```python
-kick_force_for_distance(distance: float) -> float
+kick_force_for_distance(direction: Direction, distance: float) -> float
 ```
 
 **Descripción:**  
-Devuelve el factor de fuerza necesario para que un jugador BOT patee la pelota y esta recorra aproximadamente `distance`.
+Devuelve el factor de fuerza necesario para que un jugador BOT patee la pelota en `direction` y esta recorra aproximadamente `distance`.
 
-El cálculo tiene en cuenta la estadística `POWER` del jugador BOT, la posición y velocidad actuales de la pelota y las reglas físicas definidas por el servidor. Por lo tanto, el factor necesario para alcanzar una misma distancia puede variar según la velocidad y dirección que tenga la pelota al momento de patear.
+El cálculo tiene en cuenta la estadística `POWER` del jugador BOT, la velocidad actual de la pelota, la dirección de pateo y las reglas físicas definidas por el servidor. Por lo tanto, el factor necesario para alcanzar una misma distancia puede variar según la velocidad y dirección que tenga la pelota al momento de patear.
 
 El valor retornado pertenece al intervalo `[0.0, 1.0]`, donde:
 - `0.0` representa no aplicar ninguna fuerza sobre la pelota
@@ -530,10 +534,11 @@ Si la distancia requerida no puede alcanzarse utilizando la máxima fuerza dispo
 Una vez realizada la acción de patear, la pelota continúa desplazándose de acuerdo con su velocidad resultante y las reglas físicas del servidor.
 
 **Parameters:**
+- `direction`: dirección en la que se desea patear la pelota.
 - `distance`: distancia que se desea que recorra la pelota.
 
 **Returns:**
-- `float`: factor de fuerza necesario para que la pelota alcance la distancia indicada. Valor perteneciente al intervalo `[0.0, 1.0]`.
+- `float`: factor de fuerza necesario para que la pelota alcance aproximadamente la distancia indicada en la dirección especificada. Valor perteneciente al intervalo `[0.0, 1.0]`.
 
 ---
 
@@ -685,12 +690,14 @@ def play():
     if ball_distance <= control_range():
 
         if can_kick():
-            goal_distance = distance(ball_position, OPPONENT_GOAL)
+            goal = opponent_goal()
+            goal_distance = distance(ball_position, goal)
+            goal_direction = direction_to(ball_position, goal)
 
             # Patea si el arco está al alcance
-            if can_kick_distance(goal_distance):
+            if can_kick_distance(goal_direction, goal_distance):
                 return kick(
-                    direction_to(ball_position, OPPONENT_GOAL),
+                    goal_direction,
                     1.0
                 )
 
@@ -704,8 +711,12 @@ def play():
                     ball_position,
                     teammate_position
                 )
+                teammate_direction = direction_to(
+                    ball_position,
+                    teammate_position
+                )
 
-                if can_kick_distance(teammate_distance):
+                if can_kick_distance(teammate_direction, teammate_distance):
                     if (
                         closest_distance is None
                         or teammate_distance < closest_distance
@@ -714,9 +725,10 @@ def play():
                         closest_distance = teammate_distance
 
             if closest_teammate is not None:
+                pass_direction = direction_to(ball_position, closest_teammate)
                 return kick(
-                    direction_to(ball_position, closest_teammate),
-                    kick_force_for_distance(closest_distance)
+                    pass_direction,
+                    kick_force_for_distance(pass_direction, closest_distance)
                 )
 
             # Si no llega a pasar la pelota, espera
