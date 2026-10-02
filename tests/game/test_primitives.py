@@ -37,34 +37,6 @@ from app.game.primitives import (
 )
 
 
-@pytest.fixture
-def context():
-    return BehaviorContext(
-        player=(1, (5.0, 4.0),),
-        teammates=[
-            (2, (6.0, 4.0)),
-            (3, (7.0, 5.0)),
-        ],
-        opponents=[
-            (4, (10.0, 8.0)),
-            (5, (11.0, 6.0)),
-            (6, (12.0, 4.0)),
-        ],
-        ball=((7.0, 5.0), (1.0, 0.0),),
-        my_team_score=1,
-        opponent_score=0,
-        starting_position=(3.0, 3.0),
-        current_period=Period.FIRST_QUARTER,
-        side=Side.LEFT,
-        match_time_remaining=120.0,
-        period_time_remaining=30.0,
-        control_range=0.8,
-        tics_until_kick=0,
-        max_move_speed=8.0,
-        max_kick_force=20.0,
-    )
-
-
 @patch("app.game.primitives.get_current_context")
 def test_self_returns_current_player(mock_get_current_context, context):
     mock_get_current_context.return_value = context
