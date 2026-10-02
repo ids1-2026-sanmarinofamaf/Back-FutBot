@@ -5,7 +5,7 @@ import copy
 from app.game.models.match_participation import MatchParticipation
 from app.game.models.ball import Ball
 from app.game.models.match import Match
-
+from app.schemas.match_websocket import (MatchStateMessage,BallState)
 from app.main import app
 # the endpoint always use the manager = match_connection_manager
 from app.services.match_websocket_service import match_connection_manager
@@ -72,17 +72,29 @@ async def test_broadcast_sends_estado_partido():
     # we set them as active connections of the manager
     manager.active_connections[1] = [ws1,ws2]
 
-    message = {
-        "event": "estado_partido",
-        "actual_tic": 10,
-    }
+    message = MatchStateMessage(
+        event="estado_partido",
+        actual_tic=10,
+        total_tic=100,
+        user1_goals=0,
+        user2_goals=0,
+        ball=BallState(
+            x=20.0,
+            y=10.0,
+            speed_x=0.0,
+            speed_y=0.0,
+        ),
+        players=[],
+    )
 
     # execute the broadcast for the ws in manager
     await manager.broadcast(1, message)
 
+    expected_message = message.model_dump()
+
     # we checked that the ws were called by send_json(message) only once
-    ws1.send_json.assert_awaited_once_with(message)
-    ws2.send_json.assert_awaited_once_with(message)
+    ws1.send_json.assert_awaited_once_with(expected_message)
+    ws2.send_json.assert_awaited_once_with(expected_message)
 
 
 def test_estado_partido_contains_required_fields(match):
@@ -91,61 +103,33 @@ def test_estado_partido_contains_required_fields(match):
     # format the snapshot into a state message
     message = build_match_state_message(snapshot)
 
-    assert (
-        message["event"]
-        == "estado_partido"
-    )
+    assert message.event == "estado_partido"
 
-    assert (
-        message["actual_tic"]
-        == snapshot.current_tick
-    )
-    assert (
-        message["total_tic"]
-        == snapshot.duration_ticks
-    )
+    assert message.actual_tic == snapshot.current_tick
+    assert message.total_tic == snapshot.duration_ticks
 
-    assert (
-        message["user1_goals"]
-        == snapshot.score_a
-    )
-    assert (
-        message["user2_goals"]
-        == snapshot.score_b
-    )
+    assert message.user1_goals == snapshot.score_a
+    assert message.user2_goals == snapshot.score_b
 
-    assert (
-        message["ball"]["x"]
-        == snapshot.ball.position[0]
-    )
-    assert (
-        message["ball"]["y"]
-        == snapshot.ball.position[1]
-    )
+    assert message.ball.x == snapshot.ball.position[0]
+    assert message.ball.y == snapshot.ball.position[1]
 
-    assert (
-        message["ball"]["speed_x"]
-        == snapshot.ball.velocity[0]
-    )
-    assert (
-        message["ball"]["speed_y"]
-        == snapshot.ball.velocity[1]
-    )
+    assert message.ball.speed_x == snapshot.ball.velocity[0]
+    assert message.ball.speed_y == snapshot.ball.velocity[1]
 
-    expected_players = [
-        player for player in (*snapshot.players_a, *snapshot.players_b)
-        if player.is_on_field
-    ]
+    expected_players = [*snapshot.players_a, *snapshot.players_b]
 
-    assert len(message["players"]) == len(expected_players)
+    assert len(message.players) == len(expected_players)
 
     for i in range(len(expected_players)):
-        sent_player = message["players"][i]
+        sent_player = message.players[i]
         expected_player = expected_players[i]
+        
+        assert sent_player.player_id == expected_player.player_id
+        assert sent_player.x == expected_player.position[0]
+        assert sent_player.y == expected_player.position[1]
+        assert sent_player.is_on_field == expected_player.is_on_field
 
-    assert sent_player["player_id"] == expected_player.player_id
-    assert sent_player["x"] == expected_player.position[0]
-    assert sent_player["y"] == expected_player.position[1]
 
 def test_estado_partido_reflects_updated_state(match):
     first_snapshot = match.snapshot()
@@ -160,16 +144,12 @@ def test_estado_partido_reflects_updated_state(match):
 
     # take a new snapshot and prepare the second message
     second_snapshot = match.snapshot()
-    second_message = build_match_state_message(
-        second_snapshot
-    )
+    second_message = build_match_state_message(second_snapshot)
 
-    assert (
-        second_message["actual_tic"]
-        == first_message["actual_tic"] + 1
-    )
-    assert (second_message["ball"]["x"] == 50.0)
-    assert (second_message["ball"]["y"] == 20.0)
+    assert (second_message.actual_tic == first_message.actual_tic + 1)
+
+    assert second_message.ball.x == 50.0
+    assert second_message.ball.y == 20.0
 
 @pytest.mark.asyncio
 async def test_close_match_connection_closes_all_websockets():
