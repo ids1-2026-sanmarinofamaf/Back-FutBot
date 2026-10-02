@@ -1,9 +1,9 @@
 from dataclasses import dataclass
 from math import isclose
 
-from app.game.models.match import Match
+from app.game.models.match import Match, MatchSnapshot
+from app.game.models.player_in_match import PlayerInMatchSnapshot
 from app.game.models.actions import MoveAction, KickAction, WaitAction
-from app.game.context_builder import MatchSnapshotLike, PlayerInMatchSnapshotLike
 from app.game.types import Position, Side
 from app.game.constants import(
     TIC_DURATION,
@@ -46,7 +46,7 @@ class GameEngine:
     def step(
             self,
             match: Match,
-            snapshot: MatchSnapshotLike,
+            snapshot: MatchSnapshot,
             actions: dict[int, Action]
 
     ) -> None:
@@ -111,7 +111,7 @@ class GameEngine:
 
     def _validate_actions(
         self,
-        snapshot: MatchSnapshotLike,
+        snapshot: MatchSnapshot,
         actions: dict[int, Action],
     ) -> None:
         """
@@ -143,7 +143,7 @@ class GameEngine:
 
     def _resolve_kicks(
         self,
-        snapshot: MatchSnapshotLike,
+        snapshot: MatchSnapshot,
         actions: dict[int, Action],
     ) -> KickResolution | None:
         players = self._get_on_field_players(snapshot)
@@ -192,7 +192,7 @@ class GameEngine:
 
     def _resolve_moves(
         self,
-        snapshot: MatchSnapshotLike,
+        snapshot: MatchSnapshot,
         actions: dict[int, Action],
     ) -> dict[int, Position]:
         players = self._get_on_field_players(snapshot)
@@ -242,7 +242,7 @@ class GameEngine:
 
     def _resolve_player_collisions(
         self,
-        snapshot: MatchSnapshotLike,
+        snapshot: MatchSnapshot,
         proposed_positions: dict[int, Position],
     ) -> tuple[
         dict[int, Position],
@@ -348,7 +348,7 @@ class GameEngine:
     def _update_ball(
         self,
         match: Match,
-        snapshot: MatchSnapshotLike,
+        snapshot: MatchSnapshot,
         kick_result: KickResolution | None,
         final_positions: dict[int, Position],
     ) -> None:
@@ -379,8 +379,8 @@ class GameEngine:
 
     def _get_on_field_players(
         self,
-        snapshot: MatchSnapshotLike,
-    ) -> dict[int, PlayerInMatchSnapshotLike]:
+        snapshot: MatchSnapshot,
+    ) -> dict[int, PlayerInMatchSnapshot]:
         return {
             player.player_id: player
             for player in snapshot.players_a + snapshot.players_b
@@ -409,7 +409,7 @@ class GameEngine:
 
     def _get_player_side(
         self,
-        snapshot: MatchSnapshotLike,
+        snapshot: MatchSnapshot,
         player_id: int,
     ) -> Side:
         if any(
@@ -423,7 +423,7 @@ class GameEngine:
 
     def _can_attempt_kick(
         self,
-        player: PlayerInMatchSnapshotLike,
+        player: PlayerInMatchSnapshot,
         ball_position: Position,
     ) -> bool:
         if player.forced_wait_remaining > 0:
@@ -449,8 +449,8 @@ class GameEngine:
 
     def _kick_contest_key(
         self,
-        snapshot: MatchSnapshotLike,
-        player: PlayerInMatchSnapshotLike,
+        snapshot: MatchSnapshot,
+        player: PlayerInMatchSnapshot,
     ) -> tuple[float, float, int, int, int]:
         effective_control = effective_physical_value(
             player.control,
@@ -486,7 +486,7 @@ class GameEngine:
 
     def _collision_contest_key(
         self,
-        player: PlayerInMatchSnapshotLike,
+        player: PlayerInMatchSnapshot,
     ) -> tuple[int, float, float, int]:
         effective_power = effective_physical_value(
             player.power,
@@ -550,7 +550,7 @@ class GameEngine:
 
     def _resolve_collision_contest(
         self,
-        players: list[PlayerInMatchSnapshotLike],
+        players: list[PlayerInMatchSnapshot],
     ) -> ContestResolution:
         winner = max(
             players,

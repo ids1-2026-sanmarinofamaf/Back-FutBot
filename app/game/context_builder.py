@@ -5,11 +5,11 @@ This module translates the global match state into the player-relative
 state exposed through the Behavior API.
 """
 
-from typing import Protocol, Callable
-
-from app.game.constants import TIC_DURATION, COLLISION_PENALTY
+from app.game.models.match import MatchSnapshot
+from app.game.models.player_in_match import PlayerInMatchSnapshot
+from app.game.constants import TIC_DURATION
 from app.game.context import BehaviorContext
-from app.game.types import Position, Velocity, PlayerState, Side, Period
+from app.game.types import Side, Period
 from app.game.physics import (
     control_range,
     max_move_speed,
@@ -18,50 +18,9 @@ from app.game.physics import (
 )
 
 
-class PlayerInMatchSnapshotLike(Protocol):
-    player_id: int
-
-    position: Position
-    velocity: Velocity
-    starting_position: Position | None
-
-    power: int
-    agility: int
-    control: int
-    speed: int
-    strength: int
-
-    current_behavior_id: int | None
-    is_on_field: bool
-
-    kick_cooldown_remaining: int
-    forced_wait_remaining: int
-    collision_penalty_remaining: int
-
-
-class BallSnapshotLike(Protocol):
-    position: Position
-    velocity: Velocity
-
-
-class MatchSnapshotLike(Protocol):
-    players_a: tuple[PlayerInMatchSnapshotLike, ...]
-    players_b: tuple[PlayerInMatchSnapshotLike, ...]
-
-    ball: BallSnapshotLike
-
-    duration_ticks: int
-    current_tick: int
-
-    score_a: int
-    score_b: int
-
-    last_conceding_side: Side | None
-
-
 def build_behavior_context(
-        match_snapshot: MatchSnapshotLike,
-        player_snapshot: PlayerInMatchSnapshotLike,
+        match_snapshot: MatchSnapshot,
+        player_snapshot: PlayerInMatchSnapshot,
 ) -> BehaviorContext:
     """
     Build the BehaviorContext for a player from the current match snapshot.
@@ -180,10 +139,10 @@ def build_behavior_context(
 
 def _get_player_and_opponent_team(
     player_id: int,
-    match_snapshot: MatchSnapshotLike,
+    match_snapshot: MatchSnapshot,
 ) -> tuple[
-        tuple[PlayerInMatchSnapshotLike,...],
-        tuple[PlayerInMatchSnapshotLike,...]
+        tuple[PlayerInMatchSnapshot,...],
+        tuple[PlayerInMatchSnapshot,...]
     ]:
     """
     Return the player's team and the opposing team.
