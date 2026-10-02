@@ -1,6 +1,7 @@
 from fastapi import WebSocket
 
 from app.game.models.match import MatchSnapshot
+from app.schemas.match_websocket import MatchPlayerState, MatchStateMessage, BallState
 
 
 class MatchConnectionManager:
@@ -36,13 +37,13 @@ class MatchConnectionManager:
             del self.active_connections[match_id]
 
     # we want to send message to everyone online
-    async def broadcast(self, match_id: int, message: dict) -> None:
+    async def broadcast(self, match_id: int, message: MatchStateMessage) -> None:
     
         connections = self.active_connections.get(match_id,[])
 
         # we sent the status to everyone
         for websocket in connections:
-            await websocket.send_json(message)
+            await websocket.send_json(message.model_dump())
 
     async def close_match_connection(self, match_id: int) -> None:
         connections = self.active_connections.get(match_id, [])
@@ -52,47 +53,40 @@ class MatchConnectionManager:
         # after closing the connections, we clean the dictionary entry for that match
         self.active_connections.pop(match_id, None)
 
+# prepare the messahe that will be sended by through the websocket
+def build_match_state_message(
+    snapshot: MatchSnapshot,
+) -> MatchStateMessage:
 
-# we transform the game state into a json to send over ws
-def build_match_state_message(snapshot: MatchSnapshot) -> dict:
-
-    # we get all the starting players, since they are the ones shown on the field
     players = []
 
-    for player in snapshot.players_a:
-        if player.is_on_field:
-            players.append({
-                "player_id": player.player_id,
-                "x": player.position[0],
-                "y": player.position[1],
-            })
+    for player in snapshot.players_a + snapshot.players_b:
+        players.append(
+            MatchPlayerState(
+                player_id=player.player_id,
+                x=player.position[0],
+                y=player.position[1],
+                is_on_field=player.is_on_field,
+            )
+        )
 
-    for player in snapshot.players_b:
-        if player.is_on_field:
-            players.append({
-                "player_id": player.player_id,
-                "x": player.position[0],
-                "y": player.position[1],
-            })
+    return MatchStateMessage(
+        event="estado_partido",
 
-    # we name the event we're going to send, and fill in the rest of the match information.
-    return {
-        "event": "estado_partido",
+        actual_tic=snapshot.current_tick,
+        total_tic=snapshot.duration_ticks,
 
-        "actual_tic": snapshot.current_tick,
-        "total_tic": snapshot.duration_ticks,
+        user1_goals=snapshot.score_a,
+        user2_goals=snapshot.score_b,
 
-        "user1_goals": snapshot.score_a,
-        "user2_goals": snapshot.score_b,
+        ball=BallState(
+            x=snapshot.ball.position[0],
+            y=snapshot.ball.position[1],
+            speed_x=snapshot.ball.velocity[0],
+            speed_y=snapshot.ball.velocity[1],
+        ),
+        players=players,
+    )
 
-        "ball": {
-            "x": snapshot.ball.position[0],
-            "y": snapshot.ball.position[1],
-            "speed_x": snapshot.ball.velocity[0],
-            "speed_y": snapshot.ball.velocity[1],
-        },
-
-        "players": players,
-    }
 
 match_connection_manager = MatchConnectionManager()
