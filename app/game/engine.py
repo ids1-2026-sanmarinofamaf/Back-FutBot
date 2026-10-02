@@ -1,4 +1,5 @@
 from dataclasses import dataclass
+from math import isclose
 
 from app.game.models.match import Match
 from app.game.models.actions import MoveAction, KickAction, WaitAction
@@ -8,13 +9,18 @@ from app.game.constants import(
     TIC_DURATION,
     FIELD_HEIGHT,
     FIELD_WIDTH,
-    PLAYER_RADIUS
+    PLAYER_RADIUS, 
+    COLLISION_FORCED_WAIT_TICS,
+    COLLISION_PENALTY_TICS
     )
 from app.game.physics import(
     max_move_speed,
     control_range,
+    max_kick_force,
     effective_physical_value,
     distance,
+    collision_time,
+    position_at_time,
 )
 
 
@@ -31,12 +37,6 @@ class ContestResolution:
 class KickResolution:
     contest: ContestResolution
     action: KickAction
-
-
-@dataclass(frozen=True)
-class CollisionResolution:
-    contest: ContestResolution
-    collision_positions: dict[int, Position]
 
 
 class GameEngine:
@@ -73,9 +73,16 @@ class GameEngine:
             actions,
         )
 
-        final_positions = self._resolve_player_collisions(
-            snapshot,
-            proposed_positions,
+        final_positions, collision_loser_ids = (
+            self._resolve_player_collisions(
+                snapshot,
+                proposed_positions,
+            )
+        )
+
+        self._apply_collision_effects(
+            match,
+            collision_loser_ids,
         )
 
         self._apply_player_positions(
@@ -237,8 +244,97 @@ class GameEngine:
         self,
         snapshot: MatchSnapshotLike,
         proposed_positions: dict[int, Position],
-    ) -> dict[int, Position]:
-        ...
+    ) -> tuple[
+        dict[int, Position],
+        set[int],
+    ]:
+        players = self._get_on_field_players(snapshot)
+
+        final_positions = proposed_positions.copy()
+        collision_loser_ids: set[int] = set()
+
+        detected_collisions: list[tuple[float, int, int]] = []
+        player_ids = list(players.keys())
+
+        # Detect every pairwise collision during the tic.
+        for i in range(len(player_ids)):
+            for j in range(i + 1, len(player_ids)):
+                player_a = players[player_ids[i]]
+                player_b = players[player_ids[j]]
+
+                time = collision_time(
+                    player_a.position,
+                    proposed_positions[player_a.player_id],
+                    PLAYER_RADIUS,
+                    player_b.position,
+                    proposed_positions[player_b.player_id],
+                    PLAYER_RADIUS,
+                )
+
+                if time is None:
+                    continue
+
+                detected_collisions.append(
+                    (
+                        time,
+                        player_a.player_id,
+                        player_b.player_id,
+                    )
+                )
+
+        # Earlier collision events must be resolved first.
+        detected_collisions.sort(
+            key=lambda collision: collision[0]
+        )
+
+        collision_events = self._group_collision_events(
+            detected_collisions
+        )
+
+        for time, involved_ids in collision_events:
+            involved_players = [
+                players[player_id]
+                for player_id in involved_ids
+            ]
+
+            contest = self._resolve_collision_contest(
+                involved_players
+            )
+
+            for loser_id in contest.loser_ids:
+                loser = players[loser_id]
+
+                final_positions[loser_id] = position_at_time(
+                    loser.position,
+                    proposed_positions[loser_id],
+                    time,
+                )
+
+                collision_loser_ids.add(loser_id)
+
+        return final_positions, collision_loser_ids
+
+
+    def _apply_collision_effects(
+        self,
+        match: Match,
+        loser_ids: set[int],
+    ) -> None:
+        for participation in (
+            match.participation_a, 
+            match.participation_b,
+        ):
+            for player in participation.players:
+                if player.player_id not in loser_ids:
+                    continue
+
+                player.forced_wait_remaining = (
+                    COLLISION_FORCED_WAIT_TICS + 1
+                )
+
+                player.collision_penalty_remaining = (
+                    COLLISION_PENALTY_TICS + 1
+                )
 
 
     def _apply_player_positions(
@@ -385,4 +481,89 @@ class GameEngine:
             player.strength,
             last_conceding_advantage,
             -player.player_id,
+        )
+
+
+    def _collision_contest_key(
+        self,
+        player: PlayerInMatchSnapshotLike,
+    ) -> tuple[int, float, float, int]:
+        effective_power = effective_physical_value(
+            player.power,
+            player.collision_penalty_remaining,
+            max_kick_force,
+        )
+
+        effective_speed = effective_physical_value(
+            player.speed,
+            player.collision_penalty_remaining,
+            max_move_speed,
+        )
+
+        return (
+            player.strength,
+            effective_power,
+            effective_speed,
+            -player.player_id,
+        )
+
+
+    def _group_collision_events(
+        self,
+        collisions: list[tuple[float, int, int]],
+    ) -> list[tuple[float, set[int]]]:
+        events: list[tuple[float, set[int]]] = []
+
+        for time, player_a_id, player_b_id in collisions:
+            merged_players = {
+                player_a_id,
+                player_b_id,
+            }
+
+            remaining_events = []
+
+            for event_time, player_ids in events:
+                if (
+                    isclose(time, event_time)
+                    and merged_players & player_ids
+                ):
+                    merged_players.update(player_ids)
+                else:
+                    remaining_events.append(
+                        (
+                            event_time,
+                            player_ids,
+                        )
+                    )
+
+            remaining_events.append(
+                (
+                    time,
+                    merged_players,
+                )
+            )
+
+            events = remaining_events
+
+        return events
+
+
+    def _resolve_collision_contest(
+        self,
+        players: list[PlayerInMatchSnapshotLike],
+    ) -> ContestResolution:
+        winner = max(
+            players,
+            key=self._collision_contest_key,
+        )
+
+        loser_ids = tuple(
+            player.player_id
+            for player in players
+            if player.player_id != winner.player_id
+        )
+
+        return ContestResolution(
+            winner_id=winner.player_id,
+            loser_ids=loser_ids,
         )

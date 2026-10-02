@@ -423,6 +423,87 @@ def effective_physical_value(
     )
 
 
+def collision_time(
+    start_a: Position,
+    end_a: Position,
+    radius_a: float,
+    start_b: Position,
+    end_b: Position,
+    radius_b: float,
+) -> float | None:
+    """
+    Return the first normalized time in [0, 1] at which two moving
+    circular objects collide.
+
+    Returns:
+        First collision time in [0, 1], or None if no collision occurs.
+    """
+    relative_start = (
+        start_a[0] - start_b[0],
+        start_a[1] - start_b[1],
+    )
+
+    movement_a = _displacement(start_a, end_a)
+    movement_b = _displacement(start_b, end_b)
+
+    relative_movement = (
+        movement_a[0] - movement_b[0],
+        movement_a[1] - movement_b[1],
+    )
+
+    collision_distance = radius_a + radius_b
+
+    # |R0 + Vt|² = (ra + rb)²
+    # => at² + bt + c = 0
+    a = _vector_magnitude(relative_movement) ** 2
+    b = 2 * _dot_product(relative_start, relative_movement)
+    c = (
+        _vector_magnitude(relative_start) ** 2
+        - collision_distance ** 2
+    )
+
+    # R0 · V < 0 -> approaching
+    if c <= 0:
+        if _dot_product(relative_start, relative_movement) < 0:
+            return 0.0
+
+        return None
+
+    if isclose(a, 0.0):
+        return None
+
+    # Δ = b² - 4ac
+    discriminant = b ** 2 - 4 * a * c
+
+    if discriminant < 0:
+        return None
+
+    # t = (-b - √Δ) / 2a
+    first_collision = (
+        -b - sqrt(discriminant)
+    ) / (2 * a)
+
+    if 0.0 <= first_collision <= 1.0:
+        return first_collision
+
+    return None
+
+
+def position_at_time(
+    start: Position,
+    end: Position,
+    time: float,
+) -> Position:
+    """
+    Return the position along a linear trajectory at normalized time [0, 1].
+    """
+    # P(t) = P0 + t(P1 - P0)
+    return (
+        start[0] + time * (end[0] - start[0]),
+        start[1] + time * (end[1] - start[1]),
+    )
+
+
 def _validate_pacss(pacss: int) -> None:
     """
     Validate that a PACSS attribute is within the valid range.
@@ -475,6 +556,22 @@ def _interpolate_pacss(
     return minimum + _smoothstep(pacss) * (maximum - minimum)
 
 
+def _displacement(
+    from_position: Position,
+    to_position: Position,
+) -> tuple[float, float]:
+    """
+    Return the displacement vector from one position to another.
+
+    Formula:
+        ΔP = P1 - P0
+    """
+    return (
+        to_position[0] - from_position[0],
+        to_position[1] - from_position[1],
+    )
+
+
 def _dot_product(
     vector_a: tuple[float, float],
     vector_b: tuple[float, float],
@@ -482,12 +579,8 @@ def _dot_product(
     """
     Calculate the dot product between two 2D vectors.
 
-    Args:
-        vector_a: First 2D vector.
-        vector_b: Second 2D vector.
-
-    Returns:
-        Dot product of the two vectors.
+    Formula:
+        a · b = ax * bx + ay * by
     """
     return (
         vector_a[0] * vector_b[0]
@@ -499,11 +592,8 @@ def _vector_magnitude(vector: tuple[float, float]) -> float:
     """
     Calculate the magnitude of a 2D vector.
 
-    Args:
-        vector: Two-dimensional vector.
-
-    Returns:
-        Magnitude of the vector.
+    Formula:
+        |v| = sqrt(vx² + vy²)
     """
     return sqrt(vector[0] ** 2 + vector[1] ** 2)
 
