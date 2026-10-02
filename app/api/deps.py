@@ -30,11 +30,13 @@ def get_current_user(
     except auth_service.InvalidToken:
         raise credentials_exception
 
+
 def get_current_user_ws(
-          token: Annotated[str, Query()],
-          db: Annotated[Session, Depends(get_db)]
+    token: Annotated[str, Query()],
+    db: Annotated[Session, Depends(get_db)],
 ) -> User:
-        try:  
-            return auth_service.get_user_from_token(db, token)
-        except auth_service.InvalidToken: 
-             raise WebSocketException(code=status.WS_1008_POLICY_VIOLATION)
+    # El navegador no permite headers en el handshake de WebSocket: el token llega por ?token=
+    try:
+        return auth_service.get_user_from_token(db, token)
+    except auth_service.InvalidToken:
+        raise WebSocketException(code=status.WS_1008_POLICY_VIOLATION)

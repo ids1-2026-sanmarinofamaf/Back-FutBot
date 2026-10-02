@@ -13,15 +13,13 @@ async def websocket_endpoint(
     websocket: WebSocket,
     user: Annotated[User, Depends(get_current_user_ws)]
 ):
-    await manager.connect(user.id,websocket)
+    await manager.connect(user.id, websocket)
     try:
         await websocket.send_text("Bienvenido")
         while True:
             # El cliente no manda nada útil; esperamos para detectar cuándo se desconecta
-            mensaje = await websocket.receive_text()
-            print(f"Mensaje de {user.id}: {mensaje}")
+            await websocket.receive_text()
     except WebSocketDisconnect:
         pass
     finally:
-        manager.disconnect(user.id,websocket)
-        print(f"Usuario {user.id} desconectado")
+        manager.disconnect(user.id, websocket)
