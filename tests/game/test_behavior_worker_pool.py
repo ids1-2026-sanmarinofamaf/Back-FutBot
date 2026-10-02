@@ -1,4 +1,4 @@
-import time
+from time import monotonic, sleep
 
 import pytest
 
@@ -22,6 +22,9 @@ def infinite_play():
     while True:
         pass
 
+def slow_play():
+    sleep(0.1)
+    return WaitAction()
 
 @pytest.fixture
 def pool_move_behavior():
@@ -241,6 +244,51 @@ def test_pool_replaces_worker_after_execution_error(context):
 
         assert replacement_process.pid != original_process.pid
         assert replacement_process.is_alive()
+
+    finally:
+        pool.shutdown()
+
+
+def test_pool_uses_common_deadline_for_concurrent_jobs(
+    context,
+):
+    behavior = RuntimeBehavior(
+        id=99,
+        play=slow_play,
+    )
+
+    pool = BehaviorWorkerPool(
+        size=6,
+        timeout_ms=20,
+    )
+
+    try:
+        pool.register_behaviors([behavior])
+
+        jobs = [
+            BehaviorJob(
+                player_id=player_id,
+                behavior_id=behavior.id,
+                context=context,
+            )
+            for player_id in range(1, 7)
+        ]
+
+        start = monotonic()
+
+        actions = pool.execute(jobs)
+
+        elapsed = monotonic() - start
+
+        assert len(actions) == 6
+        assert all(
+            isinstance(action, WaitAction)
+            for action in actions.values()
+        )
+
+        # Six sequential 20 ms timeouts would already require about 120 ms.
+        # With a shared deadline the executions timeout concurrently.
+        assert elapsed < 0.12
 
     finally:
         pool.shutdown()

@@ -7,7 +7,8 @@ import pytest
 from app.game.behavior_executor import execute_behavior
 from app.game.models.actions import MoveAction, KickAction, WaitAction
 from app.game.context import get_current_context
-
+from app.game.primitives import move
+from app.game.models.runtime_behavior import RuntimeBehavior
 
 def test_execute_behavior_returns_move_action(
     context,
@@ -80,3 +81,26 @@ def test_execute_behavior_clears_context_after_failed_execution(
         match="Behavior context is not set"
     ):
         get_current_context()
+
+
+def invalid_move_play():
+    return move(
+        direction=(1.0, 0.0),
+        speed=1.5,  # fuera del rango [0, 1]
+    )
+
+
+def test_invalid_action_parameters_fallback_to_wait(
+    context,
+):
+    behavior = RuntimeBehavior(
+        id=99,
+        play=invalid_move_play,
+    )
+
+    action = execute_behavior(
+        context,
+        behavior,
+    )
+
+    assert isinstance(action, WaitAction)
