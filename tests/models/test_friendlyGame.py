@@ -4,9 +4,9 @@ from app.models.friendly_game import (FriendlyGame, FriendlyGameState)
 from app.models.friendly_game_participation import FriendlyGameParticipation
 
 
-def make_participation(user_id: int, roster_id: int):
+def make_participation(club_id: int, roster_id: int):
     return FriendlyGameParticipation(
-        user_id=user_id,
+        club_id=club_id,
         roster_id=roster_id,
     )
 
@@ -30,10 +30,10 @@ def test_friendly_game_contains_required_data():
     assert game.state == FriendlyGameState.POR_COMENZAR
 
 
-def test_friendly_game_participation_stores_user_and_roster_ids():
-    participation = make_participation(3,7)
+def test_friendly_game_participation_stores_club_and_roster_ids():
+    participation = make_participation(3, 7)
 
-    assert participation.user_id == 3
+    assert participation.club_id == 3
     assert participation.roster_id == 7
 
 
@@ -46,9 +46,9 @@ def test_friendly_game_can_have_two_participants():
     ]
 
     assert len(game.participations) == 2
-    assert game.participations[0].user_id == 1
+    assert game.participations[0].club_id == 1
     assert game.participations[0].roster_id == 10
-    assert game.participations[1].user_id == 2
+    assert game.participations[1].club_id == 2
     assert game.participations[1].roster_id == 20
 
 

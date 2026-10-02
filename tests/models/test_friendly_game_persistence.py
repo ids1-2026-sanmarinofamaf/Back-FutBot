@@ -38,13 +38,13 @@ def test_friendly_game_is_persisted_and_retrieved_with_relations():
         user1 = User(
             id=1,
             email="user1@test.com",
-            passwdhash="hash1",
+            hash_passwd="hash1",
         )
 
         user2 = User(
             id=2,
             email="user2@test.com",
-            passwdhash="hash2",
+            hash_passwd="hash2",
         )
 
         club1 = Club(id=1)
@@ -90,11 +90,11 @@ def test_friendly_game_is_persisted_and_retrieved_with_relations():
 
         game.participations = [
             FriendlyGameParticipation(
-                user_id=1,
+                club_id=1,
                 roster_id=1,
             ),
             FriendlyGameParticipation(
-                user_id=2,
+                club_id=2,
                 roster_id=2,
             ),
         ]
@@ -124,14 +124,14 @@ def test_friendly_game_is_persisted_and_retrieved_with_relations():
         assert len(saved_game.participations) == 2
 
         participations = {
-            (participation.user_id, participation.roster_id)
+            (participation.club_id, participation.roster_id)
             for participation in saved_game.participations
-        }
+        }   
 
         assert participations == {(1, 1),(2, 2)}
 
         for participation in saved_game.participations:
-            assert participation.user is not None
+            assert participation.club is not None
             assert participation.roster is not None
 
     finally:

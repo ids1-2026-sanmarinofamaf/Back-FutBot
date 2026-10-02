@@ -33,12 +33,12 @@ class FriendlyGame(Base):
     )
 
     creator_id: Mapped[int] = mapped_column(
-        ForeignKey("user_account.id"),
+        ForeignKey("clubs.id"),
         nullable=False
     )
 
-    creator: Mapped["User"] = relationship(
-        "User"
+    creator: Mapped["Club"] = relationship(
+        "Club"
     )
 
     participations: Mapped[list["FriendlyGameParticipation"]] = relationship(

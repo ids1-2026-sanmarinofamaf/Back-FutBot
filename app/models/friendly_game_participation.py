@@ -18,8 +18,8 @@ class FriendlyGameParticipation(Base):
         nullable=False
     )
 
-    user_id: Mapped[int] = mapped_column(
-        ForeignKey("user_account.id"),
+    club_id: Mapped[int] = mapped_column(
+        ForeignKey("clubs.id"),
         nullable=False
     )
 
@@ -33,8 +33,8 @@ class FriendlyGameParticipation(Base):
         back_populates="participations"
     )
 
-    user: Mapped["User"] = relationship(
-        "User"
+    club: Mapped["Club"] = relationship(
+        "Club"
     )
 
     roster: Mapped["Roster"] = relationship(
