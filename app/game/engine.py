@@ -4,7 +4,7 @@ from math import isclose
 from app.game.models.match import Match, MatchSnapshot
 from app.game.models.player_in_match import PlayerInMatchSnapshot
 from app.game.models.actions import MoveAction, KickAction, WaitAction
-from app.game.types import Position, Side
+from app.game.types import Position, Side, BallState
 from app.game.constants import(
     TIC_DURATION,
     FIELD_HEIGHT,
@@ -21,6 +21,8 @@ from app.game.physics import(
     distance,
     collision_time,
     position_at_time,
+    calculate_ball_next_state,
+    calculate_kick_velocity,
 )
 
 
@@ -325,6 +327,9 @@ class GameEngine:
             match.participation_b,
         ):
             for player in participation.players:
+                if not player.is_on_field:
+                    continue
+
                 if player.player_id not in loser_ids:
                     continue
 
@@ -342,7 +347,18 @@ class GameEngine:
         match: Match,
         final_positions: dict[int, Position],
     ) -> None:
-        ...
+        for participation in (
+            match.participation_a,
+            match.participation_b,
+        ):
+            for player in participation.players:
+                if not player.is_on_field:
+                    continue
+
+                if player.player_id not in final_positions:
+                    continue
+
+                player.position = final_positions[player.player_id]
 
 
     def _update_ball(
@@ -352,7 +368,36 @@ class GameEngine:
         kick_result: KickResolution | None,
         final_positions: dict[int, Position],
     ) -> None:
-        ...
+        ball_state: BallState = (
+            snapshot.ball.position,
+            snapshot.ball.velocity,
+        )
+
+        if kick_result is not None:
+            players = self._get_on_field_players(snapshot)
+
+            winner = players[
+                kick_result.contest.winner_id
+            ]
+
+            effective_power = effective_physical_value(
+                winner.power,
+                winner.collision_penalty_remaining,
+                max_kick_force,
+            )
+
+            ball_state = self._ball_state_after_kick(
+                ball_state,
+                kick_result.action,
+                effective_power,
+            )
+
+        next_position, next_velocity = (
+            calculate_ball_next_state(ball_state)
+        )
+
+        match.ball.position = next_position
+        match.ball.velocity = next_velocity
 
 
     def _detect_goal(
@@ -566,4 +611,28 @@ class GameEngine:
         return ContestResolution(
             winner_id=winner.player_id,
             loser_ids=loser_ids,
+        )
+
+    def _ball_state_after_kick(
+        self,
+        ball_state: BallState,
+        action: KickAction,
+        effective_power: float,
+    ) -> BallState:
+        position, velocity = ball_state
+
+        kick_force = (
+            effective_power
+            * action.kick_force_factor
+        )
+
+        kick_velocity = calculate_kick_velocity(
+            velocity,
+            action.kick_direction,
+            kick_force,
+        )
+
+        return (
+            position,
+            kick_velocity,
         )

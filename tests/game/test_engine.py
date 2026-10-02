@@ -19,7 +19,8 @@ from app.game.types import Side
 from app.game.physics import(
     max_move_speed,
     collision_time,
-    position_at_time
+    position_at_time,
+    calculate_kick_velocity,
 )
 
 
@@ -56,6 +57,20 @@ def _make_participation(
             _make_player(start_id + 4, False),
             _make_player(start_id + 5, False),
         ],
+    )
+
+
+@pytest.fixture
+def match():
+    return Match(
+        match_id=1,
+        participation_a=_make_participation(1),
+        participation_b=_make_participation(7),
+        ball=Ball(
+            position=(20.0, 10.0),
+            velocity=(0.0, 0.0),
+        ),
+        duration_ticks=1200,
     )
 
 
@@ -1149,6 +1164,65 @@ def test_apply_collision_effects_does_nothing_without_losers():
             assert player.collision_penalty_remaining == 0
 
 
+def test_apply_collision_effects_ignores_substitutes(
+    match,
+):
+    engine = GameEngine()
+
+    substitute = match.participation_a.players[3]
+
+    engine._apply_collision_effects(
+        match,
+        {substitute.player_id},
+    )
+
+    assert substitute.forced_wait_remaining == 0
+    assert substitute.collision_penalty_remaining == 0
+
+
+def test_apply_player_positions_updates_on_field_players(
+    match,
+):
+    engine = GameEngine()
+
+    player_a = match.participation_a.players[0]
+    player_b = match.participation_b.players[1]
+
+    final_positions = {
+        player_a.player_id: (10.0, 5.0),
+        player_b.player_id: (30.0, 15.0),
+    }
+
+    engine._apply_player_positions(
+        match,
+        final_positions,
+    )
+
+    assert player_a.position == (10.0, 5.0)
+    assert player_b.position == (30.0, 15.0)
+
+
+def test_apply_player_positions_keeps_unlisted_players_unchanged(
+    match,
+):
+    engine = GameEngine()
+
+    updated_player = match.participation_a.players[0]
+    unchanged_player = match.participation_a.players[1]
+
+    original_position = unchanged_player.position
+
+    engine._apply_player_positions(
+        match,
+        {
+            updated_player.player_id: (10.0, 5.0),
+        },
+    )
+
+    assert updated_player.position == (10.0, 5.0)
+    assert unchanged_player.position == original_position
+
+
 def _wait_actions_for_snapshot(match_snapshot):
     return {
         player.player_id: WaitAction()
@@ -1157,9 +1231,88 @@ def _wait_actions_for_snapshot(match_snapshot):
     }
 
 
+def test_apply_player_positions_ignores_substitutes(
+    match,
+):
+    engine = GameEngine()
+
+    substitute = match.participation_a.players[3]
+    original_position = substitute.position
+
+    engine._apply_player_positions(
+        match,
+        {
+            substitute.player_id: (20.0, 10.0),
+        },
+    )
+
+    assert substitute.position == original_position
+
+
 def _proposed_positions_from_snapshot(snapshot):
     return {
         player.player_id: player.position
         for player in snapshot.players_a + snapshot.players_b
         if player.is_on_field
     }
+
+
+def test_ball_state_after_kick_changes_velocity():
+    engine = GameEngine()
+
+    ball_state = (
+        (20.0, 10.0),
+        (0.0, 0.0),
+    )
+
+    action = KickAction(
+        kick_direction=(1.0, 0.0),
+        kick_force_factor=0.5,
+    )
+
+    result = engine._ball_state_after_kick(
+        ball_state,
+        action,
+        effective_power=20.0,
+    )
+
+    position, velocity = result
+
+    assert position == (20.0, 10.0)
+    assert velocity == pytest.approx(
+        calculate_kick_velocity(
+            (0.0, 0.0),
+            (1.0, 0.0),
+            10.0,
+        )
+    )
+
+
+def test_ball_state_after_kick_uses_current_ball_velocity():
+    engine = GameEngine()
+
+    ball_state = (
+        (20.0, 10.0),
+        (5.0, 0.0),
+    )
+
+    action = KickAction(
+        kick_direction=(1.0, 0.0),
+        kick_force_factor=1.0,
+    )
+
+    result = engine._ball_state_after_kick(
+        ball_state,
+        action,
+        effective_power=20.0,
+    )
+
+    _, velocity = result
+
+    assert velocity == pytest.approx(
+        calculate_kick_velocity(
+            (5.0, 0.0),
+            (1.0, 0.0),
+            20.0,
+        )
+    )

@@ -309,6 +309,66 @@ def calculate_kick_force_factor(
     return high
 
 
+def calculate_ball_next_state(
+    ball_state: BallState,
+) -> BallState:
+    """
+    Calculate the ball position and velocity after one tic.
+    """
+    position, velocity = ball_state
+
+    speed = _vector_magnitude(velocity)
+
+    if speed <= BALL_STOP_THRESHOLD:
+        return (
+            position,
+            (0.0, 0.0),
+        )
+
+    deceleration = _ball_deceleration(speed)
+
+    # v1 = max(v0 - a * Δt, 0)
+    next_speed = max(
+        speed - deceleration * TIC_DURATION,
+        0.0,
+    )
+
+    if next_speed <= BALL_STOP_THRESHOLD:
+        next_speed = 0.0
+
+    # Unit vector in the current movement direction.
+    direction = (
+        velocity[0] / speed,
+        velocity[1] / speed,
+    )
+
+    # v_avg = (v0 + v1) / 2
+    average_speed = (
+        speed + next_speed
+    ) / 2
+
+    # ΔP = direction * v_avg * Δt
+    displacement = (
+        average_speed * TIC_DURATION
+    )
+
+    next_position = (
+        position[0] + direction[0] * displacement,
+        position[1] + direction[1] * displacement,
+    )
+
+    # V1 = direction * v1
+    next_velocity = (
+        direction[0] * next_speed,
+        direction[1] * next_speed,
+    )
+
+    return (
+        next_position,
+        next_velocity,
+    )
+
+
 def calculate_ball_next_position(ball_state: BallState) -> Position:
     """
     Calculate the ball position after one tic.
@@ -323,39 +383,11 @@ def calculate_ball_next_position(ball_state: BallState) -> Position:
     Returns:
         Predicted ball position after one tic.
     """
-    position, velocity = ball_state
-
-    speed = _vector_magnitude(velocity)
-
-    if speed <= BALL_STOP_THRESHOLD:
-        return position
-
-    deceleration = _ball_deceleration(speed)
-
-    new_speed = max(
-        speed - deceleration * TIC_DURATION,
-        0.0,
+    next_position, _ = calculate_ball_next_state(
+        ball_state
     )
 
-    if new_speed <= BALL_STOP_THRESHOLD:
-        new_speed = 0.0
-
-    # Unit vector in the current direction of movement.
-    direction = (
-        velocity[0] / speed,
-        velocity[1] / speed,
-    )
-
-    # We use the average speed during the tic to approximate
-    # the displacement while the ball is decelerating.
-    average_speed = (speed + new_speed) / 2
-
-    displacement = average_speed * TIC_DURATION
-
-    return (
-        position[0] + direction[0] * displacement,
-        position[1] + direction[1] * displacement,
-    )
+    return next_position
 
 
 def validate_distance(distance: float) -> None:
@@ -501,6 +533,29 @@ def position_at_time(
     return (
         start[0] + time * (end[0] - start[0]),
         start[1] + time * (end[1] - start[1]),
+    )
+
+
+def calculate_kick_velocity(
+    ball_velocity: Velocity,
+    kick_direction: Direction,
+    kick_force: float,
+) -> Velocity:
+    """
+    Calculate the ball velocity immediately after a kick.
+
+    Formula:
+        V = direction * speed
+    """
+    speed = _kick_initial_speed(
+        ball_velocity,
+        kick_direction,
+        kick_force,
+    )
+
+    return (
+        kick_direction[0] * speed,
+        kick_direction[1] * speed,
     )
 
 

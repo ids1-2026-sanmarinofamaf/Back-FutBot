@@ -3,7 +3,7 @@ Unit tests for game physics and related calculations.
 """
 
 import pytest
-from math import isclose
+from math import isclose, sqrt
 
 from app.game.constants import (
     MIN_PACSS,
@@ -17,7 +17,9 @@ from app.game.constants import (
     MIN_KICK_COOLDOWN_TICS,
     MAX_KICK_COOLDOWN_TICS,
     TIC_DURATION,
-    BALL_STOP_THRESHOLD
+    BALL_STOP_THRESHOLD,
+    KICK_INERTIA_FACTOR,
+    MAX_BALL_SPEED,
 )
 from app.game.physics import (
     _smoothstep,
@@ -29,7 +31,9 @@ from app.game.physics import (
     calculate_speed_factor,
     calculate_kick_travel_distance,
     calculate_kick_force_factor,
-    calculate_ball_next_position
+    calculate_ball_next_position,
+    calculate_kick_velocity,
+    calculate_ball_next_state,
 )
 
 
@@ -413,4 +417,139 @@ def test_calculate_ball_next_position_preserves_movement_direction():
     assert isclose(
         displacement_y / displacement_x,
         4.0 / 3.0,
+    )
+
+
+def test_calculate_kick_velocity_applies_direction():
+    velocity = calculate_kick_velocity(
+        ball_velocity=(0.0, 0.0),
+        kick_direction=(1.0, 0.0),
+        kick_force=20.0,
+    )
+
+    assert velocity == pytest.approx((20.0, 0.0))
+
+
+def test_calculate_kick_velocity_preserves_direction_components():
+    direction = (
+        1 / sqrt(2),
+        1 / sqrt(2),
+    )
+
+    velocity = calculate_kick_velocity(
+        ball_velocity=(0.0, 0.0),
+        kick_direction=direction,
+        kick_force=20.0,
+    )
+
+    expected_component = 20.0 / sqrt(2)
+
+    assert velocity == pytest.approx(
+        (
+            expected_component,
+            expected_component,
+        )
+    )
+
+
+def test_calculate_kick_velocity_inherits_parallel_ball_velocity():
+    velocity = calculate_kick_velocity(
+        ball_velocity=(10.0, 0.0),
+        kick_direction=(1.0, 0.0),
+        kick_force=20.0,
+    )
+
+    expected_speed = (
+        20.0
+        + 10.0 * KICK_INERTIA_FACTOR
+    )
+
+    assert velocity == pytest.approx(
+        (expected_speed, 0.0)
+    )
+
+
+def test_calculate_kick_velocity_ignores_perpendicular_ball_velocity():
+    velocity = calculate_kick_velocity(
+        ball_velocity=(0.0, 10.0),
+        kick_direction=(1.0, 0.0),
+        kick_force=20.0,
+    )
+
+    assert velocity == pytest.approx(
+        (20.0, 0.0)
+    )
+
+
+def test_calculate_kick_velocity_is_limited_by_max_ball_speed():
+    velocity = calculate_kick_velocity(
+        ball_velocity=(MAX_BALL_SPEED, 0.0),
+        kick_direction=(1.0, 0.0),
+        kick_force=MAX_BALL_SPEED,
+    )
+
+    assert velocity == pytest.approx(
+        (MAX_BALL_SPEED, 0.0)
+    )
+
+
+def test_calculate_ball_next_state_keeps_stopped_ball_still():
+    ball_state = (
+        (20.0, 10.0),
+        (0.0, 0.0),
+    )
+
+    next_state = calculate_ball_next_state(ball_state)
+
+    assert next_state == (
+        (20.0, 10.0),
+        (0.0, 0.0),
+    )
+
+
+def test_calculate_ball_next_state_moves_ball_forward():
+    ball_state = (
+        (20.0, 10.0),
+        (10.0, 0.0),
+    )
+
+    next_position, next_velocity = calculate_ball_next_state(
+        ball_state
+    )
+
+    assert next_position[0] > 20.0
+    assert next_position[1] == pytest.approx(10.0)
+
+    assert next_velocity[0] < 10.0
+    assert next_velocity[0] > 0.0
+    assert next_velocity[1] == pytest.approx(0.0)
+
+
+def test_calculate_ball_next_state_preserves_direction():
+    ball_state = (
+        (20.0, 10.0),
+        (6.0, 8.0),
+    )
+
+    _, next_velocity = calculate_ball_next_state(
+        ball_state
+    )
+
+    original_ratio = 6.0 / 8.0
+    next_ratio = next_velocity[0] / next_velocity[1]
+
+    assert next_ratio == pytest.approx(original_ratio)
+
+
+def test_calculate_ball_next_state_stops_below_threshold():
+    ball_state = (
+        (20.0, 10.0),
+        (BALL_STOP_THRESHOLD, 0.0),
+    )
+
+    next_state = calculate_ball_next_state(ball_state)
+
+    assert next_state == (
+        (20.0, 10.0),
+        (0.0, 0.0),
     )
