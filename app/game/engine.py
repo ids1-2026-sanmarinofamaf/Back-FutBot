@@ -95,7 +95,35 @@ class GameEngine:
         snapshot: MatchSnapshotLike,
         actions: dict[int, Action],
     ) -> None:
-        ...
+            """
+            Validate that the engine received exactly one valid action
+            for each of the six on-field players.
+
+            Raises:
+                ValueError: If the actions do not match the six on-field players
+                or if any action has an invalid type.
+            """
+            on_field_player_ids = {
+                player.player_id
+                for player in snapshot.players_a + snapshot.players_b
+                if player.is_on_field
+            }
+
+            if len(on_field_player_ids) != 6:
+                raise ValueError(
+                    "A match must have exactly 6 on-field players"
+                )
+
+            if set(actions.keys()) != on_field_player_ids:
+                raise ValueError(
+                    "Actions must match exactly the on-field players"
+                )
+
+            if not all(
+                isinstance(action, (MoveAction, KickAction, WaitAction))
+                for action in actions.values()
+            ):
+                raise ValueError("Invalid player action")
 
 
     def _resolve_kicks(
