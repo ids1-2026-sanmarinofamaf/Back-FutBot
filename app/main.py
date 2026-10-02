@@ -4,6 +4,9 @@ from fastapi import FastAPI
 from sqlalchemy import text
 
 from app.database import engine
+from app.api import friendly_games
+
+
 
 # Se ejecuta una vez al arrancar la app y una vez al apagar
 @asynccontextmanager
@@ -20,3 +23,6 @@ app = FastAPI(lifespan=lifespan)
 @app.get("/")
 def root():
     return{"message": "FutBot backend running"}
+
+
+app.include_router(friendly_games.router)
