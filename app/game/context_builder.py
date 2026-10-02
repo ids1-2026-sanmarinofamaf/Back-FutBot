@@ -55,6 +55,8 @@ class MatchSnapshotLike(Protocol):
     score_a: int
     score_b: int
 
+    last_conceding_side: Side | None
+
 
 def build_behavior_context(
         match_snapshot: MatchSnapshotLike,
