@@ -11,7 +11,7 @@ from app.database import get_db
 
 from app.schemas.friendly_game import (FriendlyGameCreate,FriendlyGameCreateResponse)
 
-from app.services.friendly_game_service import (create_friendly_game,FriendlyGameServiceError)
+from app.services.friendly_game_service import create_friendly_game
 
 from app.api.auth import get_current_user
 
@@ -41,12 +41,6 @@ def create(
         return FriendlyGameCreateResponse(
             friendly_game_id=friendly_game.id,
             roster_id=roster.id
-        )
-
-    except FriendlyGameServiceError as error:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=str(error)
         )
 
     except ValueError as error:
