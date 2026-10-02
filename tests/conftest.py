@@ -1,5 +1,18 @@
 import pytest
 
+import os
+from pathlib import Path
+
+
+ROOT_DIR = Path(__file__).resolve().parents[1]
+TEST_DB_PATH = ROOT_DIR / "tests" / "futbot_test.db"
+
+# Los tests usan una base propia, nunca la de desarrollo.
+# Se setea ANTES de importar app.database, que lee DATABASE_URL al importarse
+# (load_dotenv no pisa variables que ya están definidas).
+# Se puede apuntar a otra base (ej. un Postgres de test) con TEST_DATABASE_URL.
+os.environ["DATABASE_URL"] = os.getenv("TEST_DATABASE_URL", f"sqlite:///{TEST_DB_PATH}")
+
 from app.game.models.player_in_match import PlayerInMatch
 from app.models.player_on_roster import PlayerOnRoster, RosterSlot
 from app.models.roster import Roster
@@ -82,18 +95,6 @@ def valid_roster():
     ]
 
     return roster
-import os
-from pathlib import Path
-
-
-ROOT_DIR = Path(__file__).resolve().parents[1]
-TEST_DB_PATH = ROOT_DIR / "tests" / "futbot_test.db"
-
-# Los tests usan una base propia, nunca la de desarrollo.
-# Se setea ANTES de importar app.database, que lee DATABASE_URL al importarse
-# (load_dotenv no pisa variables que ya están definidas).
-# Se puede apuntar a otra base (ej. un Postgres de test) con TEST_DATABASE_URL.
-os.environ["DATABASE_URL"] = os.getenv("TEST_DATABASE_URL", f"sqlite:///{TEST_DB_PATH}")
 
 from alembic import command
 from alembic.config import Config
