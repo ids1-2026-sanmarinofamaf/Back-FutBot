@@ -12,8 +12,7 @@ from app.database import get_db
 from app.schemas.friendly_game import (FriendlyGameCreate,FriendlyGameCreateResponse)
 
 from app.services.friendly_game_service import create_friendly_game
-
-from app.api.auth import get_current_user
+from app.api.deps import get_current_user
 
 
 router = APIRouter(

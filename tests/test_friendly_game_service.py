@@ -6,7 +6,7 @@ from app.schemas.friendly_game import FriendlyGameCreate
 from app.services.friendly_game_service import create_friendly_game
 from app.models.roster import Formation
 from app.models.player_on_roster import RosterSlot
-
+from app.models.friendly_game_participation import FriendlyGameRole
 
 @pytest.fixture
 def valid_friendly_game_data():
@@ -106,8 +106,9 @@ def test_create_friendly_game_success(
     mock_friendly_game_repository.create_participation.assert_called_once_with(
         db=db,
         friendly_game_id=30,
-        user_id=5,
+        club_id=1,
         roster_id=20,
+        role=FriendlyGameRole.CREATOR,
     )
 
     db.commit.assert_called_once()

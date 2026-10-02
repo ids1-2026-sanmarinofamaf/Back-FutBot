@@ -4,7 +4,7 @@ from app.models.roster import Roster
 from app.models.player_on_roster import PlayerOnRoster
 
 from app.schemas.friendly_game import FriendlyGameCreate
-
+from app.models.friendly_game_participation import FriendlyGameRole
 from app.repositories import (
     friendly_game_repository,
     roster_repository,
@@ -67,15 +67,16 @@ def create_friendly_game(db: Session, user_id: int, data: FriendlyGameCreate):
         friendly_game = friendly_game_repository.create(
             db=db,
             duration=data.duration,
-            creator_id=user_id
+            creator_id=club.id
         )
 
         # create creator participation
         friendly_game_repository.create_participation(
             db=db,
             friendly_game_id=friendly_game.id,
-            user_id=user_id,
-            roster_id=roster.id
+            club_id=club.id,
+            roster_id=roster.id,
+            role=FriendlyGameRole.CREATOR
         )
 
         # Commit everything together
