@@ -1,21 +1,23 @@
 import os
 from pathlib import Path
+from dataclasses import dataclass, replace
 
 # Test database configuration must happen before importing any app module,
 # because app.database reads DATABASE_URL when it is imported.
 ROOT_DIR = Path(__file__).resolve().parents[1]
 TEST_DB_PATH = ROOT_DIR / "tests" / "futbot_test.db"
 
+# Tests use their own database, never the development database.
+# TEST_DATABASE_URL can be used to point to another test database
+# (for example, a PostgreSQL test database).
 os.environ["DATABASE_URL"] = os.getenv(
     "TEST_DATABASE_URL",
     f"sqlite:///{TEST_DB_PATH}",
 )
 
 import pytest
-
 from alembic import command
 from alembic.config import Config
-from dataclasses import dataclass, replace
 
 from app.database import engine
 from app.game.context import BehaviorContext
