@@ -3,7 +3,7 @@ from __future__ import annotations
 from enum import Enum
 
 from sqlalchemy import Enum as SAEnum
-from sqlalchemy import ForeignKey
+from sqlalchemy import ForeignKey, CheckConstraint
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.database import Base
@@ -17,6 +17,14 @@ class FriendlyGameState(str, Enum):
 
 class FriendlyGame(Base):
     __tablename__ = "friendly_games"
+
+    # ensure duration is positive
+    __table_args__ = (
+        CheckConstraint(
+            "duration > 0",
+            name="ck_friendly_game_duration_positive"
+        ),
+    )
 
     id: Mapped[int] = mapped_column(
         primary_key=True
@@ -33,12 +41,12 @@ class FriendlyGame(Base):
     )
 
     creator_id: Mapped[int] = mapped_column(
-        ForeignKey("user_account.id"),
+        ForeignKey("clubs.id"),
         nullable=False
     )
 
-    creator: Mapped["User"] = relationship(
-        "User"
+    creator: Mapped["Club"] = relationship(
+        "Club"
     )
 
     participations: Mapped[list["FriendlyGameParticipation"]] = relationship(
@@ -46,9 +54,3 @@ class FriendlyGame(Base):
         back_populates="friendly_game",
         cascade="all, delete-orphan"
     )
-
-    def validate_participations(self):
-        if len(self.participations) > 2:
-            raise ValueError(
-                "A friendly game cannot have more than 2 participants"
-            )
