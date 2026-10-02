@@ -15,9 +15,6 @@ from app.models.friendly_game_participation import (
 )
 from sqlalchemy.exc import IntegrityError
 
-from tests.models.stubs import Club, Player, Behavior
-
-
 engine = create_engine("sqlite+pysqlite:///:memory:")
 
 Session = sessionmaker(bind=engine)
