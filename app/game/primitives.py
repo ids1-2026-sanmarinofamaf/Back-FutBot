@@ -16,7 +16,9 @@ from .physics import(
     calculate_ball_next_position,
     validate_distance,
     validate_direction,
-    validate_factor
+    validate_factor,
+    distance as physics_distance,
+    direction_to as physics_direction_to
 )
 
 def self() -> PlayerState:
@@ -368,12 +370,10 @@ def distance(from_position: Position, to_position: Position) -> float:
     Returns:
         Distance between the two positions.
     """
-    # Calculates the difference along each axis to use as input for hypot().
-    delta_x = to_position[0] - from_position[0]
-    delta_y = to_position[1] - from_position[1]
-
-    # Hypot(x,y) calculates the Euclidean distance between x and y
-    return hypot(delta_x, delta_y)
+    return physics_distance(
+        from_position,
+        to_position,
+    )
 
 
 def direction_to(from_position: Position, to_position: Position) -> Direction:
@@ -388,19 +388,9 @@ def direction_to(from_position: Position, to_position: Position) -> Direction:
     Raises:
         ValueError: If both position are identical.
     """
-    distance_to_target = distance(from_position, to_position)
-    # Handle error when from_position = to_position
-    if distance_to_target == 0.0:
-        raise ValueError("Cannot calculate direction between identical positions.")
-    
-    # Calculates the difference along each axis to use to normalize vector.
-    delta_x = to_position[0] - from_position[0]
-    delta_y = to_position[1] - from_position[1]
-
-    # Return the normalize vector
-    return (
-        delta_x/distance_to_target, 
-        delta_y/distance_to_target
+    return physics_direction_to(
+        from_position, 
+        to_position,
     )
 
 def next_ball_position() -> Position:

@@ -12,6 +12,9 @@ from app.game.constants import(
     )
 from app.game.physics import(
     max_move_speed,
+    control_range,
+    effective_physical_value,
+    distance,
 )
 
 
@@ -136,7 +139,48 @@ class GameEngine:
         snapshot: MatchSnapshotLike,
         actions: dict[int, Action],
     ) -> KickResolution | None:
-        ...
+        players = self._get_on_field_players(snapshot)
+
+        valid_kickers = []
+
+        for player_id, player in players.items():
+            action = actions[player_id]
+
+            if not isinstance(action, KickAction):
+                continue
+
+            if not self._can_attempt_kick(
+                player,
+                snapshot.ball.position,
+            ):
+                continue
+
+            valid_kickers.append(player)
+
+        if not valid_kickers:
+            return None
+
+        winner = max(
+            valid_kickers,
+            key=lambda player: self._kick_contest_key(
+                snapshot,
+                player,
+            ),
+        )
+
+        loser_ids = tuple(
+            player.player_id
+            for player in valid_kickers
+            if player.player_id != winner.player_id
+        )
+
+        return KickResolution(
+            contest=ContestResolution(
+                winner_id=winner.player_id,
+                loser_ids=loser_ids,
+            ),
+            action=actions[winner.player_id],
+        )
 
 
     def _resolve_moves(
@@ -154,10 +198,17 @@ class GameEngine:
         for player_id, player in players.items():
             action = actions[player_id]
 
+            if player.collision_penalty_remaining > 0:
+                continue
+
             if not isinstance(action, MoveAction):
                 continue
 
-            move_speed = max_move_speed(player.speed)
+            move_speed = effective_physical_value(
+                player.speed,
+                player.collision_penalty_remaining,
+                max_move_speed,
+            )
 
             distance = (
                 move_speed
@@ -258,3 +309,80 @@ class GameEngine:
         )
 
         return (clamped_x, clamped_y)
+    
+
+    def _get_player_side(
+        self,
+        snapshot: MatchSnapshotLike,
+        player_id: int,
+    ) -> Side:
+        if any(
+            player.player_id == player_id
+            for player in snapshot.players_a
+        ):
+            return Side.LEFT
+
+        return Side.RIGHT
+
+
+    def _can_attempt_kick(
+        self,
+        player: PlayerInMatchSnapshotLike,
+        ball_position: Position,
+    ) -> bool:
+        if player.forced_wait_remaining > 0:
+            return False
+
+        if player.kick_cooldown_remaining > 0:
+            return False
+
+        effective_control_range = effective_physical_value(
+            player.control,
+            player.collision_penalty_remaining,
+            control_range,
+        )
+
+        return (
+            distance(
+                player.position,
+                ball_position,
+            )
+            <= effective_control_range
+        )
+
+
+    def _kick_contest_key(
+        self,
+        snapshot: MatchSnapshotLike,
+        player: PlayerInMatchSnapshotLike,
+    ) -> tuple[float, float, int, int, int]:
+        effective_control = effective_physical_value(
+            player.control,
+            player.collision_penalty_remaining,
+            control_range,
+        )
+
+        effective_speed = effective_physical_value(
+            player.speed,
+            player.collision_penalty_remaining,
+            max_move_speed,
+        )
+
+        player_side = self._get_player_side(
+            snapshot,
+            player.player_id,
+        )
+
+        last_conceding_advantage = (
+            1
+            if player_side == snapshot.last_conceding_side
+            else 0
+        )
+
+        return (
+            effective_control,
+            effective_speed,
+            player.strength,
+            last_conceding_advantage,
+            -player.player_id,
+        )

@@ -14,6 +14,7 @@ from app.game.physics import (
     control_range,
     max_move_speed,
     max_kick_force,
+    effective_physical_value
 )
 
 
@@ -138,7 +139,7 @@ def build_behavior_context(
     context_current_period = Period.FIRST_QUARTER
     context_period_time_remaining = context_match_time_remaining
 
-    context_control_range = _effective_physical_value(
+    context_control_range = effective_physical_value(
         player_snapshot.control,
         player_snapshot.collision_penalty_remaining,
         control_range,
@@ -146,13 +147,13 @@ def build_behavior_context(
 
     context_tics_until_kick = player_snapshot.kick_cooldown_remaining
 
-    context_max_move_speed = _effective_physical_value(
+    context_max_move_speed = effective_physical_value(
         player_snapshot.speed,
         player_snapshot.collision_penalty_remaining,
         max_move_speed,
     )
 
-    context_max_kick_force = _effective_physical_value(
+    context_max_kick_force = effective_physical_value(
         player_snapshot.power,
         player_snapshot.collision_penalty_remaining,
         max_kick_force,
@@ -212,17 +213,3 @@ def _get_player_and_opponent_team(
         raise ValueError(f"Player {player_id} does not belong to this match")
 
     return player_team, opponent_team
-
-
-def _effective_physical_value(
-    pacss: int,
-    collision_penalty_remaining: int,
-    converter: Callable[[int], float],
-) -> float:
-    max_value = converter(pacss)
-
-    return(
-        max_value * COLLISION_PENALTY
-        if collision_penalty_remaining > 0
-        else max_value
-    )

@@ -277,6 +277,8 @@ class MatchSnapshotStub:
     score_a: int
     score_b: int
 
+    last_conceding_side: Side | None
+
 
 @pytest.fixture
 def player_a_snapshot():
@@ -496,6 +498,7 @@ def match_snapshot(
         current_tick=200,
         score_a=2,
         score_b=1,
+        last_conceding_side=None
     )
 
 
