@@ -10,6 +10,7 @@ from app.game.constants import(
     COLLISION_PENALTY_TICS,
     BALL_RADIUS,
     WALL_BOUNCE_SPEED_FACTOR,
+    GOAL_RESTART_WAIT_TICS,
 )
 from app.game.engine import GameEngine
 from app.game.models.actions import MoveAction, KickAction, WaitAction
@@ -1559,3 +1560,150 @@ def test_resolve_ball_movement_stops_at_left_goal_line():
     assert position[0] == pytest.approx(0.0)
     assert engine._is_inside_goal_opening(position[1])
     assert velocity[0] < 0.0
+
+
+def test_detect_goal_returns_left_when_ball_is_in_left_goal(match):
+    engine = GameEngine()
+
+    match.ball.position = (
+        0.0,
+        FIELD_HEIGHT / 2,
+    )
+
+    assert engine._detect_goal(match) == Side.LEFT
+
+
+def test_detect_goal_returns_right_when_ball_is_in_right_goal(match):
+    engine = GameEngine()
+
+    match.ball.position = (
+        FIELD_WIDTH,
+        FIELD_HEIGHT / 2,
+    )
+
+    assert engine._detect_goal(match) == Side.RIGHT
+
+
+def test_detect_goal_returns_none_when_ball_is_inside_field(match):
+    engine = GameEngine()
+
+    match.ball.position = (
+        FIELD_WIDTH / 2,
+        FIELD_HEIGHT / 2,
+    )
+
+    assert engine._detect_goal(match) is None
+
+
+def test_detect_goal_returns_none_outside_goal_opening(match):
+    engine = GameEngine()
+
+    match.ball.position = (
+        0.0,
+        2.0,
+    )
+
+    assert engine._detect_goal(match) is None
+
+
+def test_handle_goal_when_left_side_concedes(match):
+    engine = GameEngine()
+
+    engine._handle_goal(
+        match,
+        Side.LEFT,
+    )
+
+    assert match.participation_a.goals == 0
+    assert match.participation_b.goals == 1
+    assert match.last_conceding_side == Side.LEFT
+
+
+def test_handle_goal_when_right_side_concedes(match):
+    engine = GameEngine()
+
+    engine._handle_goal(
+        match,
+        Side.RIGHT,
+    )
+
+    assert match.participation_a.goals == 1
+    assert match.participation_b.goals == 0
+    assert match.last_conceding_side == Side.RIGHT
+
+
+def test_handle_goal_resets_ball(match):
+    engine = GameEngine()
+
+    match.ball.position = (3.0, 7.0)
+    match.ball.velocity = (12.0, -5.0)
+
+    engine._handle_goal(
+        match,
+        Side.LEFT,
+    )
+
+    assert match.ball.position == (
+        FIELD_WIDTH / 2,
+        FIELD_HEIGHT / 2,
+    )
+
+    assert match.ball.velocity == (0.0, 0.0)
+
+
+def test_handle_goal_resets_on_field_players(match):
+    engine = GameEngine()
+
+    player = match.participation_a.players[0]
+
+    player.position = (20.0, 10.0)
+    player.kick_cooldown_remaining = 5
+    player.collision_penalty_remaining = 7
+    player.forced_wait_remaining = 3
+
+    expected_position = player.starting_position
+
+    engine._handle_goal(
+        match,
+        Side.LEFT,
+    )
+
+    assert player.position == expected_position
+    assert player.kick_cooldown_remaining == 0
+    assert player.collision_penalty_remaining == 0
+
+    assert player.forced_wait_remaining == (
+        GOAL_RESTART_WAIT_TICS + 1
+    )
+
+
+def test_update_timers_decrements_active_timers(match):
+    engine = GameEngine()
+
+    player = match.participation_a.players[0]
+
+    player.kick_cooldown_remaining = 3
+    player.forced_wait_remaining = 2
+    player.collision_penalty_remaining = 1
+
+    engine._update_timers(match)
+
+    assert player.kick_cooldown_remaining == 2
+    assert player.forced_wait_remaining == 1
+    assert player.collision_penalty_remaining == 0
+
+
+def test_update_timers_does_not_go_below_zero(match):
+    engine = GameEngine()
+
+    player = match.participation_a.players[0]
+
+    player.kick_cooldown_remaining = 0
+    player.forced_wait_remaining = 0
+    player.collision_penalty_remaining = 0
+
+    engine._update_timers(match)
+
+    assert player.kick_cooldown_remaining == 0
+    assert player.forced_wait_remaining == 0
+    assert player.collision_penalty_remaining == 0

@@ -14,7 +14,8 @@ from app.game.constants import(
     COLLISION_FORCED_WAIT_TICS,
     COLLISION_PENALTY_TICS,
     BALL_RADIUS,
-    WALL_BOUNCE_SPEED_FACTOR
+    WALL_BOUNCE_SPEED_FACTOR,
+    GOAL_RESTART_WAIT_TICS,
     )
 from app.game.physics import(
     max_move_speed,
@@ -408,7 +409,18 @@ class GameEngine:
         self,
         match: Match,
     ) -> Side | None:
-       ...
+        x, y = match.ball.position
+
+        if not self._is_inside_goal_opening(y):
+            return None
+
+        if x <= 0.0:
+            return Side.LEFT
+
+        if x >= FIELD_WIDTH:
+            return Side.RIGHT
+
+        return None
 
 
     def _handle_goal(
@@ -416,14 +428,61 @@ class GameEngine:
         match: Match,
         conceding_side: Side,
     ) -> None:
-        ...
+        # Score for the opposite side.
+        if conceding_side == Side.LEFT:
+            match.participation_b.goals += 1
+        else:
+            match.participation_a.goals += 1
+
+        match.last_conceding_side = conceding_side
+
+        # Reset ball to the center.
+        match.ball.position = (
+            FIELD_WIDTH / 2,
+            FIELD_HEIGHT / 2,
+        )
+        match.ball.velocity = (0.0, 0.0)
+
+        # Reset on-field players.
+        for participation in (
+            match.participation_a,
+            match.participation_b,
+        ):
+            for player in participation.players:
+                if not player.is_on_field:
+                    continue
+
+                if player.starting_position is not None:
+                    player.position = player.starting_position
+
+                player.kick_cooldown_remaining = 0
+                player.collision_penalty_remaining = 0
+
+                player.forced_wait_remaining = (
+                    GOAL_RESTART_WAIT_TICS + 1
+                )
 
 
     def _update_timers(
         self,
         match: Match,
     ) -> None:
-        ...
+        for participation in (
+            match.participation_a,
+            match.participation_b,
+        ):
+            for player in participation.players:
+                if not player.is_on_field:
+                    continue
+
+                if player.kick_cooldown_remaining > 0:
+                    player.kick_cooldown_remaining -= 1
+
+                if player.forced_wait_remaining > 0:
+                    player.forced_wait_remaining -= 1
+
+                if player.collision_penalty_remaining > 0:
+                    player.collision_penalty_remaining -= 1
 
 
     def _get_on_field_players(
