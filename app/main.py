@@ -6,6 +6,9 @@ from app.api import auth, users, sessions_websocket
 from sqlalchemy import text
 
 from app.database import engine
+from app.api import friendly_games
+
+
 
 from app.api.match_websocket import router as match_websocket_router
 
@@ -44,4 +47,6 @@ app.include_router(sessions_websocket.router)
 def root():
     return{"message": "FutBot backend running"}
 
+
+app.include_router(friendly_games.router)
 app.include_router(match_websocket_router)
