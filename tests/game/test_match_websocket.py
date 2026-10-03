@@ -11,6 +11,14 @@ from app.main import app
 from app.services.match_websocket_service import match_connection_manager
 from app.services.match_websocket_service import (MatchConnectionManager, build_match_state_message)
 
+from unittest.mock import AsyncMock, MagicMock
+
+from app.game.match_runner import (
+    MatchRunner,
+    BehaviorExecutorProtocol,
+    GameEngineProtocol,
+)
+
 # TestClient simulates a real client interacting with the FastAPI app
 client = TestClient(app)
 
@@ -193,3 +201,89 @@ def test_disconnect_removes_websocket():
     manager.disconnect(1, websocket)
     # check if 1 is not more in the active_connections
     assert 1 not in manager.active_connections
+
+@pytest.mark.asyncio
+async def test_broadcast_continues_if_one_websocket_fails():
+    manager = MatchConnectionManager()
+
+    broken_ws = AsyncMock()
+    working_ws = AsyncMock()
+
+    # simulate a disconnected/broken websocket
+    broken_ws.send_json.side_effect = RuntimeError("connection lost")
+
+    manager.active_connections[1] = [
+        broken_ws,
+        working_ws,
+    ]
+
+    message = MatchStateMessage(
+        event="estado_partido",
+        actual_tic=0,
+        total_tic=10,
+        user1_goals=0,
+        user2_goals=0,
+        ball=BallState(
+            x=20.0,
+            y=10.0,
+            speed_x=0.0,
+            speed_y=0.0,
+        ),
+        players=[],
+    )
+
+    await manager.broadcast(1, message)
+
+    # even if the first websocket fails,
+    # the message must still be sent to the other connection
+    working_ws.send_json.assert_awaited_once_with(
+        message.model_dump()
+    )
+
+    # the broken websocket should be removed
+    assert broken_ws not in manager.active_connections[1]
+
+@pytest.mark.asyncio
+async def test_match_runner_sends_initial_state_and_tick_updates(match):
+    behavior_executor = MagicMock(
+        spec=BehaviorExecutorProtocol
+    )
+
+    behavior_executor.execute_all = AsyncMock(
+        return_value=["wait"] * 6
+    )
+
+    game_engine = MagicMock(
+        spec=GameEngineProtocol
+    )
+
+    runner = MatchRunner(
+        behavior_executor,
+        game_engine,
+    )
+
+    websocket = AsyncMock()
+
+    match_connection_manager.active_connections.clear()
+    match_connection_manager.active_connections[
+        match.match_id
+    ] = [websocket]
+
+    # use only two ticks 
+    match.duration_ticks = 2
+
+    await runner.run_match(match)
+
+    # 1 initial state + 2 tick updates
+    assert websocket.send_json.await_count == 3
+
+    sent_messages = [
+        call.args[0]
+        for call in websocket.send_json.await_args_list
+    ]
+
+    assert sent_messages[0]["event"] == "estado_partido"
+    assert sent_messages[0]["actual_tic"] == 0
+
+    assert sent_messages[1]["actual_tic"] == 1
+    assert sent_messages[2]["actual_tic"] == 2
