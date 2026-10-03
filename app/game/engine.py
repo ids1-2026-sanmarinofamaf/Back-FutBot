@@ -16,6 +16,8 @@ from app.game.constants import(
     BALL_RADIUS,
     WALL_BOUNCE_SPEED_FACTOR,
     GOAL_RESTART_WAIT_TICS,
+    FIELD_CENTER,
+    RESTART_BALL_SPEED,
     )
 from app.game.physics import(
     max_move_speed,
@@ -25,9 +27,9 @@ from app.game.physics import(
     distance,
     collision_time,
     position_at_time,
-    calculate_ball_next_state,
     calculate_kick_velocity,
     calculate_ball_state_after,
+    direction_to,
 )
 
 
@@ -69,6 +71,14 @@ class GameEngine:
             actions: One action for each on-field player.
         """
         self._validate_actions(snapshot, actions)
+
+        # Initial / period restart.
+        if snapshot.current_tick == 0:
+            self._restitute_ball(
+                match,
+                Side.LEFT,
+            )
+            return
 
         kick_result = self._resolve_kicks(
             snapshot,
@@ -112,7 +122,15 @@ class GameEngine:
                 conceding_side,
             )
 
+        restart_ending = self._is_goal_restart_ending(match)
+
         self._update_timers(match)
+
+        if restart_ending:
+            self._restitute_ball(
+                match,
+                match.last_conceding_side,
+            )
 
 
 
@@ -437,10 +455,7 @@ class GameEngine:
         match.last_conceding_side = conceding_side
 
         # Reset ball to the center.
-        match.ball.position = (
-            FIELD_WIDTH / 2,
-            FIELD_HEIGHT / 2,
-        )
+        match.ball.position = FIELD_CENTER
         match.ball.velocity = (0.0, 0.0)
 
         # Reset on-field players.
@@ -483,6 +498,41 @@ class GameEngine:
 
                 if player.collision_penalty_remaining > 0:
                     player.collision_penalty_remaining -= 1
+
+
+    def _restitute_ball(
+            self,
+            match: Match,
+            side: Side,
+    ) -> None:
+        participation = (
+            match.participation_a
+            if side == Side.LEFT
+            else match.participation_b
+        )
+
+        closest_player = min(
+            (
+                player
+                for player in participation.players
+                if player.is_on_field
+            ),
+            key=lambda player: distance(
+                FIELD_CENTER,
+                player.position
+            ),
+        )
+
+        direction = direction_to(
+            FIELD_CENTER,
+            closest_player.position,
+        )
+
+        match.ball.position = FIELD_CENTER
+        match.ball.velocity = (
+            direction[0] * RESTART_BALL_SPEED,
+            direction[1] * RESTART_BALL_SPEED,
+        )
 
 
     def _get_on_field_players(
@@ -897,3 +947,26 @@ class GameEngine:
             remaining_time -= event_duration
 
         return ball_state
+
+
+    def _is_goal_restart_ending(
+        self,
+        match: Match,
+    ) -> bool:
+        if match.last_conceding_side is None:
+            return False
+
+        on_field_players = [
+            player
+            for participation in (
+                match.participation_a,
+                match.participation_b,
+            )
+            for player in participation.players
+            if player.is_on_field
+        ]
+
+        return all(
+            player.forced_wait_remaining == 1
+            for player in on_field_players
+        )

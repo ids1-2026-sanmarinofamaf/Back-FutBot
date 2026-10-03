@@ -11,6 +11,8 @@ from app.game.constants import(
     BALL_RADIUS,
     WALL_BOUNCE_SPEED_FACTOR,
     GOAL_RESTART_WAIT_TICS,
+    FIELD_CENTER,
+    RESTART_BALL_SPEED,
 )
 from app.game.engine import GameEngine
 from app.game.models.actions import MoveAction, KickAction, WaitAction
@@ -25,6 +27,7 @@ from app.game.physics import(
     position_at_time,
     calculate_kick_velocity,
     calculate_ball_state_after,
+    direction_to,
 )
 
 
@@ -1707,3 +1710,188 @@ def test_update_timers_does_not_go_below_zero(match):
     assert player.kick_cooldown_remaining == 0
     assert player.forced_wait_remaining == 0
     assert player.collision_penalty_remaining == 0
+
+
+def test_step_restitutes_ball_to_left_side_at_match_start(match):
+    engine = GameEngine()
+    snapshot = match.snapshot()
+
+    # Elegimos posiciones distintas para saber quién es el más cercano.
+    match.participation_a.players[0].position = (18.0, 10.0)
+    match.participation_a.players[1].position = (5.0, 5.0)
+    match.participation_a.players[2].position = (5.0, 15.0)
+
+    snapshot = match.snapshot()
+
+    actions = {
+        player.player_id: WaitAction()
+        for player in (
+            snapshot.players_a + snapshot.players_b
+        )
+        if player.is_on_field
+    }
+
+    engine.step(
+        match,
+        snapshot,
+        actions,
+    )
+
+    assert match.ball.position == FIELD_CENTER
+    assert match.ball.velocity != (0.0, 0.0)
+
+
+def test_initial_restitution_points_to_closest_left_player(match):
+    engine = GameEngine()
+
+    closest_player = match.participation_a.players[0]
+    closest_player.position = (18.0, 10.0)
+
+    match.participation_a.players[1].position = (5.0, 5.0)
+    match.participation_a.players[2].position = (5.0, 15.0)
+
+    snapshot = match.snapshot()
+
+    actions = {
+        player.player_id: WaitAction()
+        for player in (
+            snapshot.players_a + snapshot.players_b
+        )
+        if player.is_on_field
+    }
+
+    engine.step(
+        match,
+        snapshot,
+        actions,
+    )
+
+    expected_direction = direction_to(
+        FIELD_CENTER,
+        closest_player.position,
+    )
+
+    expected_velocity = (
+        expected_direction[0] * RESTART_BALL_SPEED,
+        expected_direction[1] * RESTART_BALL_SPEED,
+    )
+
+    assert match.ball.velocity == pytest.approx(
+        expected_velocity
+    )
+
+
+def test_players_do_not_move_on_initial_restitution(match):
+    engine = GameEngine()
+
+    player = match.participation_a.players[0]
+    initial_position = player.position
+
+    snapshot = match.snapshot()
+
+    actions = {
+        p.player_id: WaitAction()
+        for p in (
+            snapshot.players_a + snapshot.players_b
+        )
+        if p.is_on_field
+    }
+
+    actions[player.player_id] = MoveAction(
+        move_direction=(1.0, 0.0),
+        move_speed_factor=1.0,
+    )
+
+    engine.step(
+        match,
+        snapshot,
+        actions,
+    )
+
+    assert player.position == initial_position
+
+
+def test_goal_restart_waits_before_restitution(match):
+    engine = GameEngine()
+
+    match.current_tick = 10
+
+    engine._handle_goal(
+        match,
+        Side.LEFT,
+    )
+
+    # Simulamos que todavía quedan varios tics de espera.
+    for participation in (
+        match.participation_a,
+        match.participation_b,
+    ):
+        for player in participation.players:
+            if player.is_on_field:
+                player.forced_wait_remaining = 5
+
+    snapshot = match.snapshot()
+
+    actions = {
+        player.player_id: WaitAction()
+        for player in (
+            snapshot.players_a + snapshot.players_b
+        )
+        if player.is_on_field
+    }
+
+    engine.step(
+        match,
+        snapshot,
+        actions,
+    )
+
+    assert match.ball.position == FIELD_CENTER
+    assert match.ball.velocity == (0.0, 0.0)
+
+
+def test_goal_restart_restitutes_ball_when_wait_finishes(match):
+    engine = GameEngine()
+
+    match.current_tick = 10
+    match.last_conceding_side = Side.LEFT
+
+    for participation in (
+        match.participation_a,
+        match.participation_b,
+    ):
+        for player in participation.players:
+            if player.is_on_field:
+                player.forced_wait_remaining = 1
+
+    match.ball.position = FIELD_CENTER
+    match.ball.velocity = (0.0, 0.0)
+
+    snapshot = match.snapshot()
+
+    actions = {
+        player.player_id: WaitAction()
+        for player in (
+            snapshot.players_a + snapshot.players_b
+        )
+        if player.is_on_field
+    }
+
+    engine.step(
+        match,
+        snapshot,
+        actions,
+    )
+
+    assert all(
+        player.forced_wait_remaining == 0
+        for participation in (
+            match.participation_a,
+            match.participation_b,
+        )
+        for player in participation.players
+        if player.is_on_field
+    )
+
+    assert match.ball.position == FIELD_CENTER
+    assert match.ball.velocity != (0.0, 0.0)
