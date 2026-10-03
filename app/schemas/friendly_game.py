@@ -12,3 +12,12 @@ class FriendlyGameCreate(BaseModel):
 class FriendlyGameCreateResponse(BaseModel):
     friendly_game_id: int
     roster_id: int
+
+# join
+class FriendlyGameJoin(BaseModel):
+    roster: RosterCreate
+
+class FriendlyGameJoinResponse(BaseModel):
+    friendly_game_id: int
+    participation_id: int
+    roster_id: int
