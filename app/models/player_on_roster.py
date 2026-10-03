@@ -51,10 +51,3 @@ class PlayerOnRoster(Base):
         back_populates="players"
     )
 
-    player: Mapped["Player"] = relationship(            # relationship to the referenced player
-        "Player"
-    )
-
-    initial_behavior: Mapped["Behavior | None"] = relationship(         # relationship to the initial behavior
-        "Behavior"
-    )

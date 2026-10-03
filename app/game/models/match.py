@@ -1,6 +1,5 @@
 from dataclasses import dataclass
 from enum import Enum
-import copy
 
 from app.game.models.ball import Ball, BallSnapshot
 from app.game.models.match_participation import MatchParticipation
@@ -58,8 +57,3 @@ class Match:
             score_a=self.participation_a.goals,
             score_b=self.participation_b.goals,
         )
-
-    
-
-
-    

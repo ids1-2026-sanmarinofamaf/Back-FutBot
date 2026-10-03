@@ -6,10 +6,9 @@ from app.game.constants import TIC_DURATION
 from app.services.match_websocket_service import match_connection_manager, build_match_state_message
 
 
-class BehaviorExecutorProtocol(Protocol):
-    async def execute_all(self, snapshot: MatchSnapshot) -> Any:
+class BehaviorCoordinatorProtocol(Protocol):
+    def get_actions(self, snapshot: MatchSnapshot) -> Any:
         ...
-
 
 class GameEngineProtocol(Protocol):
     def step(self, match: Match, snapshot: MatchSnapshot, actions: Any) -> None:
@@ -19,10 +18,10 @@ class GameEngineProtocol(Protocol):
 class MatchRunner:
     def __init__(
         self,
-        behavior_executor: BehaviorExecutorProtocol,
+        behavior_coordinator: BehaviorCoordinatorProtocol,
         game_engine: GameEngineProtocol,
     ):
-        self.behavior_executor = behavior_executor
+        self.behavior_coordinator = behavior_coordinator
         self.game_engine = game_engine
 
 # we implemented the execution of a single tick, and then the cycle of the whole match
@@ -30,7 +29,7 @@ class MatchRunner:
     async def execute_tick(self, match: Match) -> None:  # async because we have to wait all the workers
         snapshot = match.snapshot()     # we make a copy of the match at a specific tick
 
-        actions = await self.behavior_executor.execute_all(snapshot)    # through copying, we run all the behaviors, wait for the workers,
+        actions = self.behavior_coordinator.get_actions(snapshot)    # through copying, we run all the behaviors, wait for the workers,
                                                                         # and save the actions each player needs to take
 
         self.game_engine.step(match,snapshot,actions)   # we update the match state, using the snapshot and actions

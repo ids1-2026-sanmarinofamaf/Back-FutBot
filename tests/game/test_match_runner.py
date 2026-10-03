@@ -1,9 +1,9 @@
 import copy
 
 import pytest
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import MagicMock
 
-from app.game.match_runner import (MatchRunner,BehaviorExecutorProtocol,GameEngineProtocol)
+from app.game.match_runner import (MatchRunner,BehaviorCoordinatorProtocol,GameEngineProtocol)
 from app.game.models.ball import Ball
 from app.game.models.match import Match, MatchState
 from app.game.models.match_participation import MatchParticipation
@@ -44,17 +44,15 @@ def match(six_players):
 
 # we create a magicmock and assign it the attributes/methods of the class in spec
 @pytest.fixture
-def behavior_executor():
-    executor = MagicMock(
-        spec=BehaviorExecutorProtocol
+def behavior_coordinator():
+    coordinator = MagicMock(
+        spec=BehaviorCoordinatorProtocol
     )
 
     # execute_all is asynchronous.
-    executor.execute_all = AsyncMock(
-        return_value=["wait"] * 6
-    )
+    coordinator.get_actions.return_value = ["wait"] * 6
 
-    return executor
+    return coordinator
 
 
 @pytest.fixture
@@ -65,12 +63,12 @@ def game_engine():
 
 
 @pytest.mark.asyncio
-async def test_execute_tick_advances_one_tick(match,behavior_executor,game_engine):
+async def test_execute_tick_advances_one_tick(match,behavior_coordinator,game_engine):
     initial_tick = match.current_tick
 
     # prepare a MatchRunner
     runner = MatchRunner(
-        behavior_executor,
+        behavior_coordinator,
         game_engine,
     )
     # and execute one tick
@@ -79,27 +77,27 @@ async def test_execute_tick_advances_one_tick(match,behavior_executor,game_engin
     assert match.current_tick == initial_tick + 1
 
 @pytest.mark.asyncio
-async def test_run_match_executes_behaviors_once_per_tick(match,behavior_executor,game_engine):
+async def test_run_match_executes_behaviors_once_per_tick(match,behavior_coordinator,game_engine):
     match.duration_ticks = 3
 
     runner = MatchRunner(
-        behavior_executor,
+        behavior_coordinator,
         game_engine,
     )
 
     # execute the entire match
     await runner.run_match(match)
     # use magicmock functionrs to count
-    assert behavior_executor.execute_all.await_count == 3
+    assert behavior_coordinator.get_actions.call_count == 3
 
 @pytest.mark.asyncio
 async def test_behavior_executor_and_engine_use_same_snapshot(
     match,
-    behavior_executor,
+    behavior_coordinator,
     game_engine,
 ):
     runner = MatchRunner(
-        behavior_executor,
+        behavior_coordinator,
         game_engine,
     )
 
@@ -108,9 +106,9 @@ async def test_behavior_executor_and_engine_use_same_snapshot(
     # use magic mock functiorns
     # we get the first argument with which it went inside execute tick
     snapshot_received_by_behavior_executor = (
-        behavior_executor
-        .execute_all
-        .await_args
+        behavior_coordinator
+        .get_actions
+        .call_args
         .args[0]
     )
 
@@ -127,11 +125,11 @@ async def test_behavior_executor_and_engine_use_same_snapshot(
 @pytest.mark.asyncio
 async def test_actions_are_sent_to_engine(
     match,
-    behavior_executor,
+    behavior_coordinator,
     game_engine,
 ):
     runner = MatchRunner(
-        behavior_executor,
+        behavior_coordinator,
         game_engine,
     )
 
@@ -149,7 +147,7 @@ async def test_actions_are_sent_to_engine(
 @pytest.mark.asyncio
 async def test_generated_state_is_used_in_next_tick(
     match,
-    behavior_executor,
+    behavior_coordinator,
     game_engine,
 ):
     # change the duration only for this test
@@ -168,23 +166,23 @@ async def test_generated_state_is_used_in_next_tick(
     game_engine.step.side_effect = engine_step
 
     runner = MatchRunner(
-        behavior_executor,
+        behavior_coordinator,
         game_engine,
     )
 
     await runner.run_match(match)
 
     first_snapshot = (
-        behavior_executor
-        .execute_all
-        .await_args_list[0]
+        behavior_coordinator
+        .get_actions
+        .call_args_list[0]
         .args[0]
     )
 
     second_snapshot = (
-        behavior_executor
-        .execute_all
-        .await_args_list[1]
+        behavior_coordinator
+        .get_actions
+        .call_args_list[1]
         .args[0]
     )
 
@@ -203,12 +201,12 @@ async def test_generated_state_is_used_in_next_tick(
 @pytest.mark.asyncio
 async def test_run_match_stops_at_duration_ticks(
     match,
-    behavior_executor,
+    behavior_coordinator,
     game_engine,
 ):
 
     runner = MatchRunner(
-        behavior_executor,
+        behavior_coordinator,
         game_engine,
     )
 
@@ -216,7 +214,7 @@ async def test_run_match_stops_at_duration_ticks(
     # wait for the match to end and then verify
     assert match.current_tick == 10
 
-    assert behavior_executor.execute_all.await_count == 10
+    assert behavior_coordinator.get_actions.call_count == 10
     assert game_engine.step.call_count == 10
 
     assert match.state == MatchState.FINISHED
