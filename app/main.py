@@ -1,7 +1,7 @@
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
-from app.api import auth, users
+from app.api import auth, users, friendly_games
 
 from sqlalchemy import text
 
@@ -34,3 +34,5 @@ app.include_router(users.router)
 @app.get("/")
 def root():
     return{"message": "FutBot backend running"}
+
+app.include_router(friendly_games.router)
