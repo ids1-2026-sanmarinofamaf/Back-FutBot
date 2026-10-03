@@ -10,6 +10,12 @@ from app.api import friendly_games
 
 
 
+from app.api.match_websocket import router as match_websocket_router
+
+
+
+
+# Se ejecuta una vez al arrancar la app y una vez al apagar
 from fastapi.middleware.cors import CORSMiddleware
 
 # Runs once when the app starts and once when it shuts down
@@ -43,3 +49,4 @@ def root():
 
 
 app.include_router(friendly_games.router)
+app.include_router(match_websocket_router)
