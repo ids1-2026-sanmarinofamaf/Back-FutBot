@@ -1,7 +1,7 @@
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
-from app.api import auth, users
+from app.api import auth, users, sessions_websocket
 
 from sqlalchemy import text
 
@@ -23,6 +23,7 @@ async def lifespan(app: FastAPI):
     engine.dispose()
 
 app = FastAPI(lifespan=lifespan)
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["http://localhost:5173"],  # tu origen de Vite
@@ -33,6 +34,8 @@ app.add_middleware(
 
 app.include_router(auth.router)
 app.include_router(users.router)
+app.include_router(sessions_websocket.router)
+
 
 @app.get("/")
 def root():
