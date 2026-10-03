@@ -7,7 +7,9 @@ from app.game.constants import(
     PLAYER_RADIUS,
     TIC_DURATION,
     COLLISION_FORCED_WAIT_TICS,
-    COLLISION_PENALTY_TICS
+    COLLISION_PENALTY_TICS,
+    BALL_RADIUS,
+    WALL_BOUNCE_SPEED_FACTOR,
 )
 from app.game.engine import GameEngine
 from app.game.models.actions import MoveAction, KickAction, WaitAction
@@ -21,6 +23,7 @@ from app.game.physics import(
     collision_time,
     position_at_time,
     calculate_kick_velocity,
+    calculate_ball_state_after,
 )
 
 
@@ -1316,3 +1319,243 @@ def test_ball_state_after_kick_uses_current_ball_velocity():
             20.0,
         )
     )
+
+
+def test_first_ball_boundary_event_returns_none_when_no_boundary_is_reached():
+    engine = GameEngine()
+
+    result = engine._first_ball_boundary_event(
+        start=(20.0, 10.0),
+        end=(21.0, 10.0),
+    )
+
+    assert result is None
+
+
+def test_first_ball_boundary_event_detects_left_wall():
+    engine = GameEngine()
+
+    result = engine._first_ball_boundary_event(
+        start=(1.0, 5.0),
+        end=(-1.0, 5.0),
+    )
+
+    assert result is not None
+
+    time, event = result
+
+    assert event == "left"
+    assert 0.0 <= time <= 1.0
+
+
+def test_first_ball_boundary_event_detects_right_wall():
+    engine = GameEngine()
+
+    result = engine._first_ball_boundary_event(
+        start=(39.0, 5.0),
+        end=(41.0, 5.0),
+    )
+
+    assert result is not None
+
+    _, event = result
+
+    assert event == "right"
+
+
+def test_first_ball_boundary_event_detects_top_wall():
+    engine = GameEngine()
+
+    result = engine._first_ball_boundary_event(
+        start=(20.0, 1.0),
+        end=(20.0, -1.0),
+    )
+
+    assert result is not None
+    assert result[1] == "top"
+
+
+def test_first_ball_boundary_event_detects_bottom_wall():
+    engine = GameEngine()
+
+    result = engine._first_ball_boundary_event(
+        start=(20.0, 19.0),
+        end=(20.0, 21.0),
+    )
+
+    assert result is not None
+    assert result[1] == "bottom"
+
+
+def test_first_ball_boundary_event_detects_left_goal():
+    engine = GameEngine()
+
+    result = engine._first_ball_boundary_event(
+        start=(1.0, 10.0),
+        end=(-1.0, 10.0),
+    )
+
+    assert result is not None
+    assert result[1] == "goal_left"
+
+
+def test_first_ball_boundary_event_detects_right_goal():
+    engine = GameEngine()
+
+    result = engine._first_ball_boundary_event(
+        start=(39.0, 10.0),
+        end=(41.0, 10.0),
+    )
+
+    assert result is not None
+    assert result[1] == "goal_right"
+
+
+def test_first_ball_boundary_event_returns_earliest_event():
+    engine = GameEngine()
+
+    result = engine._first_ball_boundary_event(
+        start=(39.0, 1.0),
+        end=(41.0, -3.0),
+    )
+
+    assert result is not None
+
+    _, event = result
+
+    assert event == "top"
+
+def test_first_ball_boundary_event_calculates_collision_time():
+    engine = GameEngine()
+
+    result = engine._first_ball_boundary_event(
+        start=(1.0, 5.0),
+        end=(-1.0, 5.0),
+    )
+
+    assert result is not None
+
+    time, event = result
+
+    expected_time = (
+        BALL_RADIUS - 1.0
+    ) / (-2.0)
+
+    assert event == "left"
+    assert time == pytest.approx(expected_time)
+
+
+def test_bounce_ball_velocity_on_vertical_wall():
+    engine = GameEngine()
+
+    result = engine._bounce_ball_velocity(
+        velocity=(10.0, 4.0),
+        boundary="right",
+    )
+
+    assert result == pytest.approx(
+        (
+            -10.0 * WALL_BOUNCE_SPEED_FACTOR,
+            4.0 * WALL_BOUNCE_SPEED_FACTOR,
+        )
+    )
+
+
+def test_bounce_ball_velocity_on_horizontal_wall():
+    engine = GameEngine()
+
+    result = engine._bounce_ball_velocity(
+        velocity=(10.0, -4.0),
+        boundary="top",
+    )
+
+    assert result == pytest.approx(
+        (
+            10.0 * WALL_BOUNCE_SPEED_FACTOR,
+            4.0 * WALL_BOUNCE_SPEED_FACTOR,
+        )
+    )
+
+def test_resolve_ball_movement_without_boundary():
+    engine = GameEngine()
+
+    ball_state = (
+        (20.0, 10.0),
+        (5.0, 0.0),
+    )
+
+    result = engine._resolve_ball_movement(ball_state)
+
+    expected = calculate_ball_state_after(
+        ball_state,
+        TIC_DURATION,
+    )
+
+    assert result[0] == pytest.approx(expected[0])
+    assert result[1] == pytest.approx(expected[1])
+
+
+def test_resolve_ball_movement_bounces_on_right_wall():
+    engine = GameEngine()
+
+    ball_state = (
+        (FIELD_WIDTH - BALL_RADIUS - 0.2, 5.0),
+        (10.0, 0.0),
+    )
+
+    position, velocity = engine._resolve_ball_movement(
+        ball_state
+    )
+
+    assert position[0] < FIELD_WIDTH - BALL_RADIUS
+    assert velocity[0] < 0.0
+
+
+def test_resolve_ball_movement_bounces_on_top_wall():
+    engine = GameEngine()
+
+    ball_state = (
+        (20.0, BALL_RADIUS + 0.2),
+        (0.0, -10.0),
+    )
+
+    position, velocity = engine._resolve_ball_movement(
+        ball_state
+    )
+
+    assert position[1] > BALL_RADIUS
+    assert velocity[1] > 0.0
+
+
+def test_resolve_ball_movement_stops_at_right_goal_line():
+    engine = GameEngine()
+
+    ball_state = (
+        (FIELD_WIDTH - 0.5, FIELD_HEIGHT / 2),
+        (10.0, 0.0),
+    )
+
+    position, velocity = engine._resolve_ball_movement(
+        ball_state
+    )
+
+    assert position[0] == pytest.approx(FIELD_WIDTH)
+    assert engine._is_inside_goal_opening(position[1])
+    assert velocity[0] > 0.0
+
+
+def test_resolve_ball_movement_stops_at_left_goal_line():
+    engine = GameEngine()
+
+    ball_state = (
+        (0.5, FIELD_HEIGHT / 2),
+        (-10.0, 0.0),
+    )
+
+    position, velocity = engine._resolve_ball_movement(
+        ball_state
+    )
+
+    assert position[0] == pytest.approx(0.0)
+    assert engine._is_inside_goal_opening(position[1])
+    assert velocity[0] < 0.0

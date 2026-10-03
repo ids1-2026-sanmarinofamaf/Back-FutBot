@@ -19,7 +19,7 @@ from .constants import (
     MAX_BALL_DECELERATION,
     KICK_INERTIA_FACTOR,
     BALL_STOP_THRESHOLD,
-    COLLISION_PENALTY
+    COLLISION_PENALTY,
 )
 
 
@@ -309,11 +309,20 @@ def calculate_kick_force_factor(
     return high
 
 
-def calculate_ball_next_state(
+def calculate_ball_state_after(
     ball_state: BallState,
+    duration: float,
 ) -> BallState:
     """
-    Calculate the ball position and velocity after one tic.
+    Calculate the ball state after a given duration while applying
+    deceleration.
+
+    Args:
+        ball_state: Current ball position and velocity.
+        duration: Time interval in seconds.
+
+    Returns:
+        Ball position and velocity after the given duration.
     """
     position, velocity = ball_state
 
@@ -329,7 +338,7 @@ def calculate_ball_next_state(
 
     # v1 = max(v0 - a * Δt, 0)
     next_speed = max(
-        speed - deceleration * TIC_DURATION,
+        speed - deceleration * duration,
         0.0,
     )
 
@@ -349,7 +358,7 @@ def calculate_ball_next_state(
 
     # ΔP = direction * v_avg * Δt
     displacement = (
-        average_speed * TIC_DURATION
+        average_speed * duration
     )
 
     next_position = (
@@ -366,6 +375,18 @@ def calculate_ball_next_state(
     return (
         next_position,
         next_velocity,
+    )
+
+
+def calculate_ball_next_state(
+    ball_state: BallState,
+) -> BallState:
+    """
+    Calculate the ball state after one simulation tic.
+    """
+    return calculate_ball_state_after(
+        ball_state,
+        TIC_DURATION,
     )
 
 

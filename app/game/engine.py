@@ -9,9 +9,12 @@ from app.game.constants import(
     TIC_DURATION,
     FIELD_HEIGHT,
     FIELD_WIDTH,
+    GOAL_WIDTH,
     PLAYER_RADIUS, 
     COLLISION_FORCED_WAIT_TICS,
-    COLLISION_PENALTY_TICS
+    COLLISION_PENALTY_TICS,
+    BALL_RADIUS,
+    WALL_BOUNCE_SPEED_FACTOR
     )
 from app.game.physics import(
     max_move_speed,
@@ -23,6 +26,7 @@ from app.game.physics import(
     position_at_time,
     calculate_ball_next_state,
     calculate_kick_velocity,
+    calculate_ball_state_after,
 )
 
 
@@ -207,7 +211,7 @@ class GameEngine:
         for player_id, player in players.items():
             action = actions[player_id]
 
-            if player.collision_penalty_remaining > 0:
+            if player.forced_wait_remaining > 0:
                 continue
 
             if not isinstance(action, MoveAction):
@@ -392,19 +396,19 @@ class GameEngine:
                 effective_power,
             )
 
-        next_position, next_velocity = (
-            calculate_ball_next_state(ball_state)
+        ball_state = self._resolve_ball_movement(
+            ball_state,
         )
 
-        match.ball.position = next_position
-        match.ball.velocity = next_velocity
+        match.ball.position = ball_state[0]
+        match.ball.velocity = ball_state[1]
 
 
     def _detect_goal(
         self,
         match: Match,
     ) -> Side | None:
-        ...
+       ...
 
 
     def _handle_goal(
@@ -612,6 +616,7 @@ class GameEngine:
             winner_id=winner.player_id,
             loser_ids=loser_ids,
         )
+    
 
     def _ball_state_after_kick(
         self,
@@ -636,3 +641,200 @@ class GameEngine:
             position,
             kick_velocity,
         )
+
+
+    def _is_inside_goal_opening(
+        self,
+        y: float,
+    ) -> bool:
+        goal_top = (
+            FIELD_HEIGHT - GOAL_WIDTH
+        ) / 2
+
+        goal_bottom = (
+            FIELD_HEIGHT + GOAL_WIDTH
+        ) / 2
+
+        return goal_top <= y <= goal_bottom
+
+    
+    def _first_ball_boundary_event(
+        self,
+        start: Position,
+        end: Position,
+    ) -> tuple[float, str] | None:
+        delta_x = end[0] - start[0]
+        delta_y = end[1] - start[1]
+
+        events: list[tuple[float, str]] = []
+
+        # Left side.
+        if delta_x < 0.0:
+            # First check the physical wall at x = BALL_RADIUS.
+            time = (
+                BALL_RADIUS - start[0]
+            ) / delta_x
+
+            if 0.0 <= time <= 1.0:
+                y = start[1] + time * delta_y
+
+                if not self._is_inside_goal_opening(y):
+                    events.append(
+                        (time, "left")
+                    )
+
+            # If the ball passes through the opening,
+            # it may reach the goal line at x = 0.
+            goal_time = (
+                0.0 - start[0]
+            ) / delta_x
+
+            if 0.0 <= goal_time <= 1.0:
+                y = start[1] + goal_time * delta_y
+
+                if self._is_inside_goal_opening(y):
+                    events.append(
+                        (goal_time, "goal_left")
+                    )
+
+        # Right side.
+        if delta_x > 0.0:
+            time = (
+                FIELD_WIDTH - BALL_RADIUS - start[0]
+            ) / delta_x
+
+            if 0.0 <= time <= 1.0:
+                y = start[1] + time * delta_y
+
+                if not self._is_inside_goal_opening(y):
+                    events.append(
+                        (time, "right")
+                    )
+
+            goal_time = (
+                FIELD_WIDTH - start[0]
+            ) / delta_x
+
+            if 0.0 <= goal_time <= 1.0:
+                y = start[1] + goal_time * delta_y
+
+                if self._is_inside_goal_opening(y):
+                    events.append(
+                        (goal_time, "goal_right")
+                    )
+
+        # Top wall.
+        if delta_y < 0.0:
+            time = (
+                BALL_RADIUS - start[1]
+            ) / delta_y
+
+            if 0.0 <= time <= 1.0:
+                events.append(
+                    (time, "top")
+                )
+
+        # Bottom wall.
+        if delta_y > 0.0:
+            time = (
+                FIELD_HEIGHT - BALL_RADIUS - start[1]
+            ) / delta_y
+
+            if 0.0 <= time <= 1.0:
+                events.append(
+                    (time, "bottom")
+                )
+
+        if not events:
+            return None
+
+        return min(
+            events,
+            key=lambda event: event[0],
+        )
+
+
+    def _bounce_ball_velocity(
+        self,
+        velocity: tuple[float, float],
+        boundary: str,
+    ) -> tuple[float, float]:
+        vx, vy = velocity
+
+        if boundary in ("left", "right"):
+            vx = -vx
+
+        if boundary in ("top", "bottom"):
+            vy = -vy
+
+        return (
+            vx * WALL_BOUNCE_SPEED_FACTOR,
+            vy * WALL_BOUNCE_SPEED_FACTOR,
+        )
+
+
+    def _resolve_ball_movement(
+        self,
+        ball_state: BallState,
+    ) -> BallState:
+        remaining_time = TIC_DURATION
+
+        while remaining_time > 0.0:
+            start_position, _ = ball_state
+
+            free_position, free_velocity = calculate_ball_state_after(
+                ball_state,
+                remaining_time,
+            )
+
+            boundary_event = self._first_ball_boundary_event(
+                start_position,
+                free_position,
+            )
+
+            if boundary_event is None:
+                return (
+                    free_position,
+                    free_velocity,
+                )
+
+            event_time, boundary = boundary_event
+
+            event_duration = (
+                remaining_time
+                * event_time
+            )
+
+            _, impact_velocity = calculate_ball_state_after(
+                ball_state,
+                event_duration,
+            )
+
+            impact_position = position_at_time(
+                start_position,
+                free_position,
+                event_time,
+            )
+
+            if boundary in (
+                "goal_left",
+                "goal_right",
+            ):
+                return (
+                    impact_position,
+                    impact_velocity,
+                )
+
+            rebound_velocity = self._bounce_ball_velocity(
+                impact_velocity,
+                boundary,
+            )
+
+            ball_state = (
+                impact_position,
+                rebound_velocity,
+            )
+
+            remaining_time -= event_duration
+
+        return ball_state
