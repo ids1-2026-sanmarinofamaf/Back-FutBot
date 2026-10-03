@@ -2,7 +2,6 @@ from sqlalchemy.orm import Session
 from sqlalchemy import select, func
 
 from app.models.friendly_game import FriendlyGame
-from app.models.friendly_game_participation import FriendlyGameParticipation
 
 from app.models.friendly_game_participation import (
     FriendlyGameParticipation,
