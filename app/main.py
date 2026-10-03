@@ -7,6 +7,12 @@ from sqlalchemy import text
 
 from app.database import engine
 
+from app.api.match_websocket import router as match_websocket_router
+
+
+
+
+# Se ejecuta una vez al arrancar la app y una vez al apagar
 from fastapi.middleware.cors import CORSMiddleware
 
 # Runs once when the app starts and once when it shuts down
@@ -37,3 +43,5 @@ app.include_router(sessions_websocket.router)
 @app.get("/")
 def root():
     return{"message": "FutBot backend running"}
+
+app.include_router(match_websocket_router)
