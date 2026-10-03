@@ -1,12 +1,22 @@
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
-from app.api import auth, users, friendly_games
+from app.api import auth, users, friendly_games, sessions_websocket
+
 
 from sqlalchemy import text
 
 from app.database import engine
+from app.api import friendly_games
 
+
+
+from app.api.match_websocket import router as match_websocket_router
+
+
+
+
+# Se ejecuta una vez al arrancar la app y una vez al apagar
 from fastapi.middleware.cors import CORSMiddleware
 
 # Runs once when the app starts and once when it shuts down
@@ -20,6 +30,7 @@ async def lifespan(app: FastAPI):
     engine.dispose()
 
 app = FastAPI(lifespan=lifespan)
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["http://localhost:5173"],  # tu origen de Vite
@@ -30,9 +41,13 @@ app.add_middleware(
 
 app.include_router(auth.router)
 app.include_router(users.router)
+app.include_router(sessions_websocket.router)
+
 
 @app.get("/")
 def root():
     return{"message": "FutBot backend running"}
 
+
 app.include_router(friendly_games.router)
+app.include_router(match_websocket_router)
