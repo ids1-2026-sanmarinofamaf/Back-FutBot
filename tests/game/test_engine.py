@@ -1,4 +1,5 @@
 import pytest
+
 from dataclasses import replace
 
 from app.game.constants import(
@@ -14,13 +15,13 @@ from app.game.constants import(
     FIELD_CENTER,
     RESTART_BALL_SPEED,
 )
-from app.game.engine import GameEngine
+from app.game.engine import GameEngine, KickResolution, ContestResolution
 from app.game.models.actions import MoveAction, KickAction, WaitAction
 from app.game.models.match import Match
 from app.game.models.ball import Ball
 from app.game.models.match_participation import MatchParticipation
 from app.game.models.player_in_match import PlayerInMatch
-from app.game.types import Side
+from app.game.types import Side, Position
 from app.game.physics import(
     max_move_speed,
     collision_time,
@@ -34,10 +35,11 @@ from app.game.physics import(
 def _make_player(
     player_id: int,
     is_on_field: bool,
+    position: Position,
 ) -> PlayerInMatch:
     return PlayerInMatch(
         player_id=player_id,
-        position=(0.0, 0.0),
+        position=position,
         velocity=(0.0, 0.0),
         starting_position=(0.0, 0.0) if is_on_field else None,
         power=60,
@@ -53,32 +55,111 @@ def _make_player(
 def _make_participation(
     start_id: int,
 ) -> MatchParticipation:
+    if start_id == 1:
+        positions = (
+            (5.0, 5.0),
+            (5.0, 10.0),
+            (5.0, 15.0),
+        )
+    else:
+        positions = (
+            (35.0, 5.0),
+            (35.0, 10.0),
+            (35.0, 15.0),
+        )
+
     return MatchParticipation(
         club_id=start_id,
         roster_id=start_id,
         players=[
-            _make_player(start_id, True),
-            _make_player(start_id + 1, True),
-            _make_player(start_id + 2, True),
-            _make_player(start_id + 3, False),
-            _make_player(start_id + 4, False),
-            _make_player(start_id + 5, False),
+            _make_player(
+                start_id,
+                True,
+                positions[0],
+            ),
+            _make_player(
+                start_id + 1,
+                True,
+                positions[1],
+            ),
+            _make_player(
+                start_id + 2,
+                True,
+                positions[2],
+            ),
+            _make_player(
+                start_id + 3,
+                False,
+                (0.0, 0.0),
+            ),
+            _make_player(
+                start_id + 4,
+                False,
+                (0.0, 0.0),
+            ),
+            _make_player(
+                start_id + 5,
+                False,
+                (0.0, 0.0),
+            ),
         ],
     )
 
 
 @pytest.fixture
 def match():
+    participation_a = MatchParticipation(
+        club_id=1,
+        roster_id=1,
+        players=[
+            _make_player(1, True, (5.0, 5.0)),
+            _make_player(2, True, (5.0, 10.0)),
+            _make_player(3, True, (5.0, 15.0)),
+            _make_player(4, False, (0.0, 0.0)),
+            _make_player(5, False, (0.0, 0.0)),
+            _make_player(6, False, (0.0, 0.0)),
+        ],
+    )
+
+    participation_b = MatchParticipation(
+        club_id=7,
+        roster_id=7,
+        players=[
+            _make_player(7, True, (35.0, 5.0)),
+            _make_player(8, True, (35.0, 10.0)),
+            _make_player(9, True, (35.0, 15.0)),
+            _make_player(10, False, (0.0, 0.0)),
+            _make_player(11, False, (0.0, 0.0)),
+            _make_player(12, False, (0.0, 0.0)),
+        ],
+    )
+
     return Match(
         match_id=1,
-        participation_a=_make_participation(1),
-        participation_b=_make_participation(7),
+        participation_a=participation_a,
+        participation_b=participation_b,
         ball=Ball(
-            position=(20.0, 10.0),
+            position=FIELD_CENTER,
             velocity=(0.0, 0.0),
         ),
         duration_ticks=1200,
     )
+
+@pytest.fixture
+def match_step(match):
+    match.current_tick = 1
+
+    snapshot = match.snapshot()
+
+    actions = {
+        player.player_id: WaitAction()
+        for player in (
+            snapshot.players_a + snapshot.players_b
+        )
+        if player.is_on_field
+    }
+
+    return match, snapshot, actions
 
 
 def test_validate_actions_accepts_one_action_per_on_field_player(
@@ -1895,3 +1976,241 @@ def test_goal_restart_restitutes_ball_when_wait_finishes(match):
 
     assert match.ball.position == FIELD_CENTER
     assert match.ball.velocity != (0.0, 0.0)
+
+
+def test_update_ball_moves_without_kick(match):
+    engine = GameEngine()
+
+    match.ball.position = (20.0, 10.0)
+    match.ball.velocity = (5.0, 0.0)
+
+    snapshot = match.snapshot()
+
+    final_positions = {
+        p.player_id: p.position
+        for p in snapshot.players_a + snapshot.players_b
+        if p.is_on_field
+    }
+
+    engine._update_ball(
+        match,
+        snapshot,
+        kick_result=None,
+        final_positions=final_positions,
+    )
+
+    assert match.ball.position[0] > 20.0
+    assert match.ball.velocity[0] > 0.0
+
+
+def test_update_ball_sets_kick_cooldown_for_winner(match):
+    engine = GameEngine()
+
+    player = match.participation_a.players[0]
+    player.position = (20.0, 10.0)
+
+    match.ball.position = (20.0, 10.0)
+
+    snapshot = match.snapshot()
+
+    kick_result = KickResolution(
+        contest=ContestResolution(
+            winner_id=player.player_id,
+            loser_ids=(),
+        ),
+        action=KickAction(
+            kick_direction=(1.0, 0.0),
+            kick_force_factor=1.0,
+        ),
+    )
+
+    final_positions = {
+        p.player_id: p.position
+        for p in snapshot.players_a + snapshot.players_b
+        if p.is_on_field
+    }
+
+    engine._update_ball(
+        match,
+        snapshot,
+        kick_result,
+        final_positions,
+    )
+
+    assert player.kick_cooldown_remaining > 0
+
+
+def test_update_ball_bounces_on_wall(match):
+    engine = GameEngine()
+
+    match.ball.position = (
+        FIELD_WIDTH - BALL_RADIUS - 0.2,
+        5.0,
+    )
+    match.ball.velocity = (10.0, 0.0)
+
+    snapshot = match.snapshot()
+
+    final_positions = {
+        p.player_id: p.position
+        for p in snapshot.players_a + snapshot.players_b
+        if p.is_on_field
+    }
+
+    engine._update_ball(
+        match,
+        snapshot,
+        None,
+        final_positions,
+    )
+
+    assert match.ball.velocity[0] < 0.0
+
+
+def test_update_ball_stops_at_goal_line(match):
+    engine = GameEngine()
+
+    match.ball.position = (
+        FIELD_WIDTH - 0.5,
+        FIELD_HEIGHT / 2,
+    )
+    match.ball.velocity = (10.0, 0.0)
+
+    snapshot = match.snapshot()
+
+    final_positions = {
+        p.player_id: p.position
+        for p in snapshot.players_a + snapshot.players_b
+        if p.is_on_field
+    }
+
+    engine._update_ball(
+        match,
+        snapshot,
+        None,
+        final_positions,
+    )
+
+    assert match.ball.position[0] == pytest.approx(
+        FIELD_WIDTH
+    )
+
+
+def test_step_move_updates_player_position(match_step):
+    match, snapshot, actions = match_step
+
+    engine = GameEngine()
+
+    player = match.participation_a.players[0]
+    initial_position = player.position
+
+    actions[player.player_id] = MoveAction(
+        move_direction=(1.0, 0.0),
+        move_speed_factor=1.0,
+    )
+
+    engine.step(
+        match,
+        snapshot,
+        actions,
+    )
+
+    assert player.position[0] > initial_position[0]
+    assert player.position[1] == pytest.approx(
+        initial_position[1]
+    )
+
+
+def test_step_wait_does_not_move_player(match_step):
+    match, snapshot, actions = match_step
+
+    engine = GameEngine()
+
+    player = match.participation_a.players[0]
+    initial_position = player.position
+
+    engine.step(
+        match,
+        snapshot,
+        actions,
+    )
+
+    assert player.position == initial_position
+
+
+def test_step_kick_updates_ball_and_sets_cooldown(match_step):
+    match, snapshot, actions = match_step
+
+    engine = GameEngine()
+
+    player = match.participation_a.players[0]
+    player.position = (20.0, 10.0)
+
+    match.ball.position = (20.0, 10.0)
+    match.ball.velocity = (0.0, 0.0)
+
+    # Rebuild snapshot after modifying match state.
+    snapshot = match.snapshot()
+
+    actions = {
+        p.player_id: WaitAction()
+        for p in snapshot.players_a + snapshot.players_b
+        if p.is_on_field
+    }
+
+    actions[player.player_id] = KickAction(
+        kick_direction=(1.0, 0.0),
+        kick_force_factor=1.0,
+    )
+
+    engine.step(
+        match,
+        snapshot,
+        actions,
+    )
+
+    assert match.ball.position[0] > 20.0
+    assert match.ball.velocity[0] > 0.0
+    assert player.kick_cooldown_remaining > 0
+
+
+def test_step_goal_updates_score_and_resets_state(match_step):
+    match, _, actions = match_step
+
+    engine = GameEngine()
+
+    match.ball.position = (
+        FIELD_WIDTH - 0.5,
+        FIELD_HEIGHT / 2,
+    )
+    match.ball.velocity = (10.0, 0.0)
+
+    snapshot = match.snapshot()
+
+    engine.step(
+        match,
+        snapshot,
+        actions,
+    )
+
+    assert match.participation_a.goals == 1
+    assert match.participation_b.goals == 0
+
+    assert match.last_conceding_side == Side.RIGHT
+
+    assert match.ball.position == FIELD_CENTER
+    assert match.ball.velocity == (0.0, 0.0)
+
+    for participation in (
+        match.participation_a,
+        match.participation_b,
+    ):
+        for player in participation.players:
+            if not player.is_on_field:
+                continue
+
+            assert player.position == player.starting_position
+            assert (
+                player.forced_wait_remaining
+                == GOAL_RESTART_WAIT_TICS
+            )

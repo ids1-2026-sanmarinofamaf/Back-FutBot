@@ -30,6 +30,7 @@ from app.game.physics import(
     calculate_kick_velocity,
     calculate_ball_state_after,
     direction_to,
+    kick_cooldown_tics,
 )
 
 
@@ -414,6 +415,17 @@ class GameEngine:
                 kick_result.action,
                 effective_power,
             )
+
+            for participation in (
+                match.participation_a,
+                match.participation_b,
+            ):
+                for player in participation.players:
+                    if player.player_id == winner.player_id:
+                        player.kick_cooldown_remaining = (
+                            kick_cooldown_tics(winner.agility) + 1
+                        )
+                        break
 
         ball_state = self._resolve_ball_movement(
             ball_state,
