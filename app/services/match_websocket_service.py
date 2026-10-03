@@ -60,13 +60,25 @@ def build_match_state_message(
 
     players = []
 
-    for player in snapshot.players_a + snapshot.players_b:
+    for player in snapshot.players_a:
         players.append(
             MatchPlayerState(
                 player_id=player.player_id,
                 x=player.position[0],
                 y=player.position[1],
                 is_on_field=player.is_on_field,
+                team="A",
+            )
+        )
+
+    for player in snapshot.players_b:
+        players.append(
+            MatchPlayerState(
+                player_id=player.player_id,
+                x=player.position[0],
+                y=player.position[1],
+                is_on_field=player.is_on_field,
+                team="B",
             )
         )
 

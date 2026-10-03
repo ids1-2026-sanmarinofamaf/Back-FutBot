@@ -6,6 +6,7 @@ class MatchPlayerState(BaseModel):
     x: float
     y: float
     is_on_field: bool
+    team: str
 
 
 class BallState(BaseModel):

@@ -100,7 +100,6 @@ async def test_broadcast_sends_estado_partido():
 def test_estado_partido_contains_required_fields(match):
     snapshot = match.snapshot()
 
-    # format the snapshot into a state message
     message = build_match_state_message(snapshot)
 
     assert message.event == "estado_partido"
@@ -124,11 +123,16 @@ def test_estado_partido_contains_required_fields(match):
     for i in range(len(expected_players)):
         sent_player = message.players[i]
         expected_player = expected_players[i]
-        
+
         assert sent_player.player_id == expected_player.player_id
         assert sent_player.x == expected_player.position[0]
         assert sent_player.y == expected_player.position[1]
         assert sent_player.is_on_field == expected_player.is_on_field
+
+        if i < len(snapshot.players_a):
+            assert sent_player.team == "A"
+        else:
+            assert sent_player.team == "B"
 
 
 def test_estado_partido_reflects_updated_state(match):
