@@ -1,6 +1,10 @@
-# app/repositories/club_repository.py
+from sqlalchemy import select
+from sqlalchemy.orm import Session
 
-def get_by_user_id(db, user_id: int):
-    raise NotImplementedError(
-        "club_repository.get_by_user_id is not implemented yet"
+from app.models.club import Club
+
+
+def get_by_user_id(db: Session, user_id: int) -> Club | None:
+    return db.scalar(
+        select(Club).where(Club.user_id == user_id)
     )

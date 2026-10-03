@@ -1,11 +1,11 @@
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from app.schemas.roster import RosterCreate
 
 # classes for the contract with the API
 # Body
 class FriendlyGameCreate(BaseModel):
-    duration: int
+    duration: int = Field(gt=0)
     roster: RosterCreate
 
 # Response
