@@ -26,24 +26,34 @@ class MatchConnectionManager:
         # we get the ws connections from that match_id
         connections = self.active_connections.get(match_id, [])
 
-        if connections is []:
+        if not connections:
             return
 
         if websocket in connections:
             connections.remove(websocket)
-
         # if there are no connections related to that match, we delete the dictionary entry
         if not connections:
-            del self.active_connections[match_id]
+            self.active_connections.pop(match_id, None)
 
     # we want to send message to everyone online
-    async def broadcast(self, match_id: int, message: MatchStateMessage) -> None:
-    
-        connections = self.active_connections.get(match_id,[])
+    async def broadcast(
+        self,
+        match_id: int,
+        message: MatchStateMessage
+    ) -> None:
 
-        # we sent the status to everyone
+        connections = self.active_connections.get(match_id, [])
+
+        disconnected = []
+        # sent the status for everyone
         for websocket in connections:
-            await websocket.send_json(message.model_dump())
+            try:
+                await websocket.send_json(message.model_dump())
+            except Exception:
+                disconnected.append(websocket)
+
+        for websocket in disconnected:
+            self.disconnect(match_id, websocket)
 
     async def close_match_connection(self, match_id: int) -> None:
         connections = self.active_connections.get(match_id, [])
