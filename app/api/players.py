@@ -62,7 +62,7 @@ def get_by_id(
     except LookupError as error:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(error))
 
-@router.get("",response_model=PlayerResponse)
+@router.get("",response_model=list[PlayerResponse])
 def get_players(
     current_user = Depends(get_current_user),
     db: Session = Depends(get_db)
