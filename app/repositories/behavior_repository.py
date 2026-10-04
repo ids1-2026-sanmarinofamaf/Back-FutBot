@@ -3,8 +3,13 @@ from sqlalchemy.orm import Session
 from sqlalchemy import select, or_
 from app.models.behavior import Behavior
 
-# get behaviors of 2 clubs
+def get_by_id(
+    db: Session,
+    behavior_id: int,
+) -> Behavior | None:
+    return db.get(Behavior, behavior_id)
 
+# get behaviors of 2 clubs
 def get_by_club_ids(
     db: Session,
     club_ids: set[int],
