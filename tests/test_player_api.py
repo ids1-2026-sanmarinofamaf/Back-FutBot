@@ -5,7 +5,7 @@ from fastapi.testclient import TestClient
 from sqlalchemy.exc import SQLAlchemyError
 
 from app.core.security import get_password_hash
-from app.database import SessionLocal, engine
+from app.database import SessionLocal
 from app.main import app
 from app.models.club import Club
 from app.models.player import Player
@@ -17,14 +17,6 @@ client = TestClient(app)
 EMAIL = "players@mail.com"
 PASSWORD = "secreta123"
 OTHER_EMAIL = "other-players@mail.com"
-
-
-@pytest.fixture(autouse=True)
-def players_table():
-    # TODO: remove once the players migration exists; then alembic creates the table
-    Player.__table__.create(engine, checkfirst=True)
-    yield
-    Player.__table__.drop(engine, checkfirst=True)
 
 
 @pytest.fixture
