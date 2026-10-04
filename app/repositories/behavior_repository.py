@@ -1,6 +1,18 @@
-# app/repositories/behavior_repository.py
+from sqlalchemy import select
+from sqlalchemy.orm import Session
 
-def get_by_id(db, behavior_id: int):
-    raise NotImplementedError(
-        "behavior_repository.get_by_id is not implemented yet"
+from app.models.behavior import Behavior
+
+# get behaviors of 2 clubs
+def get_by_club_ids(
+    db: Session,
+    club_ids: set[int],
+) -> list[Behavior]:
+
+    return list(
+        db.scalars(
+            select(Behavior).where(
+                Behavior.club_id.in_(club_ids)
+            )
+        )
     )
