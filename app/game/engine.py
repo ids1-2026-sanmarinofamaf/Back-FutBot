@@ -530,34 +530,8 @@ class GameEngine:
             match: Match,
             side: Side,
     ) -> None:
-        participation = (
-            match.participation_a
-            if side == Side.LEFT
-            else match.participation_b
-        )
-
-        closest_player = min(
-            (
-                player
-                for player in participation.players
-                if player.is_on_field
-            ),
-            key=lambda player: distance(
-                FIELD_CENTER,
-                player.position
-            ),
-        )
-
-        direction = direction_to(
-            FIELD_CENTER,
-            closest_player.position,
-        )
-
         match.ball.position = FIELD_CENTER
-        match.ball.velocity = (
-            direction[0] * RESTART_BALL_SPEED,
-            direction[1] * RESTART_BALL_SPEED,
-        )
+        match.ball.velocity = (0.0, 0.0)
 
 
     def _get_on_field_players(

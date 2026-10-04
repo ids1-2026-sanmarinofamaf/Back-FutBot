@@ -1799,15 +1799,8 @@ def test_update_timers_does_not_go_below_zero(match):
     assert player.collision_penalty_remaining == 0
 
 
-def test_step_restitutes_ball_to_left_side_at_match_start(match):
+def test_step_places_ball_at_center_at_match_start(match):
     engine = GameEngine()
-    snapshot = match.snapshot()
-
-    # Elegimos posiciones distintas para saber quién es el más cercano.
-    match.participation_a.players[0].position = (18.0, 10.0)
-    match.participation_a.players[1].position = (5.0, 5.0)
-    match.participation_a.players[2].position = (5.0, 15.0)
-
     snapshot = match.snapshot()
 
     actions = {
@@ -1825,47 +1818,30 @@ def test_step_restitutes_ball_to_left_side_at_match_start(match):
     )
 
     assert match.ball.position == FIELD_CENTER
-    assert match.ball.velocity != (0.0, 0.0)
+    assert match.ball.velocity == (0.0, 0.0)
 
 
-def test_initial_restitution_points_to_closest_left_player(match):
+def test_restitution_is_independent_of_side(match):
     engine = GameEngine()
 
-    closest_player = match.participation_a.players[0]
-    closest_player.position = (18.0, 10.0)
-
-    match.participation_a.players[1].position = (5.0, 5.0)
-    match.participation_a.players[2].position = (5.0, 15.0)
-
-    snapshot = match.snapshot()
-
-    actions = {
-        player.player_id: WaitAction()
-        for player in (
-            snapshot.players_a + snapshot.players_b
-        )
-        if player.is_on_field
-    }
-
-    engine.step(
+    engine._restitute_ball(
         match,
-        snapshot,
-        actions,
+        Side.LEFT,
     )
 
-    expected_direction = direction_to(
-        FIELD_CENTER,
-        closest_player.position,
+    left_position = match.ball.position
+    left_velocity = match.ball.velocity
+
+    match.ball.position = (5.0, 5.0)
+    match.ball.velocity = (10.0, 5.0)
+
+    engine._restitute_ball(
+        match,
+        Side.RIGHT,
     )
 
-    expected_velocity = (
-        expected_direction[0] * RESTART_BALL_SPEED,
-        expected_direction[1] * RESTART_BALL_SPEED,
-    )
-
-    assert match.ball.velocity == pytest.approx(
-        expected_velocity
-    )
+    assert match.ball.position == left_position == FIELD_CENTER
+    assert match.ball.velocity == left_velocity == (0.0, 0.0)
 
 
 def test_players_do_not_move_on_initial_restitution(match):
@@ -1937,7 +1913,7 @@ def test_goal_restart_waits_before_restitution(match):
     assert match.ball.velocity == (0.0, 0.0)
 
 
-def test_goal_restart_restitutes_ball_when_wait_finishes(match):
+def test_goal_restart_leaves_ball_at_center_when_wait_finishes(match):
     engine = GameEngine()
 
     match.current_tick = 10
@@ -1981,7 +1957,7 @@ def test_goal_restart_restitutes_ball_when_wait_finishes(match):
     )
 
     assert match.ball.position == FIELD_CENTER
-    assert match.ball.velocity != (0.0, 0.0)
+    assert match.ball.velocity == (0.0, 0.0)
 
 
 def test_update_ball_moves_without_kick(match):
