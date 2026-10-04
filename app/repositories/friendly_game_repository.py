@@ -1,4 +1,5 @@
 from sqlalchemy.orm import Session
+from sqlalchemy import select, func
 
 from app.models.friendly_game import (
     FriendlyGame,
@@ -10,6 +11,7 @@ from app.models.friendly_game_participation import (
     FriendlyGameRole,
 )
 
+
 # create and persist friendly game
 def create(db: Session, duration: int, creator_id: int) -> FriendlyGame:
 
@@ -19,6 +21,7 @@ def create(db: Session, duration: int, creator_id: int) -> FriendlyGame:
     db.flush()
 
     return friendly_game
+
 
 # create and persist friendlyGameParticipation with the reference to friendly_game_id
 def create_participation(
@@ -41,12 +44,14 @@ def create_participation(
 
     return participation
 
+
 # get frienddly game by id
 def get_by_id(
     db: Session,
     friendly_game_id: int
 ) -> FriendlyGame | None:
     return db.get(FriendlyGame, friendly_game_id)
+
 
 # update state in db
 def update_state(
@@ -59,3 +64,32 @@ def update_state(
     db.flush()
     # use flush instead of commit to keep transaction control outside this function, so we can rollback later
 
+
+def count_participations(
+    db: Session,
+    friendly_game_id: int
+) -> int:
+
+    return db.scalar(
+        select(func.count(FriendlyGameParticipation.id))
+        .where(
+            FriendlyGameParticipation.friendly_game_id
+            == friendly_game_id
+        )
+    ) or 0
+
+
+def get_participation_by_club(
+    db: Session,
+    friendly_game_id: int,
+    club_id: int
+) -> FriendlyGameParticipation | None:
+
+    return db.scalar(
+        select(FriendlyGameParticipation)
+        .where(
+            FriendlyGameParticipation.friendly_game_id
+            == friendly_game_id,
+            FriendlyGameParticipation.club_id == club_id,
+        )
+    )
