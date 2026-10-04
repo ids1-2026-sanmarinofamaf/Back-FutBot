@@ -93,6 +93,15 @@ def create_behaviors(db, club_id):
 
     return behaviors
 
+def get_default_behaviors(db):
+    return (
+        db.query(Behavior)
+        .filter(Behavior.is_default.is_(True))
+        .order_by(Behavior.id)
+        .limit(3)
+        .all()
+    )
+
 
 def create_creator_participation(
     db,
@@ -178,7 +187,9 @@ def clean_join_database():
         db.query(FriendlyGameParticipation).delete()
         db.query(Roster).delete()
         db.query(FriendlyGame).delete()
-        db.query(Behavior).delete()
+        db.query(Behavior).filter(
+        Behavior.is_default.is_(False)
+        ).delete()
         db.query(Player).delete()
         db.query(Club).delete()
         db.query(User).delete()
@@ -194,7 +205,9 @@ def clean_join_database():
         db.query(FriendlyGameParticipation).delete()
         db.query(Roster).delete()
         db.query(FriendlyGame).delete()
-        db.query(Behavior).delete()
+        db.query(Behavior).filter(
+        Behavior.is_default.is_(False)
+        ).delete()
         db.query(Player).delete()
         db.query(Club).delete()
         db.query(User).delete()
@@ -571,3 +584,69 @@ def test_join_with_invalid_roster_is_rejected_without_changes():
 
     finally:
         verify_db.close()
+
+def test_join_valid_friendly_game_with_default_behaviors():
+    db = SessionLocal()
+
+    try:
+        _, creator_club = create_user_with_club(
+            db,
+            "creator@test.com",
+            "Creator Club",
+        )
+
+        guest_user, guest_club = create_user_with_club(
+            db,
+            "guest@test.com",
+            "Guest Club",
+        )
+
+        guest_players = create_players(
+            db,
+            guest_club.id,
+        )
+
+        default_behaviors = get_default_behaviors(db)
+
+        assert len(default_behaviors) == 3
+        assert all(b.is_default for b in default_behaviors)
+        assert all(b.club_id is None for b in default_behaviors)
+
+        friendly_game = FriendlyGame(
+            duration=1000,
+            creator_id=creator_club.id,
+            state=FriendlyGameState.POR_COMENZAR,
+        )
+
+        db.add(friendly_game)
+        db.flush()
+
+        create_creator_participation(
+            db,
+            friendly_game,
+            creator_club,
+        )
+
+        db.commit()
+
+        friendly_game_id = friendly_game.id
+        guest_user_id = guest_user.id
+
+        body = valid_join_body(
+            guest_players,
+            default_behaviors,
+        )
+
+    finally:
+        db.close()
+
+    app.dependency_overrides[get_current_user] = (
+        lambda: SimpleNamespace(id=guest_user_id)
+    )
+
+    response = client.post(
+        f"/friendly_games/{friendly_game_id}/users",
+        json=body,
+    )
+
+    assert response.status_code == 201

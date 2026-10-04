@@ -78,8 +78,11 @@ def create_friendly_game(db: Session, user_id: int, data: FriendlyGameCreate):
                 if behavior is None:
                     raise ValueError("Behavior does not exist")
 
-                if behavior.club_id != club.id:
-                    raise ValueError("Behavior does not belong to user's club")
+                if not behavior.is_default and behavior.club_id != club.id:
+                    raise ValueError(
+                        "Behavior does not belong to user's club"
+                    )
+
 
         # save roster on db
         roster_repository.save(db,roster)
