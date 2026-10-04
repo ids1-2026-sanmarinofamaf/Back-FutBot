@@ -79,20 +79,30 @@ def test_behavior_is_created_and_persisted(session, club):
     assert session.get(Behavior, behavior.id) is not None
 
 
-def test_behavior_requires_name_code_and_club(session, club):
-    session.add(Behavior(code=BEHAVIOR_CODE, club=club))
+def test_behavior_requires_name_and_code(session, club):
+    session.add(
+        Behavior(
+            code=BEHAVIOR_CODE,
+            club=club,
+        )
+    )
+
     with pytest.raises(IntegrityError):
         session.commit()
+
     session.rollback()
 
-    session.add(Behavior(name="Delantero", club=club))
-    with pytest.raises(IntegrityError):
-        session.commit()
-    session.rollback()
+    session.add(
+        Behavior(
+            name="Delantero",
+            club=club,
+        )
+    )
 
-    session.add(Behavior(name="Delantero", code=BEHAVIOR_CODE))
     with pytest.raises(IntegrityError):
         session.commit()
+
+    session.rollback()
 
 
 def test_behavior_name_and_code_are_stored_and_retrieved(session, club):
@@ -169,3 +179,63 @@ def test_behavior_code_is_reachable_from_player_on_roster(session, club):
     player = session.get(PlayerOnRoster, player_id)
 
     assert player.initial_behavior.code == BEHAVIOR_CODE
+
+
+def test_default_behavior_can_exist_without_club(session):
+    behavior = Behavior(
+        name="Attacker",
+        code="def play():\n    return wait()",
+        club_id=None,
+        is_default=True,
+    )
+
+    session.add(behavior)
+    session.commit()
+
+    stored = session.get(Behavior, behavior.id)
+
+    assert stored is not None
+    assert stored.club_id is None
+    assert stored.is_default is True
+
+
+def test_regular_behavior_can_belong_to_club(session, club):
+    behavior = Behavior(
+        name="Custom",
+        code="def play():\n    return wait()",
+        club=club,
+        is_default=False,
+    )
+
+    session.add(behavior)
+    session.commit()
+
+    assert behavior.club_id == club.id
+    assert behavior.is_default is False
+
+
+def test_non_default_behavior_requires_club(session):
+    behavior = Behavior(
+        name="Custom",
+        code=BEHAVIOR_CODE,
+        is_default=False,
+    )
+
+    session.add(behavior)
+
+    with pytest.raises(IntegrityError):
+        session.commit()
+
+
+def test_default_behavior_cannot_belong_to_club(session, club):
+    behavior = Behavior(
+        name="Attacker",
+        code=BEHAVIOR_CODE,
+        club=club,
+        is_default=True,
+    )
+
+    session.add(behavior)
+
+    with pytest.raises(IntegrityError):
+        session.commit()
