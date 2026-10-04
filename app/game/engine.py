@@ -1,5 +1,6 @@
 from dataclasses import dataclass
 from math import isclose
+import hashlib
 
 from app.game.models.match import Match, MatchSnapshot
 from app.game.models.player_in_match import PlayerInMatchSnapshot
@@ -193,13 +194,24 @@ class GameEngine:
         if not valid_kickers:
             return None
 
-        winner = max(
-            valid_kickers,
-            key=lambda player: self._kick_contest_key(
-                snapshot,
-                player,
-            ),
+        best_key = max(
+            self._kick_contest_key(snapshot, player)
+            for player in valid_kickers
         )
+
+        tied_players = [
+            player
+            for player in valid_kickers
+            if self._kick_contest_key(snapshot, player) == best_key
+        ]
+
+        if len(tied_players) == 1:
+            winner = tied_players[0]
+        else:
+            winner = self._deterministic_tiebreak(
+                current_tick=snapshot.current_tick,
+                players=tied_players,
+            )
 
         loser_ids = tuple(
             player.player_id
@@ -324,7 +336,8 @@ class GameEngine:
             ]
 
             contest = self._resolve_collision_contest(
-                involved_players
+                involved_players,
+                current_tick=snapshot.current_tick,
             )
 
             for loser_id in contest.loser_ids:
@@ -621,7 +634,7 @@ class GameEngine:
         self,
         snapshot: MatchSnapshot,
         player: PlayerInMatchSnapshot,
-    ) -> tuple[float, float, int, int, int]:
+    ) -> tuple[float, float, int, int]:
         effective_control = effective_physical_value(
             player.control,
             player.collision_penalty_remaining,
@@ -650,14 +663,13 @@ class GameEngine:
             effective_speed,
             player.strength,
             last_conceding_advantage,
-            -player.player_id,
         )
 
 
     def _collision_contest_key(
         self,
         player: PlayerInMatchSnapshot,
-    ) -> tuple[int, float, float, int]:
+    ) -> tuple[int, float, float]:
         effective_power = effective_physical_value(
             player.power,
             player.collision_penalty_remaining,
@@ -674,7 +686,6 @@ class GameEngine:
             player.strength,
             effective_power,
             effective_speed,
-            -player.player_id,
         )
 
 
@@ -721,11 +732,26 @@ class GameEngine:
     def _resolve_collision_contest(
         self,
         players: list[PlayerInMatchSnapshot],
+        current_tick: int,
     ) -> ContestResolution:
-        winner = max(
-            players,
-            key=self._collision_contest_key,
+        best_key = max(
+            self._collision_contest_key(player)
+            for player in players
         )
+
+        tied_players = [
+            player
+            for player in players
+            if self._collision_contest_key(player) == best_key
+        ]
+
+        if len(tied_players) == 1:
+            winner = tied_players[0]
+        else:
+            winner = self._deterministic_tiebreak(
+                current_tick=current_tick,
+                players=tied_players,
+            )
 
         loser_ids = tuple(
             player.player_id
@@ -981,4 +1007,41 @@ class GameEngine:
         return all(
             player.forced_wait_remaining == 1
             for player in on_field_players
+        )
+
+
+    def _deterministic_tiebreak(
+        self,
+        current_tick: int,
+        players: list[PlayerInMatchSnapshot],
+    ) -> PlayerInMatchSnapshot:
+        player_ids = sorted(
+            player.player_id
+            for player in players
+        )
+
+        players_key = ":".join(
+            str(player_id)
+            for player_id in player_ids
+        )
+
+        def tie_break_value(
+            player: PlayerInMatchSnapshot,
+        ) -> int:
+            seed = (
+                f"{current_tick}:"
+                f"{players_key}:"
+                f"{player.player_id}"
+            )
+
+            digest = hashlib.sha256(seed.encode()).digest()
+
+            return int.from_bytes(
+                digest[:8],
+                "big",
+            )
+
+        return max(
+            players,
+            key=tie_break_value,
         )

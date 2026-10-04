@@ -795,7 +795,7 @@ def test_resolve_kicks_contest_prefers_last_conceding_side(
     assert result.contest.loser_ids == (player_a.player_id,)
 
 
-def test_resolve_kicks_contest_prefers_lower_player_id(
+def test_resolve_kicks_contest_tiebreak_varies_with_tick(
     match_snapshot,
 ):
     engine = GameEngine()
@@ -820,50 +820,48 @@ def test_resolve_kicks_contest_prefers_lower_player_id(
         forced_wait_remaining=0,
     )
 
-    modified_snapshot = replace(
-        match_snapshot,
-        players_a=(
-            player_a,
-            *match_snapshot.players_a[1:],
-        ),
-        players_b=(
-            player_b,
-            *match_snapshot.players_b[1:],
-        ),
-        last_conceding_side=None,
-    )
+    winners = set()
 
-    actions = _wait_actions_for_snapshot(modified_snapshot)
+    for tick in range(20):
+        snapshot = replace(
+            match_snapshot,
+            players_a=(
+                player_a,
+                *match_snapshot.players_a[1:],
+            ),
+            players_b=(
+                player_b,
+                *match_snapshot.players_b[1:],
+            ),
+            last_conceding_side=None,
+            current_tick=tick,
+        )
 
-    actions[player_a.player_id] = KickAction(
-        kick_direction=(1.0, 0.0),
-        kick_force_factor=1.0,
-    )
+        actions = _wait_actions_for_snapshot(snapshot)
 
-    actions[player_b.player_id] = KickAction(
-        kick_direction=(-1.0, 0.0),
-        kick_force_factor=1.0,
-    )
+        actions[player_a.player_id] = KickAction(
+            kick_direction=(1.0, 0.0),
+            kick_force_factor=1.0,
+        )
 
-    result = engine._resolve_kicks(
-        modified_snapshot,
-        actions,
-    )
+        actions[player_b.player_id] = KickAction(
+            kick_direction=(-1.0, 0.0),
+            kick_force_factor=1.0,
+        )
 
-    assert result is not None
+        result = engine._resolve_kicks(
+            snapshot,
+            actions,
+        )
 
-    expected_winner_id = min(
+        assert result is not None
+
+        winners.add(result.contest.winner_id)
+
+    assert winners == {
         player_a.player_id,
         player_b.player_id,
-    )
-
-    expected_loser_id = max(
-        player_a.player_id,
-        player_b.player_id,
-    )
-
-    assert result.contest.winner_id == expected_winner_id
-    assert result.contest.loser_ids == (expected_loser_id,)
+    }
 
 
 def test_resolve_player_collisions_without_collision(
@@ -1017,7 +1015,8 @@ def test_collision_contest_prefers_higher_strength(
     )
 
     result = engine._resolve_collision_contest(
-        [player_a, player_b]
+        [player_a, player_b],
+        current_tick=0,
     )
 
     assert result.winner_id == player_a.player_id
@@ -1044,7 +1043,8 @@ def test_collision_contest_prefers_higher_power(
     )
 
     result = engine._resolve_collision_contest(
-        [player_a, player_b]
+        [player_a, player_b],
+        current_tick=0,
     )
 
     assert result.winner_id == player_a.player_id
@@ -1070,13 +1070,14 @@ def test_collision_contest_prefers_higher_speed(
     )
 
     result = engine._resolve_collision_contest(
-        [player_a, player_b]
+        [player_a, player_b],
+        current_tick=0,
     )
 
     assert result.winner_id == player_a.player_id
 
 
-def test_collision_contest_prefers_lower_player_id(
+def test_collision_contest_tiebreak_varies_with_tick(
     match_snapshot,
 ):
     engine = GameEngine()
@@ -1095,14 +1096,18 @@ def test_collision_contest_prefers_lower_player_id(
         speed=60,
     )
 
-    result = engine._resolve_collision_contest(
-        [player_a, player_b]
-    )
+    winners = {
+        engine._resolve_collision_contest(
+            [player_a, player_b],
+            current_tick=tick,
+        ).winner_id
+        for tick in range(20)
+    }
 
-    assert result.winner_id == min(
+    assert winners == {
         player_a.player_id,
         player_b.player_id,
-    )
+    }
 
 
 def test_collision_contest_supports_multiple_players(
@@ -1126,7 +1131,8 @@ def test_collision_contest_supports_multiple_players(
     )
 
     result = engine._resolve_collision_contest(
-        [player_a, player_b, player_c]
+        [player_a, player_b, player_c],
+        current_tick=0,
     )
 
     assert result.winner_id == player_b.player_id
