@@ -3,6 +3,7 @@ import time, asyncio
 
 from app.game.models.match import Match, MatchState, MatchSnapshot
 from app.game.constants import TIC_DURATION
+from app.services.match_websocket_service import match_connection_manager, build_match_state_message
 
 
 class BehaviorCoordinatorProtocol(Protocol):
@@ -35,6 +36,14 @@ class MatchRunner:
 
         match.current_tick += 1 # update the tick
 
+        # new state after the tick
+        new_snapshot = match.snapshot()
+
+        # we format the received state
+        message = build_match_state_message(new_snapshot)
+
+        # we sent that new status to everyone connected
+        await match_connection_manager.broadcast(match.match_id, message)
 
     async def run_match(self, match: Match) -> Match:
         # first, check that it's a valid match to start
@@ -46,6 +55,13 @@ class MatchRunner:
 
         # change the matchState and execute ticks
         match.state = MatchState.IN_PROGRESS
+
+        # send the initial state of the match before executing the first tick
+        initial_snapshot = match.snapshot()
+
+        initial_message = build_match_state_message(initial_snapshot)
+
+        await match_connection_manager.broadcast(match.match_id,initial_message)
 
         while match.current_tick < match.duration_ticks:
             # start the tick
@@ -61,8 +77,10 @@ class MatchRunner:
             if remaining_time > 0:
                 await asyncio.sleep(remaining_time)
 
-        # when the match ended, change its state to finished
+        # when the match ended, change its state to finished and close ws conections
         match.state = MatchState.FINISHED
+
+        await match_connection_manager.close_match_connection(match.match_id)   
 
         return match
 

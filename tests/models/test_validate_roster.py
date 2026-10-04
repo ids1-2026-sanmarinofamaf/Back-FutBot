@@ -1,7 +1,6 @@
 import pytest
 
 from app.models.player_on_roster import PlayerOnRoster, RosterSlot
-from tests.models.stubs import Club, Player, Behavior
 
 
 def test_valid_roster(valid_roster):
