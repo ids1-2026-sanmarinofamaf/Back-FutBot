@@ -12,6 +12,7 @@ from app.database import engine, get_db, SessionLocal
 from app.main import app
 from conftest import ROOT_DIR
 from app.models.behavior import Behavior
+from app.game.default_behaviors import DEFAULT_BEHAVIORS
 
 
 def test_app_starts_with_database_url_from_env():
@@ -79,15 +80,21 @@ def test_default_behaviors_are_seeded():
             .all()
         )
 
-        assert len(behaviors) == 3
-
-        assert {behavior.name for behavior in behaviors} == {
-            "Attacker",
-            "Midfielder",
-            "Defender",
+        stored = {
+            behavior.name: behavior.code
+            for behavior in behaviors
         }
 
-        assert all(behavior.club_id is None for behavior in behaviors)
+        expected = {
+            behavior["name"]: behavior["code"]
+            for behavior in DEFAULT_BEHAVIORS
+        }
+
+        assert stored == expected
+        assert all(
+            behavior.club_id is None
+            for behavior in behaviors
+        )
 
 
 def test_seeded_default_behaviors_have_code():
