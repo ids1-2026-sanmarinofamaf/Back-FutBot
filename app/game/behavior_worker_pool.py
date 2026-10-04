@@ -4,7 +4,8 @@ from multiprocessing import Process, Queue
 from queue import Empty
 from time import monotonic
 
-from app.game.models.runtime_behavior import RuntimeBehavior
+from app.game.models.behavior_definition import BehaviorDefinition
+from app.game.behavior_compiler import BehaviorCompiler
 from app.game.models.actions import MoveAction, KickAction, WaitAction
 from app.game.context import BehaviorContext
 from app.game.behavior_worker import BehaviorWorker
@@ -56,7 +57,7 @@ class BehaviorWorkerPool:
         self._input_queues = []
         self._output_queues = []
 
-        self._registered_behaviors: dict[int, RuntimeBehavior] = {}
+        self._registered_behaviors: dict[int, BehaviorDefinition] = {}
 
         self._start_workers()
 
@@ -113,6 +114,7 @@ class BehaviorWorkerPool:
             output_queue: Queue used to send execution results back to the pool.
         """    
         worker = BehaviorWorker()
+        compiler = BehaviorCompiler()
 
         while True:
             message = input_queue.get()
@@ -120,9 +122,16 @@ class BehaviorWorkerPool:
             command = message["command"]
 
             if command == "register":
-                worker.register_behavior(
+                definition = BehaviorDefinition(
                     message["behavior_id"],
-                    message["runtime_behavior"],
+                    message["code"],
+                )
+
+                runtime_behavior = compiler.compile(definition)
+
+                worker.register_behavior(
+                    definition.id,
+                    runtime_behavior
                 )
 
             elif command == "execute":
@@ -144,7 +153,7 @@ class BehaviorWorkerPool:
 
     def register_behaviors(
         self,
-        behaviors: list[RuntimeBehavior],
+        behaviors: list[BehaviorDefinition],
     ) -> None:
         """
         Register the available behaviors in every worker process.
@@ -156,7 +165,8 @@ class BehaviorWorkerPool:
         worker can restore the same registry.
 
         Args:
-            behaviors: Runtime behaviors that must be available to all workers.
+            behaviors: Serializable behavior definitions that must be
+            available to all workers.
         """
         for behavior in behaviors:
             self._registered_behaviors[behavior.id] = behavior
@@ -167,7 +177,7 @@ class BehaviorWorkerPool:
                     {
                         "command": "register",
                         "behavior_id": behavior.id,
-                        "runtime_behavior": behavior,
+                        "code": behavior.code,
                     }
                 )
 
@@ -269,7 +279,7 @@ class BehaviorWorkerPool:
                 {
                     "command": "register",
                     "behavior_id": behavior.id,
-                    "runtime_behavior": behavior,
+                    "code": behavior.code,
                 }
             )
 

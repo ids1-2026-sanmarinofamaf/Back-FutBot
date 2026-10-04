@@ -1,44 +1,39 @@
-from time import monotonic, sleep
+from textwrap import dedent
+from time import monotonic
 
 import pytest
 
 from app.game.behavior_worker_pool import BehaviorJob, BehaviorWorkerPool
+from app.game.default_behaviors import (
+    ATTACKER_CODE,
+    DEFENDER_CODE,
+    MIDFIELDER_CODE,
+)
 from app.game.models.actions import MoveAction, WaitAction
-from app.game.models.runtime_behavior import RuntimeBehavior
+from app.game.models.behavior_definition import BehaviorDefinition
 
-
-def move_play():
-    return MoveAction(
-        move_direction=(1.0, 0.0),
-        move_speed_factor=1.0,
-    )
-
-
-def wait_play():
-    return WaitAction()
-
-
-def infinite_play():
-    while True:
-        pass
-
-def slow_play():
-    sleep(0.1)
-    return WaitAction()
 
 @pytest.fixture
-def pool_move_behavior():
-    return RuntimeBehavior(
+def pool_attacker_behavior():
+    return BehaviorDefinition(
         id=101,
-        play=move_play,
+        code=ATTACKER_CODE,
     )
 
 
 @pytest.fixture
-def pool_wait_behavior():
-    return RuntimeBehavior(
+def pool_midfielder_behavior():
+    return BehaviorDefinition(
         id=102,
-        play=wait_play,
+        code=MIDFIELDER_CODE,
+    )
+
+
+@pytest.fixture
+def pool_defender_behavior():
+    return BehaviorDefinition(
+        id=103,
+        code=DEFENDER_CODE,
     )
 
 
@@ -54,24 +49,26 @@ def test_pool_starts_configured_number_of_workers():
 
 def test_pool_executes_registered_behavior(
     context,
-    pool_wait_behavior,
+    pool_midfielder_behavior,
 ):
     pool = BehaviorWorkerPool(size=1)
 
     try:
-        pool.register_behaviors([pool_wait_behavior])
+        pool.register_behaviors([
+            pool_midfielder_behavior,
+        ])
 
         jobs = [
             BehaviorJob(
                 player_id=10,
-                behavior_id=pool_wait_behavior.id,
+                behavior_id=pool_midfielder_behavior.id,
                 context=context,
             )
         ]
 
         actions = pool.execute(jobs)
 
-        assert isinstance(actions[10], WaitAction)
+        assert isinstance(actions[10], MoveAction)
 
     finally:
         pool.shutdown()
@@ -79,34 +76,43 @@ def test_pool_executes_registered_behavior(
 
 def test_pool_executes_multiple_jobs(
     context,
-    pool_move_behavior,
-    pool_wait_behavior,
+    pool_attacker_behavior,
+    pool_midfielder_behavior,
+    pool_defender_behavior,
 ):
-    pool = BehaviorWorkerPool(size=2)
+    pool = BehaviorWorkerPool(size=3)
 
     try:
         pool.register_behaviors([
-            pool_move_behavior,
-            pool_wait_behavior,
+            pool_attacker_behavior,
+            pool_midfielder_behavior,
+            pool_defender_behavior,
         ])
 
         jobs = [
             BehaviorJob(
                 player_id=1,
-                behavior_id=pool_move_behavior.id,
+                behavior_id=pool_attacker_behavior.id,
                 context=context,
             ),
             BehaviorJob(
                 player_id=2,
-                behavior_id=pool_wait_behavior.id,
+                behavior_id=pool_midfielder_behavior.id,
+                context=context,
+            ),
+            BehaviorJob(
+                player_id=3,
+                behavior_id=pool_defender_behavior.id,
                 context=context,
             ),
         ]
 
         actions = pool.execute(jobs)
 
-        assert isinstance(actions[1], MoveAction)
-        assert isinstance(actions[2], WaitAction)
+        assert len(actions) == 3
+        assert 1 in actions
+        assert 2 in actions
+        assert 3 in actions
 
     finally:
         pool.shutdown()
@@ -114,16 +120,26 @@ def test_pool_executes_multiple_jobs(
 
 def test_pool_raises_if_jobs_exceed_worker_count(
     context,
-    wait_behavior,
+    pool_midfielder_behavior,
 ):
     pool = BehaviorWorkerPool(size=1)
 
     try:
-        pool.register_behaviors([wait_behavior])
+        pool.register_behaviors([
+            pool_midfielder_behavior,
+        ])
 
         jobs = [
-            BehaviorJob(1, wait_behavior.id, context),
-            BehaviorJob(2, wait_behavior.id, context),
+            BehaviorJob(
+                player_id=1,
+                behavior_id=pool_midfielder_behavior.id,
+                context=context,
+            ),
+            BehaviorJob(
+                player_id=2,
+                behavior_id=pool_midfielder_behavior.id,
+                context=context,
+            ),
         ]
 
         with pytest.raises(ValueError):
@@ -134,9 +150,15 @@ def test_pool_raises_if_jobs_exceed_worker_count(
 
 
 def test_pool_returns_wait_action_on_timeout(context):
-    behavior = RuntimeBehavior(
+    behavior = BehaviorDefinition(
         id=99,
-        play=infinite_play,
+        code=dedent(
+            """
+            def play():
+                while True:
+                    pass
+            """
+        ),
     )
 
     pool = BehaviorWorkerPool(
@@ -164,9 +186,15 @@ def test_pool_returns_wait_action_on_timeout(context):
 
 
 def test_pool_replaces_worker_after_timeout(context):
-    behavior = RuntimeBehavior(
+    behavior = BehaviorDefinition(
         id=99,
-        play=infinite_play,
+        code=dedent(
+            """
+            def play():
+                while True:
+                    pass
+            """
+        ),
     )
 
     pool = BehaviorWorkerPool(
@@ -207,6 +235,7 @@ def test_shutdown_stops_all_workers():
         not process.is_alive()
         for process in processes
     )
+
 
 def test_pool_returns_wait_action_for_unknown_behavior(context):
     pool = BehaviorWorkerPool(size=1)
@@ -252,9 +281,17 @@ def test_pool_replaces_worker_after_execution_error(context):
 def test_pool_uses_common_deadline_for_concurrent_jobs(
     context,
 ):
-    behavior = RuntimeBehavior(
+    behavior = BehaviorDefinition(
         id=99,
-        play=slow_play,
+        code=dedent(
+            """
+            from time import sleep
+
+            def play():
+                sleep(0.1)
+                return wait()
+            """
+        ),
     )
 
     pool = BehaviorWorkerPool(
