@@ -8,9 +8,10 @@ from fastapi.testclient import TestClient
 from sqlalchemy import inspect
 
 import app.database as database
-from app.database import engine, get_db
+from app.database import engine, get_db, SessionLocal
 from app.main import app
 from conftest import ROOT_DIR
+from app.models.behavior import Behavior
 
 
 def test_app_starts_with_database_url_from_env():
@@ -68,3 +69,33 @@ def test_get_db_closes_session_even_on_error(monkeypatch):
     with TestClient(test_app, raise_server_exceptions=False) as client:
         assert client.get("/fail").status_code == 500
     session.close.assert_called_once()
+
+
+def test_default_behaviors_are_seeded():
+    with SessionLocal() as session:
+        behaviors = (
+            session.query(Behavior)
+            .filter(Behavior.is_default.is_(True))
+            .all()
+        )
+
+        assert len(behaviors) == 3
+
+        assert {behavior.name for behavior in behaviors} == {
+            "Attacker",
+            "Midfielder",
+            "Defender",
+        }
+
+        assert all(behavior.club_id is None for behavior in behaviors)
+
+
+def test_seeded_default_behaviors_have_code():
+    with SessionLocal() as session:
+        behaviors = (
+            session.query(Behavior)
+            .filter(Behavior.is_default.is_(True))
+            .all()
+        )
+
+        assert all(behavior.code.strip() for behavior in behaviors)
