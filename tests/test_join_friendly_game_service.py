@@ -325,6 +325,7 @@ def test_join_rejects_behavior_from_another_club(
 
     behavior = MagicMock()
     behavior.club_id = 99
+    behavior.is_default = False
     repos.behavior.get_by_id.return_value = behavior
 
     with pytest.raises(
@@ -340,3 +341,40 @@ def test_join_rejects_behavior_from_another_club(
 
     db.commit.assert_not_called()
     db.rollback.assert_called_once()
+
+def test_join_accepts_default_behavior(
+    repos,
+    valid_join_data,
+):
+    db = MagicMock()
+
+    club, friendly_game = configure_joinable_game(repos)
+
+    player = MagicMock()
+    player.club_id = club.id
+    repos.player.get_by_id.return_value = player
+
+    behavior = MagicMock()
+    behavior.club_id = None
+    behavior.is_default = True
+    repos.behavior.get_by_id.return_value = behavior
+
+    def save_roster(db, roster):
+        roster.id = 20
+
+    repos.roster.save.side_effect = save_roster
+
+    participation = MagicMock()
+    participation.id = 40
+    repos.friendly_game.create_participation.return_value = participation
+
+    participation, roster = join_friendly_game(
+        db=db,
+        friendly_game_id=friendly_game.id,
+        user_id=5,
+        data=valid_join_data,
+    )
+
+    assert participation.id == 40
+    assert roster.id == 20
+    db.commit.assert_called_once()

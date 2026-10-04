@@ -206,7 +206,7 @@ def join_friendly_game(
                         "Behavior does not exist"
                     )
 
-                if behavior.club_id != club.id:
+                if not behavior.is_default and behavior.club_id != club.id:
                     raise InvalidRoster(
                         "Behavior does not belong to user's club"
                     )
