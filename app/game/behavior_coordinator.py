@@ -1,8 +1,7 @@
 from app.game.behavior_worker_pool import BehaviorWorkerPool, BehaviorJob
-from app.game.context_builder import MatchSnapshotLike
+from app.game.models.match import MatchSnapshot
 from app.game.models.actions import MoveAction, KickAction, WaitAction
 from app.game.context_builder import build_behavior_context
-from app.game.context import BehaviorContext
 
 Action = MoveAction | KickAction | WaitAction
 
@@ -19,7 +18,7 @@ class BehaviorCoordinator:
 
     def get_actions(
         self,
-        match_snapshot: MatchSnapshotLike,
+        match_snapshot: MatchSnapshot,
     ) -> dict[int, Action]:
         """
         Return one action for each player currently on the field.

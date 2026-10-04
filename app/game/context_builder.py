@@ -5,60 +5,22 @@ This module translates the global match state into the player-relative
 state exposed through the Behavior API.
 """
 
-from typing import Protocol, Callable
-
-from app.game.constants import TIC_DURATION, COLLISION_PENALTY
+from app.game.models.match import MatchSnapshot
+from app.game.models.player_in_match import PlayerInMatchSnapshot
+from app.game.constants import TIC_DURATION
 from app.game.context import BehaviorContext
-from app.game.types import Position, Velocity, PlayerState, Side, Period
+from app.game.types import Side, Period
 from app.game.physics import (
     control_range,
     max_move_speed,
     max_kick_force,
+    effective_physical_value
 )
 
 
-class PlayerInMatchSnapshotLike(Protocol):
-    player_id: int
-
-    position: Position
-    velocity: Velocity
-    starting_position: Position | None
-
-    power: int
-    agility: int
-    control: int
-    speed: int
-    strength: int
-
-    current_behavior_id: int | None
-    is_on_field: bool
-
-    kick_cooldown_remaining: int
-    forced_wait_remaining: int
-    collision_penalty_remaining: int
-
-
-class BallSnapshotLike(Protocol):
-    position: Position
-    velocity: Velocity
-
-
-class MatchSnapshotLike(Protocol):
-    players_a: tuple[PlayerInMatchSnapshotLike, ...]
-    players_b: tuple[PlayerInMatchSnapshotLike, ...]
-
-    ball: BallSnapshotLike
-
-    duration_ticks: int
-    current_tick: int
-
-    score_a: int
-    score_b: int
-
-
 def build_behavior_context(
-        match_snapshot: MatchSnapshotLike,
-        player_snapshot: PlayerInMatchSnapshotLike,
+        match_snapshot: MatchSnapshot,
+        player_snapshot: PlayerInMatchSnapshot,
 ) -> BehaviorContext:
     """
     Build the BehaviorContext for a player from the current match snapshot.
@@ -136,7 +98,7 @@ def build_behavior_context(
     context_current_period = Period.FIRST_QUARTER
     context_period_time_remaining = context_match_time_remaining
 
-    context_control_range = _effective_physical_value(
+    context_control_range = effective_physical_value(
         player_snapshot.control,
         player_snapshot.collision_penalty_remaining,
         control_range,
@@ -144,13 +106,13 @@ def build_behavior_context(
 
     context_tics_until_kick = player_snapshot.kick_cooldown_remaining
 
-    context_max_move_speed = _effective_physical_value(
+    context_max_move_speed = effective_physical_value(
         player_snapshot.speed,
         player_snapshot.collision_penalty_remaining,
         max_move_speed,
     )
 
-    context_max_kick_force = _effective_physical_value(
+    context_max_kick_force = effective_physical_value(
         player_snapshot.power,
         player_snapshot.collision_penalty_remaining,
         max_kick_force,
@@ -177,10 +139,10 @@ def build_behavior_context(
 
 def _get_player_and_opponent_team(
     player_id: int,
-    match_snapshot: MatchSnapshotLike,
+    match_snapshot: MatchSnapshot,
 ) -> tuple[
-        tuple[PlayerInMatchSnapshotLike,...],
-        tuple[PlayerInMatchSnapshotLike,...]
+        tuple[PlayerInMatchSnapshot,...],
+        tuple[PlayerInMatchSnapshot,...]
     ]:
     """
     Return the player's team and the opposing team.
@@ -210,17 +172,3 @@ def _get_player_and_opponent_team(
         raise ValueError(f"Player {player_id} does not belong to this match")
 
     return player_team, opponent_team
-
-
-def _effective_physical_value(
-    pacss: int,
-    collision_penalty_remaining: int,
-    converter: Callable[[int], float],
-) -> float:
-    max_value = converter(pacss)
-
-    return(
-        max_value * COLLISION_PENALTY
-        if collision_penalty_remaining > 0
-        else max_value
-    )
