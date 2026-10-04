@@ -15,7 +15,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 from app.game.match_runner import (
     MatchRunner,
-    BehaviorExecutorProtocol,
+    BehaviorCoordinatorProtocol,
     GameEngineProtocol,
 )
 
@@ -245,20 +245,18 @@ async def test_broadcast_continues_if_one_websocket_fails():
 
 @pytest.mark.asyncio
 async def test_match_runner_sends_initial_state_and_tick_updates(match):
-    behavior_executor = MagicMock(
-        spec=BehaviorExecutorProtocol
+    behavior_coordinator = MagicMock(
+        spec=BehaviorCoordinatorProtocol
     )
 
-    behavior_executor.execute_all = AsyncMock(
-        return_value=["wait"] * 6
-    )
+    behavior_coordinator.get_actions.return_value = ["wait"] * 6
 
     game_engine = MagicMock(
         spec=GameEngineProtocol
     )
 
     runner = MatchRunner(
-        behavior_executor,
+        behavior_coordinator,
         game_engine,
     )
 
