@@ -170,6 +170,7 @@ def test_rejects_roster_with_behavior_from_another_club(
 
     behavior = MagicMock()
     behavior.club_id = 2
+    behavior.is_default = False
     mock_behavior_repository.get_by_id.return_value = behavior
 
     with pytest.raises(

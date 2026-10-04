@@ -1,7 +1,7 @@
 from sqlalchemy.orm import Session
+from sqlalchemy import select, func
 
 from app.models.friendly_game import FriendlyGame
-from app.models.friendly_game_participation import FriendlyGameParticipation
 
 from app.models.friendly_game_participation import (
     FriendlyGameParticipation,
@@ -38,3 +38,41 @@ def create_participation(
     db.flush()
 
     return participation
+
+
+def get_by_id(
+    db: Session,
+    friendly_game_id: int
+) -> FriendlyGame | None:
+
+    return db.get(FriendlyGame, friendly_game_id)
+
+
+def count_participations(
+    db: Session,
+    friendly_game_id: int
+) -> int:
+
+    return db.scalar(
+        select(func.count(FriendlyGameParticipation.id))
+        .where(
+            FriendlyGameParticipation.friendly_game_id
+            == friendly_game_id
+        )
+    ) or 0
+
+
+def get_participation_by_club(
+    db: Session,
+    friendly_game_id: int,
+    club_id: int
+) -> FriendlyGameParticipation | None:
+
+    return db.scalar(
+        select(FriendlyGameParticipation)
+        .where(
+            FriendlyGameParticipation.friendly_game_id
+            == friendly_game_id,
+            FriendlyGameParticipation.club_id == club_id,
+        )
+    )
