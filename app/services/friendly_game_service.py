@@ -336,7 +336,6 @@ async def start_friendly_game(
             )
 
         except Exception:
-            # if the match could not start, restore the previous state
             friendly_game_repository.update_state(
                 db=db,
                 friendly_game=friendly_game,
@@ -345,6 +344,30 @@ async def start_friendly_game(
 
             db.commit()
             raise
+
+
+        updated_friendly_game = (
+            friendly_game_repository.get_by_id(
+                db=db,
+                friendly_game_id=friendly_game_id,
+            )
+        )
+
+        lobby_state = build_friendly_game_lobby_state(
+            friendly_game=updated_friendly_game,
+            match_id=match_id,
+        )
+
+        await friendly_game_connection_manager.broadcast(
+            friendly_game_id,
+            lobby_state,
+        )
+        # after start match, close lobby of ws
+        await friendly_game_connection_manager.close_lobby(
+            friendly_game_id,
+            code=1000,
+            reason="Friendly game started",
+        )
 
         return match_id
 
