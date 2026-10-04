@@ -65,14 +65,15 @@ def create(
     response_model=FriendlyGameStartResponse,
     status_code=status.HTTP_200_OK,
 )
-def start(
+async def start(
     friendly_game_id: int,
     data: FriendlyGameUpdate,
     db: Session = Depends(get_db),
     current_user=Depends(get_current_user),
 ):
     try:
-        match_id = start_friendly_game(
+        # await the async match initialization before returning the generated match id
+        match_id = await start_friendly_game(
             db=db,
             friendly_game_id=friendly_game_id,
             user_id=current_user.id,
