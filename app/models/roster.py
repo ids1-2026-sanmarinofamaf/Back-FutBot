@@ -48,13 +48,15 @@ class Roster(Base):
                 "A roster must have exactly 3 starters and 3 substitutes"
             )
 
-        for i in range(len(self.players)):
-            for j in range(i + 1, len(self.players)):
-                if self.players[i].player_id == self.players[j].player_id:
-                    raise ValueError(
-                        "A roster cannot contain duplicate players"
-                    )
+        # no duplicate players
+        player_ids = [player.player_id for player in self.players]
 
+        if len(player_ids) != len(set(player_ids)):
+            raise ValueError(
+                "A roster cannot contain duplicate players"
+            )
+
+        # individual validations
         for player in self.players:
             if player.is_starter:
                 if player.slot is None:
@@ -66,6 +68,7 @@ class Roster(Base):
                     raise ValueError(
                         "A starter must have an initial behavior"
                     )
+
             else:
                 if player.slot is not None:
                     raise ValueError(
@@ -76,17 +79,16 @@ class Roster(Base):
                     raise ValueError(
                         "A substitute cannot have an initial behavior"
                     )
-                
-                for i in range(len(self.players)):
-                    if not self.players[i].is_starter:
-                        continue
 
-                    for j in range(i + 1, len(self.players)):
-                        if not self.players[j].is_starter:
-                            continue
+        # starter slots must be unique
+        starter_slots = [
+            player.slot
+            for player in self.players
+            if player.is_starter
+        ]
 
-                        if self.players[i].slot == self.players[j].slot:
-                            raise ValueError(
-                                "Starter roster slots must be unique"
-                            )
+        if len(starter_slots) != len(set(starter_slots)):
+            raise ValueError(
+                "Starter roster slots must be unique"
+            )
                     
