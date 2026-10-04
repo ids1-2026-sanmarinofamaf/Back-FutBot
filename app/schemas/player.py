@@ -18,7 +18,7 @@ class PlayerCreate(BaseModel):
     @model_validator(mode="after")
     def check_total_stats(self):
         total = self.power + self.agility + self.control + self.speed + self.strength
-        if total == MAX_TOTAL_STATS:
+        if total != MAX_TOTAL_STATS :
             raise ValueError(f"The sum of the stats cannot exceed {MAX_TOTAL_STATS} (got {total})")
         return self
 
