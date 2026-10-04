@@ -1,7 +1,8 @@
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
-from app.api import auth, users, sessions_websocket
+from app.api import auth, users, friendly_games, sessions_websocket
+
 
 from sqlalchemy import text
 
