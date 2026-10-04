@@ -1,4 +1,5 @@
 from sqlalchemy.orm import Session
+from app.database import SessionLocal
 
 from app.models.roster import Roster
 from app.models.player_on_roster import PlayerOnRoster
@@ -16,7 +17,10 @@ from app.game.models.ball import Ball
 from app.game.formations import FORMATION_POSITIONS
 from app.game.constants import FIELD_WIDTH, FIELD_HEIGHT
 
-from app.game.active_matches import register_match
+from app.services.match_service import (
+    load_match_behaviors,
+    start_match,
+)
 
 from app.repositories import (
     friendly_game_repository,
@@ -156,7 +160,7 @@ def create_friendly_game(db: Session, user_id: int, data: FriendlyGameCreate):
                 if behavior is None:
                     raise ValueError("Behavior does not exist")
 
-                if behavior.club_id != club.id:
+                if not behavior.is_default and behavior.club_id != club.id:
                     raise ValueError("Behavior does not belong to user's club")
 
         # save roster on db
@@ -189,7 +193,7 @@ def create_friendly_game(db: Session, user_id: int, data: FriendlyGameCreate):
         raise
 
 
-def start_friendly_game(
+async def start_friendly_game(
     db: Session,
     friendly_game_id: int,
     user_id: int,
@@ -203,26 +207,35 @@ def start_friendly_game(
         friendly_game = friendly_game_repository.get_by_id(db,friendly_game_id)
 
         if friendly_game is None:
-            raise FriendlyGameNotFoundError("Friendly game not found")
+            raise FriendlyGameNotFoundError(
+                "Friendly game not found"
+            )
 
         # get authenticated user club
-        club = club_repository.get_by_user_id(db, user_id)
-
+        club = club_repository.get_by_user_id(db,user_id)
+    
         # we verify that the person wishing to start the match is the creator.
         if (club is None or friendly_game.creator_id != club.id):
-            raise FriendlyGameForbiddenError("Only the host can start the friendly game")
-
+            raise FriendlyGameForbiddenError(
+                "Only the host can start the friendly game"
+            )
 
         if requested_state != FriendlyGameState.JUGANDO:
-            raise FriendlyGameForbiddenError("Invalid state transition")
+            raise FriendlyGameForbiddenError(
+                "Invalid state transition"
+            )
 
         # the friendly game must still be waiting to start
         if (friendly_game.state != FriendlyGameState.POR_COMENZAR):
-            raise FriendlyGameForbiddenError("Friendly game cannot be started")
+            raise FriendlyGameForbiddenError(
+                "Friendly game cannot be started"
+            )
 
         # exactly two participants are required
         if len(friendly_game.participations) != 2:
-            raise FriendlyGameForbiddenError("Friendly game must have exactly two participants")
+            raise FriendlyGameForbiddenError(
+                "Friendly game must have exactly two participants"
+            )
 
         # identify creator and guest explicitly instead of relying # on database ordering
         creator_participation = None
@@ -234,11 +247,9 @@ def start_friendly_game(
 
             elif participation.role == FriendlyGameRole.GUEST:
                 guest_participation = participation
+
         # verify no repeat role
-        if (
-            creator_participation is None
-            or guest_participation is None
-        ):
+        if (creator_participation is None or guest_participation is None):
             raise FriendlyGameForbiddenError(
                 "Friendly game participants are invalid"
             )
@@ -258,7 +269,7 @@ def start_friendly_game(
 
         # the ball begins at the center of the field and stopped.
         ball = Ball(
-            position=(FIELD_WIDTH / 2, FIELD_HEIGHT / 2),
+            position=(FIELD_WIDTH / 2,FIELD_HEIGHT / 2),
             velocity=(0.0, 0.0),
         )
 
@@ -270,26 +281,77 @@ def start_friendly_game(
             ball=ball,
             duration_ticks=friendly_game.duration,
         )
+        # load in memory the behaviors of the 2 clubs
+        behaviors = load_match_behaviors(
+            db=db,
+            match=match,
+        )
 
-        match_id = register_match(match)
-
-        # persist only the FriendlyGame state.
         friendly_game_repository.update_state(
             db=db,
             friendly_game=friendly_game,
             state=FriendlyGameState.JUGANDO,
         )
-
+        # persist the new state in the database
         db.commit()
+
+        # callback executed when the match finishes
+        async def on_finished(
+            finished_match: Match,
+        ) -> None:
+            await _finish_friendly_game(
+                friendly_game_id=friendly_game.id,
+            )
+
+        try:
+            # start the match execution in background
+            match_id = start_match(
+                match=match,
+                behaviors=behaviors,
+                on_finished=on_finished,
+            )
+
+        except Exception:
+            # if the match could not start, restore the previous state
+            friendly_game_repository.update_state(
+                db=db,
+                friendly_game=friendly_game,
+                state=FriendlyGameState.POR_COMENZAR,
+            )
+
+            db.commit()
+            raise
 
         return match_id
 
     except Exception:
+        # rollback any database changes if an error occurs
         db.rollback()
-        # if registration succeeded but DB commit failed,
-        # remove the runtime match so we don't leave inconsistent state.
-        if match_id is not None:
-            from app.game.active_matches import remove_match
-            remove_match(match_id)
-
         raise
+
+async def _finish_friendly_game(
+    friendly_game_id: int,
+) -> None:
+    # sessionlocal because this executes at the final of thew match
+    # and the http session maybe expires
+    with SessionLocal() as db:
+        try:
+            friendly_game = friendly_game_repository.get_by_id(
+                db,
+                friendly_game_id,
+            )
+
+            if friendly_game is None:
+                return
+
+            friendly_game_repository.update_state(
+                db=db,
+                friendly_game=friendly_game,
+                state=FriendlyGameState.FINALIZADO,
+            )
+
+            db.commit()
+
+        except Exception:
+            db.rollback()
+            raise
