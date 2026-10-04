@@ -10,6 +10,17 @@ def get_by_id(
 ) -> Behavior | None:
     return db.get(Behavior, behavior_id)
 
+def get_available_by_name(db: Session, club_id: int, name: str) -> Behavior | None:
+    return db.scalars(
+        select(Behavior)
+        .where(
+            Behavior.name == name,
+            or_(Behavior.is_default.is_(True), Behavior.club_id == club_id),
+        )
+        # si hay uno del club con el mismo nombre que un default, gana el del club
+        .order_by(Behavior.is_default.asc())
+    ).first()
+
 def get_available_for_club(db: Session, club_id: int) -> list[Behavior]:
     # global defaults are available to every club, plus the club's own behaviors
     return list(db.scalars(
