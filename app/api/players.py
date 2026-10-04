@@ -5,7 +5,9 @@ from sqlalchemy.orm import Session
 from app.api.deps import get_current_user
 from app.database import get_db
 from app.schemas.player import PlayerCreate, PlayerCreateResponse, PlayerResponse
-from app.services.player_service import create_player, get_player
+from app.services.player_service import create_player, get_player, list_players
+
+from app.models.player import Player
 
 router = APIRouter(
     prefix="/clubes/me/players",
@@ -59,3 +61,13 @@ def get_by_id(
 
     except LookupError as error:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(error))
+
+@router.get("",response_model=list[PlayerResponse])
+def get_players(
+    current_user = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    try:
+        return list_players(db=db, user_id=current_user.id)
+    except ValueError as error:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(error))

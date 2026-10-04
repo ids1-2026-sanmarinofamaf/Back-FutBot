@@ -1,12 +1,15 @@
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
-from app.api import auth, users, sessions_websocket
+from app.api import auth, users, friendly_games, sessions_websocket
+
 
 from sqlalchemy import text
 
 from app.database import engine
 from app.api import friendly_games, players
+from app.api import behaviors
+
 
 
 from app.api.friendly_game_websocket import router as friendly_game_websocket_router
@@ -42,6 +45,7 @@ app.include_router(auth.router)
 app.include_router(users.router)
 app.include_router(sessions_websocket.router)
 app.include_router(friendly_game_websocket_router)
+app.include_router(behaviors.router)
 
 
 @app.get("/")

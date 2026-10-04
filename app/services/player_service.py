@@ -53,3 +53,11 @@ def get_player(db: Session, user_id: int, player_id: int) -> Player:
         raise LookupError("Player not found")
 
     return player
+
+def list_players(db: Session, user_id: int) -> list[Player]:
+    club = club_repository.get_by_user_id(db, user_id)
+
+    if club is None:
+        raise ValueError("User does not have a club")
+
+    return player_repository.get_by_club_id(db, club.id)

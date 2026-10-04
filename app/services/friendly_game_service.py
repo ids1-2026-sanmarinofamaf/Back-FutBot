@@ -1,4 +1,5 @@
 from sqlalchemy.orm import Session
+from app.database import SessionLocal
 from sqlalchemy.exc import IntegrityError
 
 from app.models.roster import Roster
@@ -7,18 +8,117 @@ from app.models.player_on_roster import PlayerOnRoster
 from app.schemas.friendly_game import FriendlyGameCreate, FriendlyGameJoin
 from app.models.friendly_game import FriendlyGameState
 from app.models.friendly_game_participation import FriendlyGameRole
+
+from app.game.models.match import Match
+from app.game.models.match_participation import MatchParticipation
+from app.game.models.player_in_match import PlayerInMatch
+from app.game.models.ball import Ball
+
+from app.game.formations import FORMATION_POSITIONS
+from app.game.constants import FIELD_WIDTH, FIELD_HEIGHT, TICS_PER_SECOND
+
+from app.services.match_service import (
+    load_match_behaviors,
+    start_match,
+)
+
 from app.repositories import (
     friendly_game_repository,
     roster_repository,
     player_repository,
     behavior_repository,
-    club_repository
+    club_repository,
 )
-from app.services.friendly_game_websocket import (
+from app.services.friendly_game_websocket_service import (
     friendly_game_connection_manager,
     build_friendly_game_lobby_state,
 )
 
+# classes for distinguishing exceptions
+class FriendlyGameNotFoundError(Exception):
+    pass
+
+
+class FriendlyGameForbiddenError(Exception):
+    pass
+
+# helper for create playerInMatch
+def _create_player_in_match(
+    db: Session,
+    player_on_roster: PlayerOnRoster,
+    formation,
+    mirror_position: bool,
+) -> PlayerInMatch:
+    # obtain the player, which is useful for the PACSS
+    player = player_repository.get_by_id(db,player_on_roster.player_id)
+
+    if player is None:
+        raise ValueError("Player does not exist")
+
+    # substitutes do not have a starting field position
+    if not player_on_roster.is_starter:
+        starting_position = None
+        position = (0.0, 0.0)
+
+    else:
+        starting_position = FORMATION_POSITIONS[formation][player_on_roster.slot]
+
+        # FORMATION_POSITIONS defines one side of the field.
+        # The second team uses the mirrored coordinate.
+        if mirror_position:
+            starting_position = (
+                FIELD_WIDTH - starting_position[0],
+                starting_position[1],
+            )
+
+        position = starting_position
+    # build the playerInMatch
+    return PlayerInMatch(
+        player_id=player.id,
+
+        position=position,
+        velocity=(0.0, 0.0),
+
+        starting_position=starting_position,
+
+        power=player.power,
+        agility=player.agility,
+        control=player.control,
+        speed=player.speed,
+        strength=player.strength,
+
+        current_behavior_id=(
+            player_on_roster.initial_behavior_id
+            if player_on_roster.is_starter
+            else None
+        ),
+
+        is_on_field=player_on_roster.is_starter,
+    )
+
+def _create_match_participation(
+    db: Session,
+    friendly_participation,
+    mirror_position: bool,
+) -> MatchParticipation:
+
+    roster = friendly_participation.roster
+
+    players = [
+        _create_player_in_match(
+            db=db,
+            player_on_roster=player_on_roster,
+            formation=roster.formation,
+            mirror_position=mirror_position,
+        )
+        for player_on_roster in roster.players
+    ]
+
+    return MatchParticipation(
+        club_id=friendly_participation.club_id,
+        roster_id=friendly_participation.roster_id,
+        players=players,
+    )
 class FriendlyGameNotFound(Exception):
     pass
 
@@ -83,9 +183,7 @@ def create_friendly_game(db: Session, user_id: int, data: FriendlyGameCreate):
                     raise ValueError("Behavior does not exist")
 
                 if not behavior.is_default and behavior.club_id != club.id:
-                    raise ValueError(
-                        "Behavior does not belong to user's club"
-                    )
+                    raise ValueError("Behavior does not belong to user's club")
 
 
         # save roster on db
@@ -116,6 +214,172 @@ def create_friendly_game(db: Session, user_id: int, data: FriendlyGameCreate):
     except Exception:
         db.rollback()
         raise
+
+
+
+async def start_friendly_game(
+    db: Session,
+    friendly_game_id: int,
+    user_id: int,
+    requested_state: FriendlyGameState,
+) -> int:
+
+    match_id = None
+
+    try:
+        # get friendly game
+        friendly_game = friendly_game_repository.get_by_id(db,friendly_game_id)
+
+        if friendly_game is None:
+            raise FriendlyGameNotFoundError(
+                "Friendly game not found"
+            )
+
+        # get authenticated user club
+        club = club_repository.get_by_user_id(db,user_id)
+    
+        # we verify that the person wishing to start the match is the creator.
+        if (club is None or friendly_game.creator_id != club.id):
+            raise FriendlyGameForbiddenError(
+                "Only the host can start the friendly game"
+            )
+
+        if requested_state != FriendlyGameState.JUGANDO:
+            raise FriendlyGameForbiddenError(
+                "Invalid state transition"
+            )
+
+        # the friendly game must still be waiting to start
+        if (friendly_game.state != FriendlyGameState.POR_COMENZAR):
+            raise FriendlyGameForbiddenError(
+                "Friendly game cannot be started"
+            )
+
+        # exactly two participants are required
+        if len(friendly_game.participations) != 2:
+            raise FriendlyGameForbiddenError(
+                "Friendly game must have exactly two participants"
+            )
+
+        # identify creator and guest explicitly instead of relying # on database ordering
+        creator_participation = None
+        guest_participation = None
+
+        for participation in friendly_game.participations:
+            if participation.role == FriendlyGameRole.CREATOR:
+                creator_participation = participation
+
+            elif participation.role == FriendlyGameRole.GUEST:
+                guest_participation = participation
+
+        # verify no repeat role
+        if (creator_participation is None or guest_participation is None):
+            raise FriendlyGameForbiddenError(
+                "Friendly game participants are invalid"
+            )
+
+        # create the two runtime MatchParticipations
+        match_participation_a = _create_match_participation(
+            db=db,
+            friendly_participation=creator_participation,
+            mirror_position=False,
+        )
+
+        match_participation_b = _create_match_participation(
+            db=db,
+            friendly_participation=guest_participation,
+            mirror_position=True,
+        )
+
+        # the ball begins at the center of the field and stopped.
+        ball = Ball(
+            position=(FIELD_WIDTH / 2,FIELD_HEIGHT / 2),
+            velocity=(0.0, 0.0),
+        )
+
+        # match id is assigned by active_matches.
+        match = Match(
+            match_id=0,
+            participation_a=match_participation_a,
+            participation_b=match_participation_b,
+            ball=ball,
+            duration_ticks=friendly_game.duration * TICS_PER_SECOND,
+        )
+        # load in memory the behaviors of the 2 clubs
+        behaviors = load_match_behaviors(
+            db=db,
+            match=match,
+        )
+
+        friendly_game_repository.update_state(
+            db=db,
+            friendly_game=friendly_game,
+            state=FriendlyGameState.JUGANDO,
+        )
+        # persist the new state in the database
+        db.commit()
+
+        # callback executed when the match finishes
+        async def on_finished(
+            finished_match: Match,
+        ) -> None:
+            await _finish_friendly_game(
+                friendly_game_id=friendly_game.id,
+            )
+
+        try:
+            # start the match execution in background
+            match_id = start_match(
+                match=match,
+                behaviors=behaviors,
+                on_finished=on_finished,
+            )
+
+        except Exception:
+            # if the match could not start, restore the previous state
+            friendly_game_repository.update_state(
+                db=db,
+                friendly_game=friendly_game,
+                state=FriendlyGameState.POR_COMENZAR,
+            )
+
+            db.commit()
+            raise
+
+        return match_id
+
+    except Exception:
+        # rollback any database changes if an error occurs
+        db.rollback()
+        raise
+
+async def _finish_friendly_game(
+    friendly_game_id: int,
+) -> None:
+    # sessionlocal because this executes at the final of thew match
+    # and the http session maybe expires
+    with SessionLocal() as db:
+        try:
+            friendly_game = friendly_game_repository.get_by_id(
+                db,
+                friendly_game_id,
+            )
+
+            if friendly_game is None:
+                return
+
+            friendly_game_repository.update_state(
+                db=db,
+                friendly_game=friendly_game,
+                state=FriendlyGameState.FINALIZADO,
+            )
+
+            db.commit()
+
+        except Exception:
+            db.rollback()
+            raise
+
 
 async def join_friendly_game(
     db: Session,
