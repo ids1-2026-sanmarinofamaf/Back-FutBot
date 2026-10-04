@@ -51,6 +51,6 @@ async def broadcast_friendly_games(
 
     payload = build_friendly_games_payload(db)
 
-    await manager.broadcast_json(
+    await manager.broadcast(
         payload.model_dump(mode="json")
-    )
+    )   
