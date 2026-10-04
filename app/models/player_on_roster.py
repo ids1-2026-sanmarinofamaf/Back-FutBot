@@ -8,6 +8,12 @@ from app.database import Base
 
 from enum import Enum
 
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from app.models.behavior import Behavior
+    from app.models.roster import Roster
+
 
 class RosterSlot(str, Enum):
     LEFT = "left"
@@ -46,8 +52,15 @@ class PlayerOnRoster(Base):
         nullable=True
     )
 
+    initial_behavior: Mapped["Behavior | None"] = relationship(
+    "Behavior",
+    back_populates="players_on_roster"
+    )
+    
     roster: Mapped["Roster"] = relationship(            # relationship to the parent roster
         "Roster",
         back_populates="players"
     )
+
+
 
