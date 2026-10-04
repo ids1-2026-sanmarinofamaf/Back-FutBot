@@ -1,66 +1,162 @@
 import pytest
 
 from types import SimpleNamespace
-from unittest.mock import MagicMock, patch
 
 from fastapi.testclient import TestClient
 
 from app.main import app
-from app.database import get_db
+from app.database import SessionLocal
 from app.api.deps import get_current_user
 
-from app.models.roster import Formation
-from app.models.player_on_roster import RosterSlot
+from app.models.user import User
+from app.models.club import Club
+from app.models.player import Player
+from app.models.behavior import Behavior
 
-from app.services.friendly_game_service import (
-    FriendlyGameNotFound,
-    FriendlyGameNotAvailable,
-    FriendlyGameFull,
-    AlreadyParticipating,
-    InvalidRoster,
+from app.models.roster import Roster, Formation
+from app.models.player_on_roster import (
+    PlayerOnRoster,
+    RosterSlot,
+)
+
+from app.models.friendly_game import (
+    FriendlyGame,
+    FriendlyGameState,
+)
+
+from app.models.friendly_game_participation import (
+    FriendlyGameParticipation,
+    FriendlyGameRole,
 )
 
 
 client = TestClient(app)
 
-@pytest.fixture
-def valid_join_body():
+# Helpers
+
+def create_user_with_club(db, email, club_name):
+    user = User(
+        email=email,
+        hash_passwd="test_hash",
+    )
+
+    db.add(user)
+    db.flush()
+
+    club = Club(
+        user_id=user.id,
+        name=club_name,
+    )
+
+    db.add(club)
+    db.flush()
+
+    return user, club
+
+
+def create_players(db, club_id):
+    players = []
+
+    for i in range(6):
+        player = Player(
+            club_id=club_id,
+            name=f"Player {i + 1}",
+            power=60,
+            agility=60,
+            control=60,
+            speed=60,
+            strength=60,
+        )
+
+        db.add(player)
+        players.append(player)
+
+    db.flush()
+
+    return players
+
+
+def create_behaviors(db, club_id):
+    behaviors = []
+
+    for i in range(3):
+        behavior = Behavior(
+            club_id=club_id,
+            name=f"Behavior {i + 1}",
+            code="def play(): pass",
+        )
+
+        db.add(behavior)
+        behaviors.append(behavior)
+
+    db.flush()
+
+    return behaviors
+
+
+def create_creator_participation(
+    db,
+    friendly_game,
+    creator_club,
+):
+    creator_roster = Roster(
+        club_id=creator_club.id,
+        formation=Formation.DEFENSIVE,
+    )
+
+    db.add(creator_roster)
+    db.flush()
+
+    participation = FriendlyGameParticipation(
+        friendly_game_id=friendly_game.id,
+        club_id=creator_club.id,
+        roster_id=creator_roster.id,
+        role=FriendlyGameRole.CREATOR,
+    )
+
+    db.add(participation)
+    db.flush()
+
+    return participation
+
+
+def valid_join_body(players, behaviors):
     return {
         "roster": {
-            "formation": Formation.OFFENSIVE.value,
+            "formation": "offensive",
             "players": [
                 {
-                    "player_id": 1,
+                    "player_id": players[0].id,
                     "is_starter": True,
-                    "slot": RosterSlot.LEFT.value,
-                    "initial_behavior_id": 10,
+                    "slot": "left",
+                    "initial_behavior_id": behaviors[0].id,
                 },
                 {
-                    "player_id": 2,
+                    "player_id": players[1].id,
                     "is_starter": True,
-                    "slot": RosterSlot.CENTER.value,
-                    "initial_behavior_id": 11,
+                    "slot": "center",
+                    "initial_behavior_id": behaviors[1].id,
                 },
                 {
-                    "player_id": 3,
+                    "player_id": players[2].id,
                     "is_starter": True,
-                    "slot": RosterSlot.RIGHT.value,
-                    "initial_behavior_id": 12,
+                    "slot": "right",
+                    "initial_behavior_id": behaviors[2].id,
                 },
                 {
-                    "player_id": 4,
+                    "player_id": players[3].id,
                     "is_starter": False,
                     "slot": None,
                     "initial_behavior_id": None,
                 },
                 {
-                    "player_id": 5,
+                    "player_id": players[4].id,
                     "is_starter": False,
                     "slot": None,
                     "initial_behavior_id": None,
                 },
                 {
-                    "player_id": 6,
+                    "player_id": players[5].id,
                     "is_starter": False,
                     "slot": None,
                     "initial_behavior_id": None,
@@ -70,130 +166,408 @@ def valid_join_body():
     }
 
 
-@pytest.fixture
-def fake_db():
-    return MagicMock()
+
+# Fixture para dejar limpia la BD entre estos tests
+
+@pytest.fixture(autouse=True)
+def clean_join_database():
+    db = SessionLocal()
+
+    try:
+        db.query(PlayerOnRoster).delete()
+        db.query(FriendlyGameParticipation).delete()
+        db.query(Roster).delete()
+        db.query(FriendlyGame).delete()
+        db.query(Behavior).delete()
+        db.query(Player).delete()
+        db.query(Club).delete()
+        db.query(User).delete()
+
+        db.commit()
+
+        yield
+
+    finally:
+        db.rollback()
+
+        db.query(PlayerOnRoster).delete()
+        db.query(FriendlyGameParticipation).delete()
+        db.query(Roster).delete()
+        db.query(FriendlyGame).delete()
+        db.query(Behavior).delete()
+        db.query(Player).delete()
+        db.query(Club).delete()
+        db.query(User).delete()
+
+        db.commit()
+        db.close()
+
+        app.dependency_overrides.clear()
 
 
-@pytest.fixture
-def authenticated_client(fake_db):
-    fake_user = SimpleNamespace(id=5)
+# ---------------------------------------------------------
+# 1. JOIN válido
+# ---------------------------------------------------------
 
-    def override_get_current_user():
-        return fake_user
+def test_join_valid_friendly_game_persists_participation_and_roster():
+    db = SessionLocal()
 
-    def override_get_db():
-        yield fake_db
+    try:
+        # Creador
+        _, creator_club = create_user_with_club(
+            db,
+            "creator@test.com",
+            "Creator Club",
+        )
 
+        # Usuario que se va a unir
+        guest_user, guest_club = create_user_with_club(
+            db,
+            "guest@test.com",
+            "Guest Club",
+        )
+
+        guest_players = create_players(
+            db,
+            guest_club.id,
+        )
+
+        guest_behaviors = create_behaviors(
+            db,
+            guest_club.id,
+        )
+
+        # Amistoso disponible
+        friendly_game = FriendlyGame(
+            duration=1000,
+            creator_id=creator_club.id,
+            state=FriendlyGameState.POR_COMENZAR,
+        )
+
+        db.add(friendly_game)
+        db.flush()
+
+        create_creator_participation(
+            db,
+            friendly_game,
+            creator_club,
+        )
+
+        db.commit()
+
+        friendly_game_id = friendly_game.id
+        guest_user_id = guest_user.id
+        guest_club_id = guest_club.id
+
+        body = valid_join_body(
+            guest_players,
+            guest_behaviors,
+        )
+
+    finally:
+        db.close()
+
+    # Simulamos usuario autenticado.
     app.dependency_overrides[get_current_user] = (
-        override_get_current_user
+        lambda: SimpleNamespace(id=guest_user_id)
     )
 
-    app.dependency_overrides[get_db] = override_get_db
-
-    yield client
-
-    app.dependency_overrides.clear()
-
-@patch("app.api.friendly_games.join_friendly_game")
-def test_join_endpoint_success(
-    mock_join,
-    authenticated_client,
-    fake_db,
-    valid_join_body,
-):
-    participation = MagicMock()
-    participation.id = 40
-
-    roster = MagicMock()
-    roster.id = 20
-
-    mock_join.return_value = (
-        participation,
-        roster,
-    )
-
-    response = authenticated_client.post(
-        "/friendly_games/30/users",
-        json=valid_join_body,
+    # Petición REAL al endpoint.
+    response = client.post(
+        f"/friendly_games/{friendly_game_id}/users",
+        json=body,
     )
 
     assert response.status_code == 201
 
-    assert response.json() == {
-        "friendly_game_id": 30,
-        "participation_id": 40,
-        "roster_id": 20,
-    }
+    data = response.json()
 
-    kwargs = mock_join.call_args.kwargs
+    assert data["friendly_game_id"] == friendly_game_id
 
-    assert kwargs["db"] is fake_db
-    assert kwargs["friendly_game_id"] == 30
-    assert kwargs["user_id"] == 5
+    # Verificamos realmente la BD.
+    verify_db = SessionLocal()
 
-    assert (
-        kwargs["data"].roster.formation
-        == Formation.OFFENSIVE
+    try:
+        participation = verify_db.get(
+            FriendlyGameParticipation,
+            data["participation_id"],
+        )
+
+        roster = verify_db.get(
+            Roster,
+            data["roster_id"],
+        )
+
+        assert participation is not None
+        assert roster is not None
+
+        # Participación registrada correctamente.
+        assert participation.friendly_game_id == friendly_game_id
+        assert participation.club_id == guest_club_id
+        assert participation.role == FriendlyGameRole.GUEST
+        assert participation.roster_id == roster.id
+
+        # Plantilla registrada correctamente.
+        assert roster.club_id == guest_club_id
+        assert roster.formation == Formation.OFFENSIVE
+
+        assert len(roster.players) == 6
+
+        starters = [
+            player
+            for player in roster.players
+            if player.is_starter
+        ]
+
+        substitutes = [
+            player
+            for player in roster.players
+            if not player.is_starter
+        ]
+
+        assert len(starters) == 3
+        assert len(substitutes) == 3
+
+        assert {
+            player.slot
+            for player in starters
+        } == {
+            RosterSlot.LEFT,
+            RosterSlot.CENTER,
+            RosterSlot.RIGHT,
+        }
+
+    finally:
+        verify_db.close()
+
+
+# 2. Amistoso lleno
+
+def test_join_full_friendly_game_is_rejected():
+    db = SessionLocal()
+
+    try:
+        _, creator_club = create_user_with_club(
+            db,
+            "creator@test.com",
+            "Creator Club",
+        )
+
+        _, existing_guest_club = create_user_with_club(
+            db,
+            "existing@test.com",
+            "Existing Guest",
+        )
+
+        new_guest_user, new_guest_club = create_user_with_club(
+            db,
+            "newguest@test.com",
+            "New Guest",
+        )
+
+        new_guest_players = create_players(
+            db,
+            new_guest_club.id,
+        )
+
+        new_guest_behaviors = create_behaviors(
+            db,
+            new_guest_club.id,
+        )
+
+        friendly_game = FriendlyGame(
+            duration=1000,
+            creator_id=creator_club.id,
+            state=FriendlyGameState.POR_COMENZAR,
+        )
+
+        db.add(friendly_game)
+        db.flush()
+
+        create_creator_participation(
+            db,
+            friendly_game,
+            creator_club,
+        )
+
+        # Segunda participación: el cupo ya queda completo.
+        existing_guest_roster = Roster(
+            club_id=existing_guest_club.id,
+            formation=Formation.DEFENSIVE,
+        )
+
+        db.add(existing_guest_roster)
+        db.flush()
+
+        db.add(
+            FriendlyGameParticipation(
+                friendly_game_id=friendly_game.id,
+                club_id=existing_guest_club.id,
+                roster_id=existing_guest_roster.id,
+                role=FriendlyGameRole.GUEST,
+            )
+        )
+
+        db.commit()
+
+        friendly_game_id = friendly_game.id
+        new_guest_user_id = new_guest_user.id
+
+        body = valid_join_body(
+            new_guest_players,
+            new_guest_behaviors,
+        )
+
+        rosters_before = db.query(Roster).count()
+
+        participations_before = (
+            db.query(FriendlyGameParticipation).count()
+        )
+
+    finally:
+        db.close()
+
+    app.dependency_overrides[get_current_user] = (
+        lambda: SimpleNamespace(id=new_guest_user_id)
     )
-
-@patch("app.api.friendly_games.join_friendly_game")
-def test_join_without_token_returns_401(
-    mock_join,
-    valid_join_body,
-):
-    app.dependency_overrides.clear()
 
     response = client.post(
-        "/friendly_games/30/users",
-        json=valid_join_body,
+        f"/friendly_games/{friendly_game_id}/users",
+        json=body,
     )
 
-    assert response.status_code == 401
-    mock_join.assert_not_called()
+    assert response.status_code == 409
+    assert response.json()["detail"] == "Friendly game is full"
 
-@pytest.mark.parametrize(
-    "exception,expected_status",
-    [
-        (
-            FriendlyGameNotFound("Friendly game does not exist"),404),
-        (
-            FriendlyGameNotAvailable("Friendly game is not available"),409),
-        (
-            FriendlyGameFull("Friendly game is full"),409),
-        (
-            AlreadyParticipating("Already participating"),409),
-        (
-            InvalidRoster("Invalid roster"),400),
-    ],
-)
-@patch("app.api.friendly_games.join_friendly_game")
-def test_join_endpoint_maps_service_errors(
-    mock_join,
-    authenticated_client,
-    valid_join_body,
-    exception,
-    expected_status,
-):
-    mock_join.side_effect = exception
+    # Comprobamos que no se haya guardado nada.
+    verify_db = SessionLocal()
 
-    response = authenticated_client.post(
-        "/friendly_games/30/users",
-        json=valid_join_body,
+    try:
+        assert (
+            verify_db.query(Roster).count()
+            == rosters_before
+        )
+
+        assert (
+            verify_db.query(
+                FriendlyGameParticipation
+            ).count()
+            == participations_before
+        )
+
+    finally:
+        verify_db.close()
+
+# 3. Plantilla inválida/incompleta
+
+def test_join_with_invalid_roster_is_rejected_without_changes():
+    db = SessionLocal()
+
+    try:
+        _, creator_club = create_user_with_club(
+            db,
+            "creator@test.com",
+            "Creator Club",
+        )
+
+        guest_user, guest_club = create_user_with_club(
+            db,
+            "guest@test.com",
+            "Guest Club",
+        )
+
+        guest_players = create_players(
+            db,
+            guest_club.id,
+        )
+
+        guest_behaviors = create_behaviors(
+            db,
+            guest_club.id,
+        )
+
+        friendly_game = FriendlyGame(
+            duration=1000,
+            creator_id=creator_club.id,
+            state=FriendlyGameState.POR_COMENZAR,
+        )
+
+        db.add(friendly_game)
+        db.flush()
+
+        create_creator_participation(
+            db,
+            friendly_game,
+            creator_club,
+        )
+
+        db.commit()
+
+        friendly_game_id = friendly_game.id
+        guest_user_id = guest_user.id
+
+        state_before = friendly_game.state
+
+        rosters_before = db.query(Roster).count()
+
+        participations_before = (
+            db.query(FriendlyGameParticipation).count()
+        )
+
+        body = valid_join_body(
+            guest_players,
+            guest_behaviors,
+        )
+
+        # Hacemos inválida la plantilla:
+        # queda con sólo 5 jugadores.
+        body["roster"]["players"].pop()
+
+    finally:
+        db.close()
+
+    app.dependency_overrides[get_current_user] = (
+        lambda: SimpleNamespace(id=guest_user_id)
     )
 
-    assert response.status_code == expected_status
-
-@patch("app.api.friendly_games.join_friendly_game")
-def test_join_invalid_body_returns_422(
-    mock_join,
-    authenticated_client,
-):
-    response = authenticated_client.post(
-        "/friendly_games/30/users",
-        json={},
+    response = client.post(
+        f"/friendly_games/{friendly_game_id}/users",
+        json=body,
     )
 
-    assert response.status_code == 422
+    assert response.status_code == 400
 
-    mock_join.assert_not_called()
+    assert response.json()["detail"] == (
+        "A roster must have exactly 6 players"
+    )
+
+    # Verificamos que no haya modificaciones.
+    verify_db = SessionLocal()
+
+    try:
+        game_after = verify_db.get(
+            FriendlyGame,
+            friendly_game_id,
+        )
+
+        assert game_after is not None
+
+        # El partido sigue exactamente en el mismo estado.
+        assert game_after.state == state_before
+
+        # No se creó ninguna plantilla nueva.
+        assert (
+            verify_db.query(Roster).count()
+            == rosters_before
+        )
+
+        # No se creó ninguna participación nueva.
+        assert (
+            verify_db.query(
+                FriendlyGameParticipation
+            ).count()
+            == participations_before
+        )
+
+    finally:
+        verify_db.close()

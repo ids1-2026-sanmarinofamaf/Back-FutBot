@@ -1,6 +1,10 @@
-# app/repositories/behavior_repository.py
+from sqlalchemy.orm import Session
 
-def get_by_id(db, behavior_id: int):
-    raise NotImplementedError(
-        "behavior_repository.get_by_id is not implemented yet"
-    )
+from app.models.behavior import Behavior
+
+
+def get_by_id(
+    db: Session,
+    behavior_id: int,
+) -> Behavior | None:
+    return db.get(Behavior, behavior_id)
