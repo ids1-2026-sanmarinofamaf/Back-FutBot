@@ -7,7 +7,6 @@ from app.database import Base
 
 if TYPE_CHECKING:
     from app.models.user import User
-    from app.models.player import Player
 
 class Club(Base):
     __tablename__ = "clubs"
@@ -20,4 +19,3 @@ class Club(Base):
     avatar: Mapped[str] = mapped_column(String(50), nullable=False, default="default")
     
     user: Mapped["User"] = relationship(back_populates="club")
-    players: Mapped[list["Player"]] = relationship(back_populates="club", cascade="all, delete-orphan")
