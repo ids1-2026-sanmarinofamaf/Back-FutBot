@@ -14,3 +14,13 @@ def list_behaviors(db: Session, user_id: int) -> list[Behavior]:
         raise ValueError("User does not have a club")
 
     return behavior_repository.get_available_for_club(db, club.id)
+
+def get_behavior_by_name(db: Session, user_id: int, name: str) -> Behavior | None:
+
+    club = club_repository.get_by_user_id(db, user_id)
+
+    if club is None:
+        raise ValueError("User does not have a club")
+
+    return behavior_repository.get_available_by_name(db, club.id, name)
+
