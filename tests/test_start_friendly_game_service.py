@@ -41,7 +41,7 @@ def make_valid_friendly_game():
 
     friendly_game.id = 10
     friendly_game.creator_id = 1
-    friendly_game.duration = 1000
+    friendly_game.duration = 100
     friendly_game.state = FriendlyGameState.POR_COMENZAR
     friendly_game.participations = [
         creator_participation,

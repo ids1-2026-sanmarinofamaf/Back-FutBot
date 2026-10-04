@@ -15,7 +15,7 @@ from app.game.models.player_in_match import PlayerInMatch
 from app.game.models.ball import Ball
 
 from app.game.formations import FORMATION_POSITIONS
-from app.game.constants import FIELD_WIDTH, FIELD_HEIGHT
+from app.game.constants import FIELD_WIDTH, FIELD_HEIGHT, TICS_PER_SECOND
 
 from app.services.match_service import (
     load_match_behaviors,
@@ -279,7 +279,7 @@ async def start_friendly_game(
             participation_a=match_participation_a,
             participation_b=match_participation_b,
             ball=ball,
-            duration_ticks=friendly_game.duration,
+            duration_ticks=friendly_game.duration * TICS_PER_SECOND,
         )
         # load in memory the behaviors of the 2 clubs
         behaviors = load_match_behaviors(
