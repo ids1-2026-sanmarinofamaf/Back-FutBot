@@ -7,7 +7,7 @@ from app.api import auth, users, friendly_games, sessions_websocket
 from sqlalchemy import text
 
 from app.database import engine
-from app.api import friendly_games
+from app.api import friendly_games, players
 
 
 
@@ -50,4 +50,5 @@ def root():
 
 
 app.include_router(friendly_games.router)
+app.include_router(players.router)
 app.include_router(match_websocket_router)
