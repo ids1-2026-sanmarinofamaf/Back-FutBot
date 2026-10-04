@@ -1,6 +1,7 @@
 """Physics calculations used by the game simulation."""
 
 from math import hypot, isclose, sqrt
+from typing import Callable
 
 from .types import Direction, Velocity, Position, BallState
 from .constants import (
@@ -17,8 +18,56 @@ from .constants import (
     MIN_BALL_DECELERATION,
     MAX_BALL_DECELERATION,
     KICK_INERTIA_FACTOR,
-    BALL_STOP_THRESHOLD
+    BALL_STOP_THRESHOLD,
+    COLLISION_PENALTY,
 )
+
+
+def distance(from_position: Position, to_position: Position) -> float:
+    """
+    Return the distance between two positions.
+
+    Args:
+        from_position: origin position.
+        to_position: destination position.
+    Returns:
+        Distance between the two positions.
+    """
+    # Calculates the difference along each axis to use as input for hypot().
+    delta_x = to_position[0] - from_position[0]
+    delta_y = to_position[1] - from_position[1]
+
+    # Hypot(x,y) calculates the Euclidean distance between x and y
+    return hypot(delta_x, delta_y)
+
+
+def direction_to(from_position: Position, to_position: Position) -> Direction:
+    """
+    Return a unit direction vector from the origin position to the target position.
+
+    Args:
+        from_position: origin position.
+        to_position: target position.
+    Returns:
+        Unit direction vector to the target.
+    Raises:
+        ValueError: If both position are identical.
+    """
+    distance_to_target = distance(from_position, to_position)
+    # Handle error when from_position = to_position
+    if distance_to_target == 0.0:
+        raise ValueError("Cannot calculate direction between identical positions.")
+    
+    # Calculates the difference along each axis to use to normalize vector.
+    delta_x = to_position[0] - from_position[0]
+    delta_y = to_position[1] - from_position[1]
+
+    # Return the normalize vector
+    return (
+        delta_x/distance_to_target, 
+        delta_y/distance_to_target
+    )
+
 
 def max_move_speed(speed: int) -> float:
     """
@@ -260,6 +309,87 @@ def calculate_kick_force_factor(
     return high
 
 
+def calculate_ball_state_after(
+    ball_state: BallState,
+    duration: float,
+) -> BallState:
+    """
+    Calculate the ball state after a given duration while applying
+    deceleration.
+
+    Args:
+        ball_state: Current ball position and velocity.
+        duration: Time interval in seconds.
+
+    Returns:
+        Ball position and velocity after the given duration.
+    """
+    position, velocity = ball_state
+
+    speed = _vector_magnitude(velocity)
+
+    if speed <= BALL_STOP_THRESHOLD:
+        return (
+            position,
+            (0.0, 0.0),
+        )
+
+    deceleration = _ball_deceleration(speed)
+
+    # v1 = max(v0 - a * Δt, 0)
+    next_speed = max(
+        speed - deceleration * duration,
+        0.0,
+    )
+
+    if next_speed <= BALL_STOP_THRESHOLD:
+        next_speed = 0.0
+
+    # Unit vector in the current movement direction.
+    direction = (
+        velocity[0] / speed,
+        velocity[1] / speed,
+    )
+
+    # v_avg = (v0 + v1) / 2
+    average_speed = (
+        speed + next_speed
+    ) / 2
+
+    # ΔP = direction * v_avg * Δt
+    displacement = (
+        average_speed * duration
+    )
+
+    next_position = (
+        position[0] + direction[0] * displacement,
+        position[1] + direction[1] * displacement,
+    )
+
+    # V1 = direction * v1
+    next_velocity = (
+        direction[0] * next_speed,
+        direction[1] * next_speed,
+    )
+
+    return (
+        next_position,
+        next_velocity,
+    )
+
+
+def calculate_ball_next_state(
+    ball_state: BallState,
+) -> BallState:
+    """
+    Calculate the ball state after one simulation tic.
+    """
+    return calculate_ball_state_after(
+        ball_state,
+        TIC_DURATION,
+    )
+
+
 def calculate_ball_next_position(ball_state: BallState) -> Position:
     """
     Calculate the ball position after one tic.
@@ -274,39 +404,11 @@ def calculate_ball_next_position(ball_state: BallState) -> Position:
     Returns:
         Predicted ball position after one tic.
     """
-    position, velocity = ball_state
-
-    speed = _vector_magnitude(velocity)
-
-    if speed <= BALL_STOP_THRESHOLD:
-        return position
-
-    deceleration = _ball_deceleration(speed)
-
-    new_speed = max(
-        speed - deceleration * TIC_DURATION,
-        0.0,
+    next_position, _ = calculate_ball_next_state(
+        ball_state
     )
 
-    if new_speed <= BALL_STOP_THRESHOLD:
-        new_speed = 0.0
-
-    # Unit vector in the current direction of movement.
-    direction = (
-        velocity[0] / speed,
-        velocity[1] / speed,
-    )
-
-    # We use the average speed during the tic to approximate
-    # the displacement while the ball is decelerating.
-    average_speed = (speed + new_speed) / 2
-
-    displacement = average_speed * TIC_DURATION
-
-    return (
-        position[0] + direction[0] * displacement,
-        position[1] + direction[1] * displacement,
-    )
+    return next_position
 
 
 def validate_distance(distance: float) -> None:
@@ -358,6 +460,124 @@ def validate_factor(factor: float) -> None:
     """
     if not 0.0 <= factor <= 1.0:
         raise ValueError("Factor must be between 0.0 and 1.0.")
+
+
+def effective_physical_value(
+    pacss: int,
+    collision_penalty_remaining: int,
+    converter: Callable[[int], float],
+) -> float:
+    max_value = converter(pacss)
+
+    return(
+        max_value * COLLISION_PENALTY
+        if collision_penalty_remaining > 0
+        else max_value
+    )
+
+
+def collision_time(
+    start_a: Position,
+    end_a: Position,
+    radius_a: float,
+    start_b: Position,
+    end_b: Position,
+    radius_b: float,
+) -> float | None:
+    """
+    Return the first normalized time in [0, 1] at which two moving
+    circular objects collide.
+
+    Returns:
+        First collision time in [0, 1], or None if no collision occurs.
+    """
+    relative_start = (
+        start_a[0] - start_b[0],
+        start_a[1] - start_b[1],
+    )
+
+    movement_a = _displacement(start_a, end_a)
+    movement_b = _displacement(start_b, end_b)
+
+    relative_movement = (
+        movement_a[0] - movement_b[0],
+        movement_a[1] - movement_b[1],
+    )
+
+    collision_distance = radius_a + radius_b
+
+    # |R0 + Vt|² = (ra + rb)²
+    # => at² + bt + c = 0
+    a = _vector_magnitude(relative_movement) ** 2
+    b = 2 * _dot_product(relative_start, relative_movement)
+    c = (
+        _vector_magnitude(relative_start) ** 2
+        - collision_distance ** 2
+    )
+
+    # R0 · V < 0 -> approaching
+    if c <= 0:
+        if _dot_product(relative_start, relative_movement) < 0:
+            return 0.0
+
+        return None
+
+    if isclose(a, 0.0):
+        return None
+
+    # Δ = b² - 4ac
+    discriminant = b ** 2 - 4 * a * c
+
+    if discriminant < 0:
+        return None
+
+    # t = (-b - √Δ) / 2a
+    first_collision = (
+        -b - sqrt(discriminant)
+    ) / (2 * a)
+
+    if 0.0 <= first_collision <= 1.0:
+        return first_collision
+
+    return None
+
+
+def position_at_time(
+    start: Position,
+    end: Position,
+    time: float,
+) -> Position:
+    """
+    Return the position along a linear trajectory at normalized time [0, 1].
+    """
+    # P(t) = P0 + t(P1 - P0)
+    return (
+        start[0] + time * (end[0] - start[0]),
+        start[1] + time * (end[1] - start[1]),
+    )
+
+
+def calculate_kick_velocity(
+    ball_velocity: Velocity,
+    kick_direction: Direction,
+    kick_force: float,
+) -> Velocity:
+    """
+    Calculate the ball velocity immediately after a kick.
+
+    Formula:
+        V = direction * speed
+    """
+    speed = _kick_initial_speed(
+        ball_velocity,
+        kick_direction,
+        kick_force,
+    )
+
+    return (
+        kick_direction[0] * speed,
+        kick_direction[1] * speed,
+    )
 
 
 def _validate_pacss(pacss: int) -> None:
@@ -412,6 +632,22 @@ def _interpolate_pacss(
     return minimum + _smoothstep(pacss) * (maximum - minimum)
 
 
+def _displacement(
+    from_position: Position,
+    to_position: Position,
+) -> tuple[float, float]:
+    """
+    Return the displacement vector from one position to another.
+
+    Formula:
+        ΔP = P1 - P0
+    """
+    return (
+        to_position[0] - from_position[0],
+        to_position[1] - from_position[1],
+    )
+
+
 def _dot_product(
     vector_a: tuple[float, float],
     vector_b: tuple[float, float],
@@ -419,12 +655,8 @@ def _dot_product(
     """
     Calculate the dot product between two 2D vectors.
 
-    Args:
-        vector_a: First 2D vector.
-        vector_b: Second 2D vector.
-
-    Returns:
-        Dot product of the two vectors.
+    Formula:
+        a · b = ax * bx + ay * by
     """
     return (
         vector_a[0] * vector_b[0]
@@ -436,11 +668,8 @@ def _vector_magnitude(vector: tuple[float, float]) -> float:
     """
     Calculate the magnitude of a 2D vector.
 
-    Args:
-        vector: Two-dimensional vector.
-
-    Returns:
-        Magnitude of the vector.
+    Formula:
+        |v| = sqrt(vx² + vy²)
     """
     return sqrt(vector[0] ** 2 + vector[1] ** 2)
 
