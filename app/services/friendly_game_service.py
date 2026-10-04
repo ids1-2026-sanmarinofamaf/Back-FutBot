@@ -22,6 +22,8 @@ from app.services.match_service import (
     start_match,
 )
 
+from app.services import session_websocket_service
+
 from app.repositories import (
     friendly_game_repository,
     roster_repository,
@@ -370,10 +372,14 @@ async def _finish_friendly_game(
             )
 
             db.commit()
+            # when a match ends, it should no longer appear in the list
+            await (session_websocket_service.broadcast_friendly_games(db))
 
         except Exception:
             db.rollback()
             raise
+
+
 def join_friendly_game(
     db: Session,
     friendly_game_id: int,
