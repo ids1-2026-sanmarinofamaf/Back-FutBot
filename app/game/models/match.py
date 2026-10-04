@@ -4,6 +4,7 @@ from enum import Enum
 from app.game.models.ball import Ball, BallSnapshot
 from app.game.models.match_participation import MatchParticipation
 from app.game.models.player_in_match import PlayerInMatchSnapshot
+from app.game.types import Side
 
 class MatchState(str, Enum):
     NOT_STARTED = "not_started"
@@ -24,6 +25,8 @@ class MatchSnapshot:
     score_a: int
     score_b: int
 
+    last_conceding_side: Side | None
+
 @dataclass  # non-persistent class
 class Match:
     match_id: int   # it will be used for WebSockets.
@@ -34,6 +37,8 @@ class Match:
     duration_ticks: int  # total duration of the match expressed in simulation ticks
 
     current_tick: int = 0
+
+    last_conceding_side: Side | None = None
 
     state: MatchState = MatchState.NOT_STARTED
 
@@ -56,4 +61,6 @@ class Match:
             # we get the scores of each team at a ceratin tick
             score_a=self.participation_a.goals,
             score_b=self.participation_b.goals,
+
+            last_conceding_side=self.last_conceding_side
         )

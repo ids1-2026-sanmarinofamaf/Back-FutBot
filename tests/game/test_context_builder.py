@@ -7,7 +7,6 @@ import pytest
 
 from app.game.constants import COLLISION_PENALTY, TIC_DURATION
 from app.game.context_builder import (
-    _effective_physical_value,
     _get_player_and_opponent_team,
     build_behavior_context,
 )
@@ -15,6 +14,7 @@ from app.game.physics import (
     control_range,
     max_kick_force,
     max_move_speed,
+    effective_physical_value,
 )
 from app.game.types import Period, Side
 
@@ -81,7 +81,7 @@ def test_effective_physical_value_returns_full_value_without_penalty(
     converter,
     pacss,
 ):
-    value = _effective_physical_value(
+    value = effective_physical_value(
         pacss,
         0,
         converter,
@@ -105,7 +105,7 @@ def test_effective_physical_value_applies_collision_penalty(
     converter,
     pacss,
 ):
-    value = _effective_physical_value(
+    value = effective_physical_value(
         pacss,
         10,
         converter,
