@@ -9,7 +9,7 @@ from app.database import engine
 from app.api import friendly_games, players
 
 
-
+from app.api.friendly_game_websocket import router as friendly_game_websocket_router
 from app.api.match_websocket import router as match_websocket_router
 
 
@@ -41,6 +41,7 @@ app.add_middleware(
 app.include_router(auth.router)
 app.include_router(users.router)
 app.include_router(sessions_websocket.router)
+app.include_router(friendly_game_websocket_router)
 
 
 @app.get("/")

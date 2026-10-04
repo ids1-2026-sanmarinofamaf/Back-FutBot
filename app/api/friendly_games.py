@@ -61,14 +61,14 @@ def create(
     response_model=FriendlyGameJoinResponse,
     status_code=status.HTTP_201_CREATED
 )
-def join(
+async def join(
     friendly_game_id: int,
     data: FriendlyGameJoin,
     db: Session = Depends(get_db),
     current_user = Depends(get_current_user),
 ):
     try:
-        participation, roster = join_friendly_game(
+        participation, roster = await join_friendly_game(
             db=db,
             friendly_game_id=friendly_game_id,
             user_id=current_user.id,

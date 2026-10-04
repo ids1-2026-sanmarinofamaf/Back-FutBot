@@ -14,6 +14,10 @@ from app.repositories import (
     behavior_repository,
     club_repository
 )
+from app.services.friendly_game_websocket import (
+    friendly_game_connection_manager,
+    build_friendly_game_lobby_state,
+)
 
 class FriendlyGameNotFound(Exception):
     pass
@@ -113,7 +117,7 @@ def create_friendly_game(db: Session, user_id: int, data: FriendlyGameCreate):
         db.rollback()
         raise
 
-def join_friendly_game(
+async def join_friendly_game(
     db: Session,
     friendly_game_id: int,
     user_id: int,
@@ -230,6 +234,14 @@ def join_friendly_game(
         )
 
         db.commit()
+        # we get the data from friendly game updates
+        updated_friendly_game = (friendly_game_repository.get_by_id(db=db,friendly_game_id=friendly_game_id))
+
+        # match id is none because we didnt create a match yet
+        lobby_state = build_friendly_game_lobby_state(friendly_game=updated_friendly_game,match_id=None)
+
+        # send the info to the connections
+        await friendly_game_connection_manager.broadcast(friendly_game_id,lobby_state)
 
         return participation, roster
 
