@@ -316,8 +316,10 @@ async def start_friendly_game(
             friendly_game=friendly_game,
             state=FriendlyGameState.JUGANDO,
         )
+
         # persist the new state in the database
         db.commit()
+
 
         # callback executed when the match finishes
         async def on_finished(
@@ -326,6 +328,7 @@ async def start_friendly_game(
             await _finish_friendly_game(
                 friendly_game_id=friendly_game.id,
             )
+
 
         try:
             # start the match execution in background
@@ -336,6 +339,8 @@ async def start_friendly_game(
             )
 
         except Exception:
+            # the match could not be started,
+            # so we restore the previous state.
             friendly_game_repository.update_state(
                 db=db,
                 friendly_game=friendly_game,
@@ -346,28 +351,28 @@ async def start_friendly_game(
             raise
 
 
-        updated_friendly_game = (
-            friendly_game_repository.get_by_id(
-                db=db,
-                friendly_game_id=friendly_game_id,
+        # the match is already running.
+        # a websocket error should not invalidate the match.
+        try:
+            lobby_state = build_friendly_game_lobby_state(
+                friendly_game=friendly_game,
+                match_id=match_id,
             )
-        )
 
-        lobby_state = build_friendly_game_lobby_state(
-            friendly_game=updated_friendly_game,
-            match_id=match_id,
-        )
+            await friendly_game_connection_manager.broadcast(
+                friendly_game_id,
+                lobby_state,
+            )
 
-        await friendly_game_connection_manager.broadcast(
-            friendly_game_id,
-            lobby_state,
-        )
-        # after start match, close lobby of ws
-        await friendly_game_connection_manager.close_lobby(
-            friendly_game_id,
-            code=1000,
-            reason="Friendly game started",
-        )
+            # after starting the match, close the lobby websocket.
+            await friendly_game_connection_manager.close_lobby(
+                friendly_game_id,
+                code=1000,
+                reason="Friendly game started",
+            )
+
+        except Exception:
+            pass
 
         return match_id
 
