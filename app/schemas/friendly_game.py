@@ -31,3 +31,15 @@ class FriendlyGameJoinResponse(BaseModel):
     friendly_game_id: int
     participation_id: int
     roster_id: int
+
+# websocket
+class FriendlyGameSessionItem(BaseModel):
+    friendly_game_id: int
+    creator_club_name: str
+    current_participants: int
+    capacity: int = 2
+    state: FriendlyGameState
+
+
+class FriendlyGamesSessionPayload(BaseModel):
+    friendly_games: list[FriendlyGameSessionItem]

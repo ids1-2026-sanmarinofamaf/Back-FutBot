@@ -77,15 +77,15 @@ def test_connect_with_valid_token_receives_welcome(user):
     token = create_access_token(user.email)
     # websocket_connect abre la conexión; el "with" la cierra solo al salir del bloque
     with client.websocket_connect(ws_url(token)) as ws:
-        # Lo primero que hace el endpoint al conectar es mandar "Bienvenido"
-        assert ws.receive_text() == "Bienvenido"
+        # Lo primero que hace el endpoint al conectar es mandar el estado actual de los partidos amistosos
+        assert ws.receive_json() == {"friendly_games": []}
 
 
 def test_connected_user_is_registered_in_manager(user):
     token = create_access_token(user.email)
     with client.websocket_connect(ws_url(token)) as ws:
-        # Leemos el saludo: así nos aseguramos de que manager.connect() ya se ejecutó
-        ws.receive_text()
+        # Leemos el estado inicial: así nos aseguramos de que manager.connect() ya se ejecutó
+        ws.receive_json()
         # El manager guarda las conexiones por id de usuario
         assert user.id in manager.active
         # Con una sola pestaña abierta, el usuario tiene exactamente una conexión
@@ -95,31 +95,36 @@ def test_connected_user_is_registered_in_manager(user):
 def test_disconnect_removes_user_from_manager(user):
     token = create_access_token(user.email)
     with client.websocket_connect(ws_url(token)) as ws:
-        ws.receive_text()
+        ws.receive_json()
     # Al salir del "with" el cliente cierra la conexión: el servidor recibe
     # WebSocketDisconnect y el "finally" del endpoint llama a manager.disconnect()
     assert user.id not in manager.active
 
 
-def test_client_messages_are_ignored_and_connection_stays_open(user):
+def test_client_messages_close_connection(user):
     token = create_access_token(user.email)
     with client.websocket_connect(ws_url(token)) as ws:
-        ws.receive_text()
-        # El endpoint lee lo que manda el cliente pero no hace nada con eso
+        ws.receive_json()
+        # Si el cliente envía información, el endpoint cierra la conexión por violar el contrato server -> client
         ws.send_text("hola")
-        ws.send_text("chau")
-        # Si la conexión se hubiera roto, el usuario ya no estaría en el manager
-        assert user.id in manager.active
+
+        with pytest.raises(WebSocketDisconnect) as exc:
+            ws.receive_text()
+
+        assert exc.value.code == POLICY_VIOLATION
+
+    # Como la conexión fue cerrada, el usuario ya no debe estar registrado en el manager
+    assert user.id not in manager.active
 
 
 def test_same_user_with_two_tabs(user):
     token = create_access_token(user.email)
     # Abrimos la primera "pestaña"
     with client.websocket_connect(ws_url(token)) as tab1:
-        tab1.receive_text()
+        tab1.receive_json()
         # Abrimos la segunda "pestaña" con el mismo usuario
         with client.websocket_connect(ws_url(token)) as tab2:
-            tab2.receive_text()
+            tab2.receive_json()
             # El mismo usuario tiene dos conexiones guardadas
             assert len(manager.active[user.id]) == 2
         # Cerramos la segunda: el usuario sigue conectado por la primera
@@ -211,7 +216,7 @@ class FakeWebSocket:
     async def accept(self):
         self.accepted = True
 
-    async def send_text(self, message):
+    async def send_json(self, message):
         # Una conexión caída falla al intentar mandarle algo
         if self.broken:
             raise RuntimeError("conexion caida")
@@ -244,11 +249,11 @@ def test_broadcast_reaches_every_connection():
     asyncio.run(m.connect(1, tab1))
     asyncio.run(m.connect(1, tab2))
     asyncio.run(m.connect(2, other))
-    asyncio.run(m.broadcast("arranca el partido"))
+    asyncio.run(m.broadcast({"event": "arranca el partido"}))
     # Las tres conexiones recibieron el mensaje
-    assert tab1.sent == ["arranca el partido"]
-    assert tab2.sent == ["arranca el partido"]
-    assert other.sent == ["arranca el partido"]
+    assert tab1.sent == [{"event": "arranca el partido"}]
+    assert tab2.sent == [{"event": "arranca el partido"}]
+    assert other.sent == [{"event": "arranca el partido"}]
 
 
 def test_broadcast_removes_broken_connection_and_keeps_the_rest():
@@ -258,9 +263,9 @@ def test_broadcast_removes_broken_connection_and_keeps_the_rest():
     asyncio.run(m.connect(1, ok))
     asyncio.run(m.connect(2, broken))
     # Aunque una conexión falle, broadcast no debe lanzar la excepción
-    asyncio.run(m.broadcast("hola"))
+    asyncio.run(m.broadcast({"event": "hola"}))
     # La conexión sana recibió el mensaje
-    assert ok.sent == ["hola"]
+    assert ok.sent == [{"event": "hola"}]
     # La caída se sacó del manager (y como era la única del usuario 2, se borró el usuario)
     assert 2 not in m.active
     # El usuario 1 no se vio afectado
