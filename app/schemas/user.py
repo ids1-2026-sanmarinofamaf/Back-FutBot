@@ -7,11 +7,17 @@ class UserCreate(BaseModel):
     email: EmailStr
     password: str = Field(min_length=6, max_length=30, pattern=r"^[A-Za-z0-9]+$")
     club_name: str = Field(min_length=3, max_length=30, pattern=r"^[^0-9]+$")
-    avatar: str = Field(description="Imagen PNG o JPG codificada en Base64")
+    avatar: str | None = Field(
+        default=None,
+        description="Imagen PNG o JPG codificada en Base64. Si no se envia, el club usa el avatar por defecto",
+    )
 
     @field_validator("avatar") # Permite escribir tu propia regla de validación para un campo
     @classmethod
-    def validar_avatar(cls, v: str) -> str:
+    def validar_avatar(cls, v: str | None) -> str | None:
+        # Sin avatar (null o "") se usa el placeholder por defecto
+        if not v:
+            return None
         try:
             data = base64.b64decode(v, validate=True)
         except binascii.Error:

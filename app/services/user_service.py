@@ -4,7 +4,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.core import security
-from app.models.club import Club
+from app.models.club import DEFAULT_AVATAR, Club
 from app.models.user import User
 from app.repositories import user_repository
 from app.schemas.user import UserCreate
@@ -29,7 +29,7 @@ def register_user(db: Session, data: UserCreate) -> User:
         hash_passwd=security.get_password_hash(data.password),
     )
     # El cascade de User.club persiste el club junto con el usuario
-    user.club = Club(name=data.club_name, avatar=data.avatar)
+    user.club = Club(name=data.club_name, avatar=data.avatar or DEFAULT_AVATAR)
 
     try:
         user_repository.create(db, user)

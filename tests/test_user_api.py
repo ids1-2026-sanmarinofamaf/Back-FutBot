@@ -8,7 +8,7 @@ from sqlalchemy.exc import OperationalError
 from app.core.security import verify_password
 from app.database import SessionLocal
 from app.main import app
-from app.models.club import Club
+from app.models.club import DEFAULT_AVATAR, Club
 from app.models.user import User
 from app.repositories import user_repository
 
@@ -91,7 +91,30 @@ def test_duplicate_email_returns_409_and_does_not_create_another_user():
     assert count_users() == (1, 1)
 
 
-@pytest.mark.parametrize("missing", ["email", "password", "club_name", "avatar"])
+@pytest.mark.parametrize("avatar", [None, ""])
+def test_register_without_avatar_uses_default(avatar):
+    response = client.post("/users", json=valid_body(avatar=avatar))
+    assert response.status_code == 201
+    db = SessionLocal()
+    try:
+        assert user_repository.get_by_email(db, EMAIL).club.avatar == DEFAULT_AVATAR
+    finally:
+        db.close()
+
+
+def test_register_with_avatar_omitted_uses_default():
+    body = valid_body()
+    del body["avatar"]
+    response = client.post("/users", json=body)
+    assert response.status_code == 201
+    db = SessionLocal()
+    try:
+        assert user_repository.get_by_email(db, EMAIL).club.avatar == DEFAULT_AVATAR
+    finally:
+        db.close()
+
+
+@pytest.mark.parametrize("missing", ["email", "password", "club_name"])
 def test_incomplete_body_returns_422(missing):
     body = valid_body()
     del body[missing]

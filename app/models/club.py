@@ -10,6 +10,9 @@ if TYPE_CHECKING:
     from app.models.behavior import Behavior
     from app.models.player import Player
 
+# Placeholder que se guarda cuando el usuario no elige avatar; el frontend muestra su imagen por defecto
+DEFAULT_AVATAR = "default"
+
 class Club(Base):
     __tablename__ = "clubs"
     id: Mapped[int] = mapped_column(primary_key=True)
@@ -18,7 +21,7 @@ class Club(Base):
         unique=True, nullable=False,  # unique enforces the one-to-one relation in the database
     )
     name: Mapped[str] = mapped_column(String(30), nullable=False) 
-    avatar: Mapped[str] = mapped_column(Text, nullable=False, default="default")
+    avatar: Mapped[str] = mapped_column(Text, nullable=False, default=DEFAULT_AVATAR)
     
     user: Mapped["User"] = relationship(back_populates="club")
     behaviors: Mapped[list["Behavior"]] = relationship(back_populates="club", cascade="all, delete-orphan")
