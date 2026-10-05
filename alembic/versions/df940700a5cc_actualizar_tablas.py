@@ -1,7 +1,7 @@
 """actualizar tablas
 
 Revision ID: df940700a5cc
-Revises: ff55415854f4
+Revises: 8aed4417a1f6
 Create Date: 2026-10-04 21:09:23.129722
 
 """
@@ -13,7 +13,7 @@ import sqlalchemy as sa
 
 # revision identifiers, used by Alembic.
 revision: str = 'df940700a5cc'
-down_revision: Union[str, Sequence[str], None] = 'ff55415854f4'
+down_revision: Union[str, Sequence[str], None] = '8aed4417a1f6'
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
