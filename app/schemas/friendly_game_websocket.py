@@ -4,6 +4,7 @@ from pydantic import BaseModel
 class FriendlyGameLobbyUser(BaseModel):
     user_name: str
     avatar: str
+    is_creator: bool 
 
 
 class FriendlyGameLobbyState(BaseModel):

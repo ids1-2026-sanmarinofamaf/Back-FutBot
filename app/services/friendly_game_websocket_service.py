@@ -6,7 +6,7 @@ from app.schemas.friendly_game_websocket import (
     FriendlyGameLobbyState,
     FriendlyGameLobbyUser,
 )
-
+from app.models.friendly_game_participation import FriendlyGameRole
 
 class FriendlyGameConnectionManager:
 
@@ -123,6 +123,7 @@ def build_friendly_game_lobby_state(
         FriendlyGameLobbyUser(
             user_name=participation.club.name,
             avatar=participation.club.avatar,
+            is_creator=(participation.role == FriendlyGameRole.CREATOR)
         )
         for participation in friendly_game.participations
     ]
