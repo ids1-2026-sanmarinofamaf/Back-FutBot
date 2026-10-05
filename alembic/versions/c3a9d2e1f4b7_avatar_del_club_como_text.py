@@ -1,7 +1,7 @@
 """avatar del club como Text (guarda la imagen en Base64)
 
 Revision ID: c3a9d2e1f4b7
-Revises: df940700a5cc
+Revises: c3f83b002c8e
 Create Date: 2026-10-05 12:00:00.000000
 
 """
@@ -13,7 +13,7 @@ import sqlalchemy as sa
 
 # revision identifiers, used by Alembic.
 revision: str = 'c3a9d2e1f4b7'
-down_revision: Union[str, Sequence[str], None] = 'df940700a5cc'
+down_revision: Union[str, Sequence[str], None] = 'c3f83b002c8e'
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
