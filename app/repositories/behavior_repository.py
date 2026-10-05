@@ -1,10 +1,20 @@
 
-
+# app/repositories/behavior_repository.py
 from sqlalchemy import select, or_
 from sqlalchemy.orm import Session
 
 from app.models.behavior import Behavior
 
+def get_available_by_name(db: Session, club_id: int, name: str) -> Behavior | None:
+    return db.scalars(
+        select(Behavior)
+        .where(
+            Behavior.name == name,
+            or_(Behavior.is_default.is_(True), Behavior.club_id == club_id),
+        )
+        # si hay uno del club con el mismo nombre que un default, gana el del club
+        .order_by(Behavior.is_default.asc())
+    ).first()
 
 def get_by_id(
     db: Session,

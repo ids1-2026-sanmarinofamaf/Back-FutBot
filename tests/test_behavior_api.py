@@ -148,3 +148,73 @@ def test_get_behaviors_user_without_club_returns_400(user, db):
     )
 
     assert response.status_code == 400
+
+
+def test_get_behavior_by_name_without_token_returns_401():
+    response = client.get("/clubes/me/behaviors", params={"name": "Delantero"})
+
+    assert response.status_code == 401
+
+
+def test_get_behavior_by_name_returns_default_behavior(user, db):
+    default = db.query(Behavior).filter(Behavior.is_default.is_(True)).first()
+
+    response = client.get(
+        "/clubes/me/behaviors",
+        params={"name": default.name},
+        headers=auth_header(login()),
+    )
+
+    assert response.status_code == 200
+    assert response.json() == {"behavior_id": default.id, "code": default.code}
+
+
+def test_get_behavior_by_name_returns_own_club_behavior(user, db):
+    own = Behavior(club_id=user.club.id, name="Mi Delantero", code=CODE)
+    db.add(own)
+    db.commit()
+
+    response = client.get(
+        "/clubes/me/behaviors",
+        params={"name": "Mi Delantero"},
+        headers=auth_header(login()),
+    )
+
+    assert response.status_code == 200
+    assert response.json() == {"behavior_id": own.id, "code": CODE}
+
+
+def test_get_behavior_by_name_not_found_returns_404(user):
+    response = client.get(
+        "/clubes/me/behaviors",
+        params={"name": "No Existe"},
+        headers=auth_header(login()),
+    )
+
+    assert response.status_code == 404
+
+
+def test_get_behavior_by_name_from_other_club_returns_404(user, other_club, db):
+    db.add(Behavior(club_id=other_club.id, name="Ajeno", code=CODE))
+    db.commit()
+
+    response = client.get(
+        "/clubes/me/behaviors",
+        params={"name": "Ajeno"},
+        headers=auth_header(login()),
+    )
+
+    assert response.status_code == 404
+
+
+def test_get_behavior_by_name_user_without_club_returns_400(user, db):
+    db.add(User(email=NO_CLUB_EMAIL, hash_passwd=get_password_hash(PASSWORD)))
+    db.commit()
+
+    response = client.get(
+        "/clubes/me/behaviors",
+        params={"name": "Delantero"},
+        headers=auth_header(login(NO_CLUB_EMAIL)),
+    )
+
+    assert response.status_code == 400
