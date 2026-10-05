@@ -124,7 +124,7 @@ async def join(
     current_user=Depends(get_current_user),
 ):
     try:
-        participation, roster = join_friendly_game(
+        participation, roster = await join_friendly_game(
             db=db,
             friendly_game_id=friendly_game_id,
             user_id=current_user.id,
