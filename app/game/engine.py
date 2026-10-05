@@ -1,5 +1,6 @@
 from dataclasses import dataclass
 from math import isclose
+import random
 
 from app.game.models.match import Match, MatchSnapshot
 from app.game.models.player_in_match import PlayerInMatchSnapshot
@@ -84,6 +85,7 @@ class GameEngine:
         kick_result = self._resolve_kicks(
             snapshot,
             actions,
+            match.match_id,
         )
 
         proposed_positions = self._resolve_moves(
@@ -95,6 +97,7 @@ class GameEngine:
             self._resolve_player_collisions(
                 snapshot,
                 proposed_positions,
+                match.match_id,
             )
         )
 
@@ -171,6 +174,7 @@ class GameEngine:
         self,
         snapshot: MatchSnapshot,
         actions: dict[int, Action],
+        match_id: int,
     ) -> KickResolution | None:
         players = self._get_on_field_players(snapshot)
 
@@ -193,13 +197,26 @@ class GameEngine:
         if not valid_kickers:
             return None
 
-        winner = max(
-            valid_kickers,
-            key=lambda player: self._kick_contest_key(
-                snapshot,
-                player,
-            ),
+        best_key = max(
+            self._kick_contest_key(snapshot, player)
+            for player in valid_kickers
         )
+
+        tied_players = [
+            player
+            for player in valid_kickers
+            if self._kick_contest_key(snapshot, player) == best_key
+        ]
+
+        if len(tied_players) == 1:
+            winner = tied_players[0]
+        else:
+            winner = self._seeded_tiebreak(
+                match_id=match_id,
+                current_tick=snapshot.current_tick,
+                contest_type="kick",
+                players=tied_players,
+            )
 
         loser_ids = tuple(
             player.player_id
@@ -270,6 +287,7 @@ class GameEngine:
         self,
         snapshot: MatchSnapshot,
         proposed_positions: dict[int, Position],
+        match_id: int,
     ) -> tuple[
         dict[int, Position],
         set[int],
@@ -324,7 +342,9 @@ class GameEngine:
             ]
 
             contest = self._resolve_collision_contest(
-                involved_players
+                involved_players,
+                current_tick=snapshot.current_tick,
+                match_id=match_id,
             )
 
             for loser_id in contest.loser_ids:
@@ -517,34 +537,8 @@ class GameEngine:
             match: Match,
             side: Side,
     ) -> None:
-        participation = (
-            match.participation_a
-            if side == Side.LEFT
-            else match.participation_b
-        )
-
-        closest_player = min(
-            (
-                player
-                for player in participation.players
-                if player.is_on_field
-            ),
-            key=lambda player: distance(
-                FIELD_CENTER,
-                player.position
-            ),
-        )
-
-        direction = direction_to(
-            FIELD_CENTER,
-            closest_player.position,
-        )
-
         match.ball.position = FIELD_CENTER
-        match.ball.velocity = (
-            direction[0] * RESTART_BALL_SPEED,
-            direction[1] * RESTART_BALL_SPEED,
-        )
+        match.ball.velocity = (0.0, 0.0)
 
 
     def _get_on_field_players(
@@ -621,7 +615,7 @@ class GameEngine:
         self,
         snapshot: MatchSnapshot,
         player: PlayerInMatchSnapshot,
-    ) -> tuple[float, float, int, int, int]:
+    ) -> tuple[float, float, int, int]:
         effective_control = effective_physical_value(
             player.control,
             player.collision_penalty_remaining,
@@ -650,14 +644,13 @@ class GameEngine:
             effective_speed,
             player.strength,
             last_conceding_advantage,
-            -player.player_id,
         )
 
 
     def _collision_contest_key(
         self,
         player: PlayerInMatchSnapshot,
-    ) -> tuple[int, float, float, int]:
+    ) -> tuple[int, float, float]:
         effective_power = effective_physical_value(
             player.power,
             player.collision_penalty_remaining,
@@ -674,7 +667,6 @@ class GameEngine:
             player.strength,
             effective_power,
             effective_speed,
-            -player.player_id,
         )
 
 
@@ -721,11 +713,29 @@ class GameEngine:
     def _resolve_collision_contest(
         self,
         players: list[PlayerInMatchSnapshot],
+        current_tick: int,
+        match_id: int,
     ) -> ContestResolution:
-        winner = max(
-            players,
-            key=self._collision_contest_key,
+        best_key = max(
+            self._collision_contest_key(player)
+            for player in players
         )
+
+        tied_players = [
+            player
+            for player in players
+            if self._collision_contest_key(player) == best_key
+        ]
+
+        if len(tied_players) == 1:
+            winner = tied_players[0]
+        else:
+            winner = self._seeded_tiebreak(
+                match_id=match_id,
+                current_tick=current_tick,
+                contest_type="collision",
+                players=tied_players,
+            )
 
         loser_ids = tuple(
             player.player_id
@@ -982,3 +992,32 @@ class GameEngine:
             player.forced_wait_remaining == 1
             for player in on_field_players
         )
+
+
+    def _seeded_tiebreak(
+        self,
+        match_id: int,
+        current_tick: int,
+        contest_type: str,
+        players: list[PlayerInMatchSnapshot],
+    ) -> PlayerInMatchSnapshot:
+        ordered_players = sorted(
+            players,
+            key=lambda player: player.player_id,
+        )
+
+        player_ids = ":".join(
+            str(player.player_id)
+            for player in ordered_players
+        )
+
+        seed = (
+            f"{match_id}:"
+            f"{current_tick}:"
+            f"{contest_type}:"
+            f"{player_ids}"
+        )
+
+        rng = random.Random(seed)
+
+        return rng.choice(ordered_players)
