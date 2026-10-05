@@ -98,24 +98,26 @@ def defensive_position():
     )
 
 
-def closest_teammate(ball_position):
-    closest_position = None
-    closest_distance = None
+def most_advanced_teammate():
+    goal = opponent_goal()
+
+    best_position = None
+    best_distance = None
 
     for _, teammate_position in teammates():
-        teammate_distance = distance(
-            ball_position,
+        teammate_goal_distance = distance(
             teammate_position,
+            goal,
         )
 
         if (
-            closest_distance is None
-            or teammate_distance < closest_distance
+            best_distance is None
+            or teammate_goal_distance < best_distance
         ):
-            closest_position = teammate_position
-            closest_distance = teammate_distance
+            best_position = teammate_position
+            best_distance = teammate_goal_distance
 
-    return closest_position, closest_distance
+    return best_position
 
 
 def move_to(my_position, target):
@@ -149,11 +151,14 @@ def play():
         if not can_kick():
             return wait()
 
-        teammate_position, teammate_distance = closest_teammate(
-            ball_position
-        )
+        teammate_position = most_advanced_teammate()
 
         pass_direction = direction_to(
+            ball_position,
+            teammate_position,
+        )
+
+        pass_distance = distance(
             ball_position,
             teammate_position,
         )
@@ -162,7 +167,7 @@ def play():
             pass_direction,
             kick_force_for_distance(
                 pass_direction,
-                teammate_distance,
+                pass_distance,
             )
         )
 
@@ -176,24 +181,26 @@ def play():
 MIDFIELDER_NAME = "Midfielder"
 
 MIDFIELDER_CODE = """
-def closest_teammate(ball_position):
-    closest_position = None
-    closest_distance = None
+def most_advanced_teammate():
+    goal = opponent_goal()
+
+    best_position = None
+    best_distance = None
 
     for _, teammate_position in teammates():
-        teammate_distance = distance(
-            ball_position,
+        teammate_goal_distance = distance(
             teammate_position,
+            goal,
         )
 
         if (
-            closest_distance is None
-            or teammate_distance < closest_distance
+            best_distance is None
+            or teammate_goal_distance < best_distance
         ):
-            closest_position = teammate_position
-            closest_distance = teammate_distance
+            best_position = teammate_position
+            best_distance = teammate_goal_distance
 
-    return closest_position, closest_distance
+    return best_position
 
 
 def play():
@@ -209,11 +216,14 @@ def play():
         if not can_kick():
             return wait()
 
-        teammate_position, teammate_distance = closest_teammate(
-            ball_position
-        )
+        teammate_position = most_advanced_teammate()
 
         pass_direction = direction_to(
+            ball_position,
+            teammate_position,
+        )
+
+        pass_distance = distance(
             ball_position,
             teammate_position,
         )
@@ -222,7 +232,7 @@ def play():
             pass_direction,
             kick_force_for_distance(
                 pass_direction,
-                teammate_distance,
+                pass_distance,
             )
         )
 
@@ -232,7 +242,7 @@ def play():
             ball_position,
         ),
         speed_for_distance(
-            ball_distance
+            ball_distance,
         ),
     )
 """
