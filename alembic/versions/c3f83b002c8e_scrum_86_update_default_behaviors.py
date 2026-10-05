@@ -1,7 +1,7 @@
 """SCRUM-86 update default behaviors
 
 Revision ID: c3f83b002c8e
-Revises: ff55415854f4
+Revises: df940700a5cc
 Create Date: 2026-10-04
 
 """
@@ -14,7 +14,7 @@ import sqlalchemy as sa
 
 # revision identifiers, used by Alembic.
 revision: str = "c3f83b002c8e"
-down_revision: Union[str, Sequence[str], None] = "ff55415854f4"
+down_revision: Union[str, Sequence[str], None] = "df940700a5cc"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
