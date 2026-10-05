@@ -206,13 +206,14 @@ def test_defender_moves_towards_ball_when_ball_is_in_own_half(
     assert action.move_direction == expected_direction
 
 
-def test_defender_passes_to_closest_teammate(context):
+def test_defender_passes_to_most_advanced_teammate(context):
     context.player = (1, (5.0, 10.0))
     context.ball = ((5.5, 10.0), (0.0, 0.0))
     context.teammates = [
-        (2, (8.0, 10.0)),
-        (3, (15.0, 10.0)),
+        (2, (8.0, 10.0)),   # más cercano
+        (3, (15.0, 10.0)),  # más avanzado
     ]
+
     context.side = Side.LEFT
     context.control_range = 1.0
     context.tics_until_kick = 0
@@ -224,11 +225,11 @@ def test_defender_passes_to_closest_teammate(context):
 
     assert isinstance(action, KickAction)
 
-    closest_teammate_position = context.teammates[0][1]
+    most_advanced_position = context.teammates[1][1]
 
     expected_direction = primitives.direction_to(
         context.ball[0],
-        closest_teammate_position,
+        most_advanced_position,
     )
 
     assert action.kick_direction == expected_direction
@@ -292,13 +293,15 @@ def test_midfielder_moves_towards_ball(context):
     assert action.move_direction == expected_direction
 
 
-def test_midfielder_passes_to_closest_teammate(context):
+def test_midfielder_passes_to_most_advanced_teammate(context):
     context.player = (1, (20.0, 10.0))
     context.ball = ((20.5, 10.0), (0.0, 0.0))
     context.teammates = [
-        (2, (22.0, 10.0)),
-        (3, (30.0, 10.0)),
+        (2, (22.0, 10.0)),  # más cercano
+        (3, (30.0, 10.0)),  # más avanzado
     ]
+
+    context.side = Side.LEFT
     context.control_range = 1.0
     context.tics_until_kick = 0
 
@@ -309,11 +312,11 @@ def test_midfielder_passes_to_closest_teammate(context):
 
     assert isinstance(action, KickAction)
 
-    closest_teammate_position = context.teammates[0][1]
+    most_advanced_position = context.teammates[1][1]
 
     expected_direction = primitives.direction_to(
         context.ball[0],
-        closest_teammate_position,
+        most_advanced_position,
     )
 
     assert action.kick_direction == expected_direction
@@ -335,15 +338,18 @@ def test_midfielder_waits_when_ball_is_controlled_but_cannot_kick(
     assert isinstance(action, WaitAction)
 
 
-def test_midfielder_chooses_first_teammate_when_distances_are_equal(
+def test_midfielder_chooses_first_teammate_when_goal_distances_are_equal(
     context,
 ):
     context.player = (1, (20.0, 10.0))
     context.ball = ((20.0, 10.0), (0.0, 0.0))
+
     context.teammates = [
-        (2, (22.0, 10.0)),
-        (3, (18.0, 10.0)),
+        (2, (30.0, 8.0)),
+        (3, (30.0, 12.0)),
     ]
+
+    context.side = Side.LEFT
     context.control_range = 1.0
     context.tics_until_kick = 0
 
@@ -385,3 +391,32 @@ def test_ball_at_midfield_is_defender_half_not_attacker_half(context):
         )
     finally:
         clear_current_context()
+
+
+def test_midfielder_passes_to_most_advanced_teammate_on_right_side(
+    context,
+):
+    context.player = (1, (20.0, 10.0))
+    context.ball = ((20.0, 10.0), (0.0, 0.0))
+
+    context.teammates = [
+        (2, (18.0, 10.0)),
+        (3, (10.0, 10.0)),
+    ]
+
+    context.side = Side.RIGHT
+    context.control_range = 1.0
+    context.tics_until_kick = 0
+
+    action, _ = execute_behavior(
+        MIDFIELDER_CODE,
+        context,
+    )
+
+    expected_direction = primitives.direction_to(
+        context.ball[0],
+        context.teammates[1][1],
+    )
+
+    assert isinstance(action, KickAction)
+    assert action.kick_direction == expected_direction
