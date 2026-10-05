@@ -1,4 +1,4 @@
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, joinedload, selectinload
 from sqlalchemy import select, func
 
 from app.models.friendly_game import (
@@ -10,6 +10,7 @@ from app.models.friendly_game_participation import (
     FriendlyGameParticipation,
     FriendlyGameRole,
 )
+
 
 
 # create and persist friendly game
@@ -92,4 +93,30 @@ def get_participation_by_club(
             == friendly_game_id,
             FriendlyGameParticipation.club_id == club_id,
         )
+    )
+
+# get only matches that will appear on the list of friendly games avaivable
+def get_visible_friendly_games(
+    db: Session,
+) -> list[FriendlyGame]:
+
+    return list(
+        db.scalars(
+            select(FriendlyGame)
+            .options(
+                # for creator
+                joinedload(FriendlyGame.creator),
+                # for capactity
+                selectinload(FriendlyGame.participations),
+            )
+            .where(
+                FriendlyGame.state.in_(
+                    [
+                        FriendlyGameState.POR_COMENZAR,
+                        FriendlyGameState.JUGANDO,
+                    ]
+                )
+            )
+            .order_by(FriendlyGame.id)
+        ).all()
     )

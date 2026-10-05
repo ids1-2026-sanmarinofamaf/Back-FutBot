@@ -21,20 +21,27 @@ class ConnectionManager:
         if not connections:
             del self.active[user_id]
 
-    async def broadcast(self, message: str):
+    async def broadcast(
+        self,
+        message: dict,
+    ) -> None:
         # Copia de las conexiones: mientras se espera cada send_text otro
         # usuario puede conectarse o desconectarse y modificar self.active
         targets = [
-            (user_id, conn)
+            (user_id, connection)
             for user_id, connections in self.active.items()
-            for conn in connections
+            for connection in connections
         ]
-        for user_id, conn in targets:
+        for user_id, connection in targets:
             try:
-                await conn.send_text(message)
+                await connection.send_json(message)
+
             except Exception:
                 # Conexion caida: se saca sin afectar a los demas usuarios
-                self.disconnect(user_id, conn)
+                self.disconnect(
+                    user_id,
+                    connection,
+                )
 
 
 manager = ConnectionManager()
