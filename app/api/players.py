@@ -7,7 +7,6 @@ from app.database import get_db
 from app.schemas.player import PlayerCreate, PlayerCreateResponse, PlayerResponse
 from app.services.player_service import create_player, get_player, list_players
 
-from app.models.player import Player
 
 router = APIRouter(
     prefix="/clubes/me/players",
