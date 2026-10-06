@@ -8,3 +8,4 @@ from app.models.friendly_game import FriendlyGame, FriendlyGameState
 from app.models.friendly_game_participation import FriendlyGameParticipation
 from app.models.behavior import Behavior
 from app.models.player import Player
+from app.models.league import League
