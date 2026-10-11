@@ -47,3 +47,16 @@ def get_available_for_club(
             .order_by(Behavior.id)
         ).all()
     )
+
+# obtain the behavior that corresponds to behavior_id
+def get_available_by_id(
+    db: Session,
+    club_id: int,
+    behavior_id: int,
+) -> Behavior | None:
+    return db.scalar(
+        select(Behavior).where(
+            Behavior.id == behavior_id,
+            or_(Behavior.is_default.is_(True), Behavior.club_id == club_id)
+        )
+    )
