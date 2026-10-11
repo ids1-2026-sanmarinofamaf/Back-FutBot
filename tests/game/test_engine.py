@@ -410,6 +410,7 @@ def test_resolve_kicks_returns_none_if_no_player_kicks(
     result = engine._resolve_kicks(
         match_snapshot,
         actions,
+        match_id=1,
     )
 
     assert result is None
@@ -445,6 +446,7 @@ def test_resolve_kicks_returns_single_valid_kicker(
     result = engine._resolve_kicks(
         modified_snapshot,
         actions,
+        match_id=1,
     )
 
     assert result is not None
@@ -483,6 +485,7 @@ def test_resolve_kicks_ignores_player_under_forced_wait(
     result = engine._resolve_kicks(
         modified_snapshot,
         actions,
+        match_id=1,
     )
 
     assert result is None
@@ -518,6 +521,7 @@ def test_resolve_kicks_ignores_player_with_kick_cooldown(
     result = engine._resolve_kicks(
         modified_snapshot,
         actions,
+        match_id=1,
     )
 
     assert result is None
@@ -553,6 +557,7 @@ def test_resolve_kicks_ignores_player_outside_control_range(
     result = engine._resolve_kicks(
         modified_snapshot,
         actions,
+        match_id=1,
     )
 
     assert result is None
@@ -610,6 +615,7 @@ def test_resolve_kicks_contest_prefers_higher_control(
     result = engine._resolve_kicks(
         modified_snapshot,
         actions,
+        match_id=1,
     )
 
     assert result is not None
@@ -669,6 +675,7 @@ def test_resolve_kicks_contest_prefers_higher_speed(
     result = engine._resolve_kicks(
         modified_snapshot,
         actions,
+        match_id=1,
     )
 
     assert result is not None
@@ -728,6 +735,7 @@ def test_resolve_kicks_contest_prefers_higher_strength(
     result = engine._resolve_kicks(
         modified_snapshot,
         actions,
+        match_id=1,
     )
 
     assert result is not None
@@ -788,6 +796,7 @@ def test_resolve_kicks_contest_prefers_last_conceding_side(
     result = engine._resolve_kicks(
         modified_snapshot,
         actions,
+        match_id=1,
     )
 
     assert result is not None
@@ -795,7 +804,7 @@ def test_resolve_kicks_contest_prefers_last_conceding_side(
     assert result.contest.loser_ids == (player_a.player_id,)
 
 
-def test_resolve_kicks_contest_prefers_lower_player_id(
+def test_resolve_kicks_tiebreak_is_reproducible(
     match_snapshot,
 ):
     engine = GameEngine()
@@ -820,7 +829,7 @@ def test_resolve_kicks_contest_prefers_lower_player_id(
         forced_wait_remaining=0,
     )
 
-    modified_snapshot = replace(
+    snapshot = replace(
         match_snapshot,
         players_a=(
             player_a,
@@ -831,9 +840,10 @@ def test_resolve_kicks_contest_prefers_lower_player_id(
             *match_snapshot.players_b[1:],
         ),
         last_conceding_side=None,
+        current_tick=10,
     )
 
-    actions = _wait_actions_for_snapshot(modified_snapshot)
+    actions = _wait_actions_for_snapshot(snapshot)
 
     actions[player_a.player_id] = KickAction(
         kick_direction=(1.0, 0.0),
@@ -845,25 +855,91 @@ def test_resolve_kicks_contest_prefers_lower_player_id(
         kick_force_factor=1.0,
     )
 
-    result = engine._resolve_kicks(
-        modified_snapshot,
+    result_a = engine._resolve_kicks(
+        snapshot,
         actions,
+        match_id=1,
     )
 
-    assert result is not None
+    result_b = engine._resolve_kicks(
+        snapshot,
+        actions,
+        match_id=1,
+    )
 
-    expected_winner_id = min(
+    assert result_a is not None
+    assert result_b is not None
+
+    assert (
+        result_a.contest.winner_id
+        == result_b.contest.winner_id
+    )
+
+
+def test_resolve_kicks_tiebreak_can_vary_with_match_id(
+    match_snapshot,
+):
+    engine = GameEngine()
+
+    player_a = replace(
+        match_snapshot.players_a[0],
+        position=(20.0, 10.0),
+        control=60,
+        speed=60,
+        strength=60,
+        kick_cooldown_remaining=0,
+        forced_wait_remaining=0,
+    )
+
+    player_b = replace(
+        match_snapshot.players_b[0],
+        position=(20.0, 10.0),
+        control=60,
+        speed=60,
+        strength=60,
+        kick_cooldown_remaining=0,
+        forced_wait_remaining=0,
+    )
+
+    snapshot = replace(
+        match_snapshot,
+        players_a=(
+            player_a,
+            *match_snapshot.players_a[1:],
+        ),
+        players_b=(
+            player_b,
+            *match_snapshot.players_b[1:],
+        ),
+        last_conceding_side=None,
+        current_tick=10,
+    )
+
+    actions = _wait_actions_for_snapshot(snapshot)
+
+    actions[player_a.player_id] = KickAction(
+        kick_direction=(1.0, 0.0),
+        kick_force_factor=1.0,
+    )
+
+    actions[player_b.player_id] = KickAction(
+        kick_direction=(-1.0, 0.0),
+        kick_force_factor=1.0,
+    )
+
+    winners = {
+        engine._resolve_kicks(
+            snapshot,
+            actions,
+            match_id=match_id,
+        ).contest.winner_id
+        for match_id in range(1, 20)
+    }
+
+    assert winners == {
         player_a.player_id,
         player_b.player_id,
-    )
-
-    expected_loser_id = max(
-        player_a.player_id,
-        player_b.player_id,
-    )
-
-    assert result.contest.winner_id == expected_winner_id
-    assert result.contest.loser_ids == (expected_loser_id,)
+    }
 
 
 def test_resolve_player_collisions_without_collision(
@@ -879,6 +955,7 @@ def test_resolve_player_collisions_without_collision(
         engine._resolve_player_collisions(
             match_snapshot,
             proposed_positions,
+            match_id=1,
         )
     )
 
@@ -924,6 +1001,7 @@ def test_resolve_player_collisions_stops_loser_at_collision_point(
         engine._resolve_player_collisions(
             snapshot,
             proposed_positions,
+            match_id=1,
         )
     )
 
@@ -990,6 +1068,7 @@ def test_resolve_player_collisions_uses_collision_position(
     final_positions, _ = engine._resolve_player_collisions(
         snapshot,
         proposed_positions,
+        match_id=1,
     )
 
     assert final_positions[player_b.player_id] == pytest.approx(
@@ -1017,7 +1096,9 @@ def test_collision_contest_prefers_higher_strength(
     )
 
     result = engine._resolve_collision_contest(
-        [player_a, player_b]
+        [player_a, player_b],
+        current_tick=0,
+        match_id=1,
     )
 
     assert result.winner_id == player_a.player_id
@@ -1044,7 +1125,9 @@ def test_collision_contest_prefers_higher_power(
     )
 
     result = engine._resolve_collision_contest(
-        [player_a, player_b]
+        [player_a, player_b],
+        current_tick=0,
+        match_id=1,
     )
 
     assert result.winner_id == player_a.player_id
@@ -1070,13 +1153,15 @@ def test_collision_contest_prefers_higher_speed(
     )
 
     result = engine._resolve_collision_contest(
-        [player_a, player_b]
+        [player_a, player_b],
+        current_tick=0,
+        match_id=1,
     )
 
     assert result.winner_id == player_a.player_id
 
 
-def test_collision_contest_prefers_lower_player_id(
+def test_collision_contest_tiebreak_is_reproducible(
     match_snapshot,
 ):
     engine = GameEngine()
@@ -1095,14 +1180,53 @@ def test_collision_contest_prefers_lower_player_id(
         speed=60,
     )
 
-    result = engine._resolve_collision_contest(
-        [player_a, player_b]
+    result_a = engine._resolve_collision_contest(
+        [player_a, player_b],
+        current_tick=10,
+        match_id=1,
     )
 
-    assert result.winner_id == min(
+    result_b = engine._resolve_collision_contest(
+        [player_a, player_b],
+        current_tick=10,
+        match_id=1,
+    )
+
+    assert result_a.winner_id == result_b.winner_id
+
+
+def test_collision_contest_tiebreak_can_vary_with_match_id(
+    match_snapshot,
+):
+    engine = GameEngine()
+
+    player_a = replace(
+        match_snapshot.players_a[0],
+        strength=60,
+        power=60,
+        speed=60,
+    )
+
+    player_b = replace(
+        match_snapshot.players_b[0],
+        strength=60,
+        power=60,
+        speed=60,
+    )
+
+    winners = {
+        engine._resolve_collision_contest(
+            [player_a, player_b],
+            current_tick=10,
+            match_id=match_id,
+        ).winner_id
+        for match_id in range(1, 20)
+    }
+
+    assert winners == {
         player_a.player_id,
         player_b.player_id,
-    )
+    }
 
 
 def test_collision_contest_supports_multiple_players(
@@ -1126,7 +1250,9 @@ def test_collision_contest_supports_multiple_players(
     )
 
     result = engine._resolve_collision_contest(
-        [player_a, player_b, player_c]
+        [player_a, player_b, player_c],
+        current_tick=0,
+        match_id=1,
     )
 
     assert result.winner_id == player_b.player_id
@@ -1793,15 +1919,8 @@ def test_update_timers_does_not_go_below_zero(match):
     assert player.collision_penalty_remaining == 0
 
 
-def test_step_restitutes_ball_to_left_side_at_match_start(match):
+def test_step_places_ball_at_center_at_match_start(match):
     engine = GameEngine()
-    snapshot = match.snapshot()
-
-    # Elegimos posiciones distintas para saber quién es el más cercano.
-    match.participation_a.players[0].position = (18.0, 10.0)
-    match.participation_a.players[1].position = (5.0, 5.0)
-    match.participation_a.players[2].position = (5.0, 15.0)
-
     snapshot = match.snapshot()
 
     actions = {
@@ -1819,47 +1938,30 @@ def test_step_restitutes_ball_to_left_side_at_match_start(match):
     )
 
     assert match.ball.position == FIELD_CENTER
-    assert match.ball.velocity != (0.0, 0.0)
+    assert match.ball.velocity == (0.0, 0.0)
 
 
-def test_initial_restitution_points_to_closest_left_player(match):
+def test_restitution_is_independent_of_side(match):
     engine = GameEngine()
 
-    closest_player = match.participation_a.players[0]
-    closest_player.position = (18.0, 10.0)
-
-    match.participation_a.players[1].position = (5.0, 5.0)
-    match.participation_a.players[2].position = (5.0, 15.0)
-
-    snapshot = match.snapshot()
-
-    actions = {
-        player.player_id: WaitAction()
-        for player in (
-            snapshot.players_a + snapshot.players_b
-        )
-        if player.is_on_field
-    }
-
-    engine.step(
+    engine._restitute_ball(
         match,
-        snapshot,
-        actions,
+        Side.LEFT,
     )
 
-    expected_direction = direction_to(
-        FIELD_CENTER,
-        closest_player.position,
+    left_position = match.ball.position
+    left_velocity = match.ball.velocity
+
+    match.ball.position = (5.0, 5.0)
+    match.ball.velocity = (10.0, 5.0)
+
+    engine._restitute_ball(
+        match,
+        Side.RIGHT,
     )
 
-    expected_velocity = (
-        expected_direction[0] * RESTART_BALL_SPEED,
-        expected_direction[1] * RESTART_BALL_SPEED,
-    )
-
-    assert match.ball.velocity == pytest.approx(
-        expected_velocity
-    )
+    assert match.ball.position == left_position == FIELD_CENTER
+    assert match.ball.velocity == left_velocity == (0.0, 0.0)
 
 
 def test_players_do_not_move_on_initial_restitution(match):
@@ -1931,7 +2033,7 @@ def test_goal_restart_waits_before_restitution(match):
     assert match.ball.velocity == (0.0, 0.0)
 
 
-def test_goal_restart_restitutes_ball_when_wait_finishes(match):
+def test_goal_restart_leaves_ball_at_center_when_wait_finishes(match):
     engine = GameEngine()
 
     match.current_tick = 10
@@ -1975,7 +2077,7 @@ def test_goal_restart_restitutes_ball_when_wait_finishes(match):
     )
 
     assert match.ball.position == FIELD_CENTER
-    assert match.ball.velocity != (0.0, 0.0)
+    assert match.ball.velocity == (0.0, 0.0)
 
 
 def test_update_ball_moves_without_kick(match):

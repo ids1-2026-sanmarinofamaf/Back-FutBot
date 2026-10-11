@@ -25,6 +25,8 @@ from app.game.constants import FIELD_WIDTH, FIELD_HEIGHT
 def make_participation(role):
     participation = MagicMock()
     participation.role = role
+    participation.club.name = "Club"
+    participation.club.avatar = "default"
     return participation
 
 

@@ -163,7 +163,7 @@ def test_pool_returns_wait_action_on_timeout(context):
 
     pool = BehaviorWorkerPool(
         size=1,
-        timeout_ms=20,
+        timeout_ms=100,
     )
 
     try:
@@ -199,7 +199,7 @@ def test_pool_replaces_worker_after_timeout(context):
 
     pool = BehaviorWorkerPool(
         size=1,
-        timeout_ms=20,
+        timeout_ms=100,
     )
 
     try:
@@ -296,7 +296,7 @@ def test_pool_uses_common_deadline_for_concurrent_jobs(
 
     pool = BehaviorWorkerPool(
         size=6,
-        timeout_ms=20,
+        timeout_ms=100,
     )
 
     try:

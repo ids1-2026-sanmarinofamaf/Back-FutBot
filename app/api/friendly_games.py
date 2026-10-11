@@ -31,6 +31,8 @@ from app.services.friendly_game_service import (
     InvalidRoster,
 )
 
+from app.services import session_websocket_service
+
 from app.api.deps import get_current_user
 
 
@@ -45,7 +47,7 @@ router = APIRouter(
     response_model=FriendlyGameCreateResponse,
     status_code=status.HTTP_201_CREATED
 )
-def create(
+async def create(
     data: FriendlyGameCreate,
     db: Session = Depends(get_db),
     current_user=Depends(get_current_user)
@@ -56,6 +58,8 @@ def create(
             user_id=current_user.id,
             data=data
         )
+        # send when post new friendly_game
+        await session_websocket_service.broadcast_friendly_games(db)
 
         return FriendlyGameCreateResponse(
             friendly_game_id=friendly_game.id,
@@ -89,6 +93,8 @@ async def start(
             requested_state=data.state,
         )
 
+        await session_websocket_service.broadcast_friendly_games(db)
+
         return FriendlyGameStartResponse(
             match_id=match_id
         )
@@ -111,19 +117,21 @@ async def start(
     response_model=FriendlyGameJoinResponse,
     status_code=status.HTTP_201_CREATED
 )
-def join(
+async def join(
     friendly_game_id: int,
     data: FriendlyGameJoin,
     db: Session = Depends(get_db),
     current_user=Depends(get_current_user),
 ):
     try:
-        participation, roster = join_friendly_game(
+        participation, roster = await join_friendly_game(
             db=db,
             friendly_game_id=friendly_game_id,
             user_id=current_user.id,
             data=data,
         )
+
+        await session_websocket_service.broadcast_friendly_games(db)
 
         # verificar si agregar participation o no
         return FriendlyGameJoinResponse(

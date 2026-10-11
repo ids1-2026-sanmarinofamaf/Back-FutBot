@@ -72,7 +72,7 @@ def start_match(
     #define the worker pool
     worker_pool = BehaviorWorkerPool(
         size=6,
-        timeout_ms=20,
+        timeout_ms=100,
     )
     # register the behaviors in the worker pool
     worker_pool.register_behaviors(

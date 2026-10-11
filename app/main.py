@@ -12,6 +12,7 @@ from app.api import behaviors
 
 
 
+from app.api.friendly_game_websocket import router as friendly_game_websocket_router
 from app.api.match_websocket import router as match_websocket_router
 
 
@@ -34,7 +35,7 @@ app = FastAPI(lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173"],  # tu origen de Vite
+    allow_origins=["*"],  # tu origen de Vite
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -43,7 +44,9 @@ app.add_middleware(
 app.include_router(auth.router)
 app.include_router(users.router)
 app.include_router(sessions_websocket.router)
+app.include_router(friendly_game_websocket_router)
 app.include_router(behaviors.router)
+
 
 @app.get("/")
 def root():

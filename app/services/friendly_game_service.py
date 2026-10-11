@@ -22,12 +22,18 @@ from app.services.match_service import (
     start_match,
 )
 
+from app.services import session_websocket_service
+
 from app.repositories import (
     friendly_game_repository,
     roster_repository,
     player_repository,
     behavior_repository,
     club_repository,
+)
+from app.services.friendly_game_websocket_service import (
+    friendly_game_connection_manager,
+    build_friendly_game_lobby_state,
 )
 
 # classes for distinguishing exceptions
@@ -212,6 +218,7 @@ def create_friendly_game(db: Session, user_id: int, data: FriendlyGameCreate):
         raise
 
 
+
 async def start_friendly_game(
     db: Session,
     friendly_game_id: int,
@@ -311,8 +318,10 @@ async def start_friendly_game(
             friendly_game=friendly_game,
             state=FriendlyGameState.JUGANDO,
         )
+
         # persist the new state in the database
         db.commit()
+
 
         # callback executed when the match finishes
         async def on_finished(
@@ -321,6 +330,7 @@ async def start_friendly_game(
             await _finish_friendly_game(
                 friendly_game_id=friendly_game.id,
             )
+
 
         try:
             # start the match execution in background
@@ -331,7 +341,8 @@ async def start_friendly_game(
             )
 
         except Exception:
-            # if the match could not start, restore the previous state
+            # the match could not be started,
+            # so we restore the previous state.
             friendly_game_repository.update_state(
                 db=db,
                 friendly_game=friendly_game,
@@ -340,6 +351,30 @@ async def start_friendly_game(
 
             db.commit()
             raise
+
+
+        # the match is already running.
+        # a websocket error should not invalidate the match.
+        try:
+            lobby_state = build_friendly_game_lobby_state(
+                friendly_game=friendly_game,
+                match_id=match_id,
+            )
+
+            await friendly_game_connection_manager.broadcast(
+                friendly_game_id,
+                lobby_state,
+            )
+
+            # after starting the match, close the lobby websocket.
+            await friendly_game_connection_manager.close_lobby(
+                friendly_game_id,
+                code=1000,
+                reason="Friendly game started",
+            )
+
+        except Exception:
+            pass
 
         return match_id
 
@@ -370,11 +405,15 @@ async def _finish_friendly_game(
             )
 
             db.commit()
+            # when a match ends, it should no longer appear in the list
+            await (session_websocket_service.broadcast_friendly_games(db))
 
         except Exception:
             db.rollback()
             raise
-def join_friendly_game(
+
+
+async def join_friendly_game(
     db: Session,
     friendly_game_id: int,
     user_id: int,
@@ -491,6 +530,14 @@ def join_friendly_game(
         )
 
         db.commit()
+        # we get the data from friendly game updates
+        updated_friendly_game = (friendly_game_repository.get_by_id(db=db,friendly_game_id=friendly_game_id))
+
+        # match id is none because we didnt create a match yet
+        lobby_state = build_friendly_game_lobby_state(friendly_game=updated_friendly_game,match_id=None)
+
+        # send the info to the connections
+        await friendly_game_connection_manager.broadcast(friendly_game_id,lobby_state)
 
         return participation, roster
 

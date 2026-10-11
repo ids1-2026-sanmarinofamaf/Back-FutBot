@@ -1,3 +1,5 @@
+import asyncio
+
 import pytest
 
 from types import SimpleNamespace
@@ -128,11 +130,13 @@ def test_join_success(
     participation.id = 40
     repos.friendly_game.create_participation.return_value = participation
 
-    result_participation, result_roster = join_friendly_game(
-        db=db,
-        friendly_game_id=friendly_game.id,
-        user_id=5,
-        data=valid_join_data,
+    result_participation, result_roster = asyncio.run(
+        join_friendly_game(
+            db=db,
+            friendly_game_id=friendly_game.id,
+            user_id=5,
+            data=valid_join_data,
+        )
     )
 
     assert result_participation.id == 40
@@ -163,11 +167,13 @@ def test_join_friendly_game_not_found(
         FriendlyGameNotFound,
         match="Friendly game does not exist",
     ):
-        join_friendly_game(
-            db=db,
-            friendly_game_id=999,
-            user_id=5,
-            data=valid_join_data,
+        asyncio.run(
+            join_friendly_game(
+                db=db,
+                friendly_game_id=999,
+                user_id=5,
+                data=valid_join_data,
+            )
         )
 
     db.commit.assert_not_called()
@@ -200,11 +206,13 @@ def test_join_rejects_unavailable_state(
         FriendlyGameNotAvailable,
         match="Friendly game is not available",
     ):
-        join_friendly_game(
-            db=db,
-            friendly_game_id=30,
-            user_id=5,
-            data=valid_join_data,
+        asyncio.run(
+            join_friendly_game(
+                db=db,
+                friendly_game_id=30,
+                user_id=5,
+                data=valid_join_data,
+            )
         )
 
     db.commit.assert_not_called()
@@ -226,11 +234,13 @@ def test_join_rejects_already_participating(
         AlreadyParticipating,
         match="already participating",
     ):
-        join_friendly_game(
-            db=db,
-            friendly_game_id=30,
-            user_id=5,
-            data=valid_join_data,
+        asyncio.run(
+            join_friendly_game(
+                db=db,
+                friendly_game_id=30,
+                user_id=5,
+                data=valid_join_data,
+            )
         )
 
     db.commit.assert_not_called()
@@ -250,11 +260,13 @@ def test_join_rejects_full_game(
         FriendlyGameFull,
         match="Friendly game is full",
     ):
-        join_friendly_game(
-            db=db,
-            friendly_game_id=30,
-            user_id=5,
-            data=valid_join_data,
+        asyncio.run(
+            join_friendly_game(
+                db=db,
+                friendly_game_id=30,
+                user_id=5,
+                data=valid_join_data,
+            )
         )
 
     db.commit.assert_not_called()
@@ -274,11 +286,13 @@ def test_join_rejects_invalid_roster(
         InvalidRoster,
         match="A roster must have exactly 6 players",
     ):
-        join_friendly_game(
-            db=db,
-            friendly_game_id=30,
-            user_id=5,
-            data=valid_join_data,
+        asyncio.run(
+            join_friendly_game(
+                db=db,
+                friendly_game_id=30,
+                user_id=5,
+                data=valid_join_data,
+            )
         )
 
     db.commit.assert_not_called()
@@ -301,11 +315,13 @@ def test_join_rejects_player_from_another_club(
         InvalidRoster,
         match="Player does not belong to user's club",
     ):
-        join_friendly_game(
-            db=db,
-            friendly_game_id=30,
-            user_id=5,
-            data=valid_join_data,
+        asyncio.run(
+            join_friendly_game(
+                db=db,
+                friendly_game_id=30,
+                user_id=5,
+                data=valid_join_data,
+            )
         )
 
     db.commit.assert_not_called()
@@ -332,11 +348,13 @@ def test_join_rejects_behavior_from_another_club(
         InvalidRoster,
         match="Behavior does not belong to user's club",
     ):
-        join_friendly_game(
-            db=db,
-            friendly_game_id=30,
-            user_id=5,
-            data=valid_join_data,
+        asyncio.run(
+            join_friendly_game(
+                db=db,
+                friendly_game_id=30,
+                user_id=5,
+                data=valid_join_data,
+            )
         )
 
     db.commit.assert_not_called()
@@ -368,11 +386,13 @@ def test_join_accepts_default_behavior(
     participation.id = 40
     repos.friendly_game.create_participation.return_value = participation
 
-    participation, roster = join_friendly_game(
-        db=db,
-        friendly_game_id=friendly_game.id,
-        user_id=5,
-        data=valid_join_data,
+    participation, roster = asyncio.run(
+        join_friendly_game(
+            db=db,
+            friendly_game_id=friendly_game.id,
+            user_id=5,
+            data=valid_join_data,
+        )
     )
 
     assert participation.id == 40

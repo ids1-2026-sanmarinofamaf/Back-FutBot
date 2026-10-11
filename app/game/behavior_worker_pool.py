@@ -41,7 +41,7 @@ class BehaviorWorkerPool:
     Workers that fail to respond before the deadline are terminated and
     replaced.
     """
-    def __init__(self, size: int = 6, timeout_ms: int = 20) -> None:
+    def __init__(self, size: int = 6, timeout_ms: int = 100) -> None:
         """
         Initialize and start the worker pool.
 
