@@ -20,30 +20,27 @@ depends_on: Union[str, Sequence[str], None] = None
 
 
 def upgrade() -> None:
-    op.add_column(
-        "friendly_games",
-        sa.Column(
-            "match_id",
-            sa.Integer(),
-            nullable=True,
-        ),
-    )
+    with op.batch_alter_table("friendly_games") as batch_op:
+        batch_op.add_column(
+            sa.Column(
+                "match_id",
+                sa.Integer(),
+                nullable=True,
+            )
+        )
 
-    op.create_unique_constraint(
-        "uq_friendly_games_match_id",
-        "friendly_games",
-        ["match_id"],
-    )
+        batch_op.create_unique_constraint(
+            "uq_friendly_games_match_id",
+            ["match_id"],
+        )
 
 
 def downgrade() -> None:
-    op.drop_constraint(
-        "uq_friendly_games_match_id",
-        "friendly_games",
-        type_="unique",
-    )
+    with op.batch_alter_table("friendly_games") as batch_op:
+        batch_op.drop_constraint(
+            "uq_friendly_games_match_id",
+            type_="unique",
+        )
 
-    op.drop_column(
-        "friendly_games",
-        "match_id",
-    )
+        batch_op.drop_column("match_id")
+
