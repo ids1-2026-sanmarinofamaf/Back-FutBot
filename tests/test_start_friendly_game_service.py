@@ -70,6 +70,7 @@ def test_start_friendly_game_success(
     mock_start_match,
 ):
     db = MagicMock()
+    db.execute.return_value.scalar_one.return_value = 50
 
     (
         friendly_game,
@@ -97,7 +98,6 @@ def test_start_friendly_game_success(
     behaviors = [MagicMock(), MagicMock()]
 
     mock_load_match_behaviors.return_value = behaviors
-    mock_start_match.return_value = 50
 
     result = asyncio.run(
         start_friendly_game(
