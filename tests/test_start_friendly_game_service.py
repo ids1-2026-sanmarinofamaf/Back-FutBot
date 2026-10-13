@@ -164,7 +164,8 @@ def test_start_friendly_game_success(
         state=FriendlyGameState.JUGANDO,
     )
 
-    db.commit.assert_called_once()
+    assert db.commit.call_count == 2
+    assert friendly_game.match_id == 50
 
 @patch("app.services.friendly_game_service.friendly_game_repository")
 def test_start_friendly_game_not_found(
