@@ -352,6 +352,10 @@ async def start_friendly_game(
             db.commit()
             raise
 
+        # Save the match ID associated with the friendly game.
+        friendly_game.match_id = match_id
+        db.commit()
+
 
         # the match is already running.
         # a websocket error should not invalidate the match.
