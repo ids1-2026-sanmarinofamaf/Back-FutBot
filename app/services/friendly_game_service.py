@@ -30,6 +30,7 @@ from app.repositories import (
     player_repository,
     behavior_repository,
     club_repository,
+    match_repository,
 )
 from app.services.friendly_game_websocket_service import (
     friendly_game_connection_manager,
@@ -299,14 +300,17 @@ async def start_friendly_game(
             velocity=(0.0, 0.0),
         )
 
-        # match id is assigned by active_matches.
+        # get a globally unique match ID from the database.
+        match_id = match_repository.get_next_match_id(db)
+
         match = Match(
-            match_id=0,
+            match_id=match_id,
             participation_a=match_participation_a,
             participation_b=match_participation_b,
             ball=ball,
             duration_ticks=friendly_game.duration * TICS_PER_SECOND,
         )
+
         # load in memory the behaviors of the 2 clubs
         behaviors = load_match_behaviors(
             db=db,
@@ -334,7 +338,7 @@ async def start_friendly_game(
 
         try:
             # start the match execution in background
-            match_id = start_match(
+            start_match(
                 match=match,
                 behaviors=behaviors,
                 on_finished=on_finished,
