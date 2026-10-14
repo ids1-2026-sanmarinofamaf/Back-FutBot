@@ -80,7 +80,6 @@ class GameEngine:
         if snapshot.current_tick == 0:
             self._restitute_ball(
                 match,
-                Side.LEFT,
             )
             return
 
@@ -135,7 +134,6 @@ class GameEngine:
         if restart_ending:
             self._restitute_ball(
                 match,
-                match.last_conceding_side,
             )
 
 
@@ -487,8 +485,10 @@ class GameEngine:
         # Score for the opposite side.
         if conceding_side == Side.LEFT:
             match.participation_b.goals += 1
+            conceding_participation = match.participation_a
         else:
             match.participation_a.goals += 1
+            conceding_participation = match.participation_b
 
         match.last_conceding_side = conceding_side
 
@@ -514,6 +514,29 @@ class GameEngine:
                 player.forced_wait_remaining = (
                     GOAL_RESTART_WAIT_TICS + 1
                 )
+
+        # Give the conceding team restart possesion.
+        restart_player = max(
+            (
+                player
+                for player in conceding_participation.players
+                if player.is_on_field
+            ),
+            key=lambda player: player.control,
+        )
+
+        restart_distance = PLAYER_RADIUS + BALL_RADIUS
+
+        if conceding_side == Side.LEFT:
+            restart_player.position = (
+                FIELD_CENTER[0] - restart_distance,
+                FIELD_CENTER[1],
+            )
+        else:
+            restart_player.position = (
+                FIELD_CENTER[0] + restart_distance,
+                FIELD_CENTER[1],
+            )
 
 
     def _update_timers(
@@ -541,7 +564,6 @@ class GameEngine:
     def _restitute_ball(
             self,
             match: Match,
-            side: Side,
     ) -> None:
         match.ball.position = FIELD_CENTER
         match.ball.velocity = (0.0, 0.0)

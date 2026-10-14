@@ -2076,10 +2076,11 @@ def test_handle_goal_resets_ball(match):
     assert match.ball.velocity == (0.0, 0.0)
 
 
-def test_handle_goal_resets_on_field_players(match):
+def test_handle_goal_resets_scoring_team_players(match):
     engine = GameEngine()
 
-    player = match.participation_a.players[0]
+    # LEFT concedes, so participation_b scores.
+    player = match.participation_b.players[0]
 
     player.position = (20.0, 10.0)
     player.kick_cooldown_remaining = 5
@@ -2096,10 +2097,49 @@ def test_handle_goal_resets_on_field_players(match):
     assert player.position == expected_position
     assert player.kick_cooldown_remaining == 0
     assert player.collision_penalty_remaining == 0
-
     assert player.forced_wait_remaining == (
         GOAL_RESTART_WAIT_TICS + 1
     )
+
+
+def test_handle_goal_sets_conceding_team_restart_positions(match):
+    engine = GameEngine()
+
+    conceding_players = [
+        player
+        for player in match.participation_a.players
+        if player.is_on_field
+    ]
+
+    conceding_players[0].control = 30
+    conceding_players[1].control = 80
+    conceding_players[2].control = 50
+
+    expected_starting_positions = {
+        player.player_id: player.starting_position
+        for player in conceding_players
+    }
+
+    engine._handle_goal(
+        match,
+        Side.LEFT,
+    )
+
+    restart_player = conceding_players[1]
+
+    assert restart_player.position == (
+        FIELD_CENTER[0] - PLAYER_RADIUS - BALL_RADIUS,
+        FIELD_CENTER[1],
+    )
+
+    for player in conceding_players:
+        if player.player_id == restart_player.player_id:
+            continue
+
+        assert (
+            player.position
+            == expected_starting_positions[player.player_id]
+        )
 
 
 def test_update_timers_decrements_active_timers(match):
@@ -2156,29 +2196,6 @@ def test_step_places_ball_at_center_at_match_start(match):
     assert match.ball.velocity == (0.0, 0.0)
 
 
-def test_restitution_is_independent_of_side(match):
-    engine = GameEngine()
-
-    engine._restitute_ball(
-        match,
-        Side.LEFT,
-    )
-
-    left_position = match.ball.position
-    left_velocity = match.ball.velocity
-
-    match.ball.position = (5.0, 5.0)
-    match.ball.velocity = (10.0, 5.0)
-
-    engine._restitute_ball(
-        match,
-        Side.RIGHT,
-    )
-
-    assert match.ball.position == left_position == FIELD_CENTER
-    assert match.ball.velocity == left_velocity == (0.0, 0.0)
-
-
 def test_players_do_not_move_on_initial_restitution(match):
     engine = GameEngine()
 
@@ -2209,7 +2226,7 @@ def test_players_do_not_move_on_initial_restitution(match):
     assert player.position == initial_position
 
 
-def test_goal_restart_waits_before_restitution(match):
+def test_goal_restart_waits_before_resuming(match):
     engine = GameEngine()
 
     match.current_tick = 10
@@ -2248,7 +2265,7 @@ def test_goal_restart_waits_before_restitution(match):
     assert match.ball.velocity == (0.0, 0.0)
 
 
-def test_goal_restart_leaves_ball_at_center_when_wait_finishes(match):
+def test_goal_restart_resumes_when_wait_finishes(match):
     engine = GameEngine()
 
     match.current_tick = 10
@@ -2518,6 +2535,20 @@ def test_step_goal_updates_score_and_resets_state(match_step):
     assert match.ball.position == FIELD_CENTER
     assert match.ball.velocity == (0.0, 0.0)
 
+    restart_player = max(
+        (
+            player
+            for player in match.participation_b.players
+            if player.is_on_field
+        ),
+        key=lambda player: player.control,
+    )
+
+    expected_restart_position = (
+        FIELD_CENTER[0] + PLAYER_RADIUS + BALL_RADIUS,
+        FIELD_CENTER[1],
+    )
+
     for participation in (
         match.participation_a,
         match.participation_b,
@@ -2526,7 +2557,11 @@ def test_step_goal_updates_score_and_resets_state(match_step):
             if not player.is_on_field:
                 continue
 
-            assert player.position == player.starting_position
+            if player.player_id == restart_player.player_id:
+                assert player.position == expected_restart_position
+            else:
+                assert player.position == player.starting_position
+
             assert (
                 player.forced_wait_remaining
                 == GOAL_RESTART_WAIT_TICS
