@@ -5,7 +5,7 @@ import random
 from app.game.models.match import Match, MatchSnapshot
 from app.game.models.player_in_match import PlayerInMatchSnapshot
 from app.game.models.actions import MoveAction, KickAction, WaitAction
-from app.game.types import Position, Side, BallState
+from app.game.types import Position, Side, BallState, Direction
 from app.game.constants import (
     TIC_DURATION,
     FIELD_HEIGHT,
@@ -19,6 +19,7 @@ from app.game.constants import (
     GOAL_RESTART_WAIT_TICS,
     FIELD_CENTER,
     CONTEST_SCORE_MARGIN,
+    COLLISION_KNOCKBACK_DISTANCE,
     )
 from app.game.physics import (
     max_move_speed,
@@ -31,6 +32,7 @@ from app.game.physics import (
     calculate_kick_velocity,
     calculate_ball_state_after,
     direction_to,
+    normalize_vector,
     kick_cooldown_tics,
 )
 
@@ -351,10 +353,12 @@ class GameEngine:
 
             for loser_id in contest.loser_ids:
                 loser = players[loser_id]
+                winner = players[contest.winner_id]
 
-                final_positions[loser_id] = position_at_time(
-                    loser.position,
-                    proposed_positions[loser_id],
+                final_positions[loser_id] = self._collision_knockback_position(
+                    winner,
+                    loser,
+                    proposed_positions,
                     time,
                 )
 
@@ -1008,3 +1012,98 @@ class GameEngine:
             + tertiary_a * 0.1
             + tertiary_b * 0.1
         )
+
+
+    def _collision_knockback_direction(
+        self,
+        winner: PlayerInMatchSnapshot,
+        loser: PlayerInMatchSnapshot,
+        proposed_positions: dict[int, Position],
+    ) -> Direction:
+        winner_moved = (
+            winner.position
+            != proposed_positions[winner.player_id]
+        )
+
+        loser_moved = (
+            loser.position
+            != proposed_positions[loser.player_id]
+        )
+
+        winner_direction = (
+            direction_to(
+                winner.position,
+                proposed_positions[winner.player_id],
+            )
+            if winner_moved
+            else None
+        )
+
+        loser_direction = (
+            direction_to(
+                loser.position,
+                proposed_positions[loser.player_id],
+            )
+            if loser_moved
+            else None
+        )
+
+        if winner_direction is None and loser_direction is None:
+            return direction_to(
+                winner.position,
+                loser.position,
+            )
+
+        if loser_direction is None:
+            return (
+                -winner_direction[0],
+                -winner_direction[1],
+            )
+
+        if winner_direction is None:
+            return (
+                -loser_direction[0],
+                -loser_direction[1],
+            )
+
+        relative_direction = (
+            loser_direction[0] - winner_direction[0],
+            loser_direction[1] - winner_direction[1],
+        )
+
+        if relative_direction == (0.0, 0.0):
+            return (
+                -winner_direction[0],
+                -winner_direction[1],
+            )
+
+        return normalize_vector(relative_direction)
+
+
+    def _collision_knockback_position(
+        self,
+        winner: PlayerInMatchSnapshot,
+        loser: PlayerInMatchSnapshot,
+        proposed_positions: dict[int, Position],
+        collision_time: float,
+    ) -> Position:
+        collision_position = position_at_time(
+            loser.position,
+            proposed_positions[loser.player_id],
+            collision_time,
+        )
+
+        knockback_direction = self._collision_knockback_direction(
+            winner,
+            loser,
+            proposed_positions,
+        )
+
+        knockback_position = (
+            collision_position[0]
+            + knockback_direction[0] * COLLISION_KNOCKBACK_DISTANCE,
+            collision_position[1]
+            + knockback_direction[1] * COLLISION_KNOCKBACK_DISTANCE,
+        )
+
+        return self._clamp_player_position(knockback_position)

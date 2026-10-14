@@ -13,7 +13,6 @@ from app.game.constants import (
     WALL_BOUNCE_SPEED_FACTOR,
     GOAL_RESTART_WAIT_TICS,
     FIELD_CENTER,
-    CONTEST_SCORE_MARGIN,
 )
 from app.game.engine import GameEngine, KickResolution, ContestResolution
 from app.game.models.actions import MoveAction, KickAction, WaitAction
@@ -28,7 +27,7 @@ from app.game.physics import (
     position_at_time,
     calculate_kick_velocity,
     calculate_ball_state_after,
-    direction_to,
+    normalize_vector,
 )
 
 
@@ -934,7 +933,7 @@ def test_resolve_player_collisions_stops_loser_at_collision_point(
     assert final_positions[player_b.player_id] != (10.0, 10.0)
 
 
-def test_resolve_player_collisions_uses_collision_position(
+def test_resolve_player_collisions_applies_knockback_from_collision_point(
     match_snapshot,
 ):
     engine = GameEngine()
@@ -979,7 +978,7 @@ def test_resolve_player_collisions_uses_collision_position(
 
     assert collision_t is not None
 
-    expected_loser_position = position_at_time(
+    collision_position = position_at_time(
         player_b.position,
         proposed_positions[player_b.player_id],
         collision_t,
@@ -991,9 +990,164 @@ def test_resolve_player_collisions_uses_collision_position(
         match_id=1,
     )
 
-    assert final_positions[player_b.player_id] == pytest.approx(
-        expected_loser_position
+    loser_position = final_positions[player_b.player_id]
+
+    assert loser_position != pytest.approx(collision_position)
+    assert loser_position[0] < collision_position[0]
+
+
+def test_collision_knockback_when_winner_is_stationary_bounces_loser_back(
+    match_snapshot,
+):
+    engine = GameEngine()
+
+    winner = replace(
+        match_snapshot.players_a[0],
+        position=(10.0, 10.0),
     )
+
+    loser = replace(
+        match_snapshot.players_b[0],
+        position=(12.0, 10.0),
+    )
+
+    proposed_positions = {
+        winner.player_id: (10.0, 10.0),
+        loser.player_id: (10.0, 10.0),
+    }
+
+    direction = engine._collision_knockback_direction(
+        winner,
+        loser,
+        proposed_positions,
+    )
+
+    assert direction == pytest.approx((1.0, 0.0))
+
+
+def test_collision_knockback_when_loser_is_stationary_moves_opposite_winner(
+    match_snapshot,
+):
+    engine = GameEngine()
+
+    winner = replace(
+        match_snapshot.players_a[0],
+        position=(10.0, 10.0),
+    )
+
+    loser = replace(
+        match_snapshot.players_b[0],
+        position=(12.0, 10.0),
+    )
+
+    proposed_positions = {
+        winner.player_id: (12.0, 10.0),
+        loser.player_id: (12.0, 10.0),
+    }
+
+    direction = engine._collision_knockback_direction(
+        winner,
+        loser,
+        proposed_positions,
+    )
+
+    assert direction == pytest.approx((-1.0, 0.0))
+
+
+def test_collision_knockback_position_is_clamped_inside_field(
+    match_snapshot,
+):
+    engine = GameEngine()
+
+    winner = replace(
+        match_snapshot.players_a[0],
+        position=(PLAYER_RADIUS, 10.0),
+    )
+
+    loser = replace(
+        match_snapshot.players_b[0],
+        position=(PLAYER_RADIUS + 0.5, 10.0),
+    )
+
+    proposed_positions = {
+        winner.player_id: (PLAYER_RADIUS, 10.0),
+        loser.player_id: (PLAYER_RADIUS + 1.5, 10.0),
+    }
+
+    position = engine._collision_knockback_position(
+        winner,
+        loser,
+        proposed_positions,
+        collision_time=0.0,
+    )
+
+    assert position[0] == PLAYER_RADIUS
+    assert PLAYER_RADIUS <= position[1] <= FIELD_HEIGHT - PLAYER_RADIUS
+
+
+def test_collision_knockback_uses_relative_direction_when_both_move(
+    match_snapshot,
+):
+    engine = GameEngine()
+
+    winner = replace(
+        match_snapshot.players_a[0],
+        position=(10.0, 10.0),
+    )
+
+    loser = replace(
+        match_snapshot.players_b[0],
+        position=(12.0, 12.0),
+    )
+
+    proposed_positions = {
+        winner.player_id: (12.0, 10.0),
+        loser.player_id: (12.0, 10.0),
+    }
+
+    direction = engine._collision_knockback_direction(
+        winner,
+        loser,
+        proposed_positions,
+    )
+
+    expected = normalize_vector(
+        (
+            0.0 - 1.0,
+            -1.0 - 0.0,
+        )
+    )
+
+    assert direction == pytest.approx(expected)
+
+
+def test_collision_knockback_same_direction_uses_opposite_winner_direction(
+    match_snapshot,
+):
+    engine = GameEngine()
+
+    winner = replace(
+        match_snapshot.players_a[0],
+        position=(10.0, 10.0),
+    )
+
+    loser = replace(
+        match_snapshot.players_b[0],
+        position=(12.0, 10.0),
+    )
+
+    proposed_positions = {
+        winner.player_id: (11.0, 10.0),
+        loser.player_id: (13.0, 10.0),
+    }
+
+    direction = engine._collision_knockback_direction(
+        winner,
+        loser,
+        proposed_positions,
+    )
+
+    assert direction == pytest.approx((-1.0, 0.0))
 
 
 def test_collision_contest_prefers_higher_weighted_score(

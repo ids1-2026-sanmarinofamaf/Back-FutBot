@@ -580,6 +580,23 @@ def calculate_kick_velocity(
     )
 
 
+def normalize_vector(
+    vector: tuple[float, float],
+) -> tuple[float, float]:
+    magnitude = hypot(
+        vector[0],
+        vector[1],
+    )
+
+    if magnitude == 0.0:
+        raise ValueError("Cannot normalize zero vector")
+
+    return (
+        vector[0] / magnitude,
+        vector[1] / magnitude,
+    )
+
+
 def _validate_pacss(pacss: int) -> None:
     """
     Validate that a PACSS attribute is within the valid range.
