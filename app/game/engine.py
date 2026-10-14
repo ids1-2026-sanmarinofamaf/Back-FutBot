@@ -6,7 +6,7 @@ from app.game.models.match import Match, MatchSnapshot
 from app.game.models.player_in_match import PlayerInMatchSnapshot
 from app.game.models.actions import MoveAction, KickAction, WaitAction
 from app.game.types import Position, Side, BallState
-from app.game.constants import(
+from app.game.constants import (
     TIC_DURATION,
     FIELD_HEIGHT,
     FIELD_WIDTH,
@@ -18,9 +18,9 @@ from app.game.constants import(
     WALL_BOUNCE_SPEED_FACTOR,
     GOAL_RESTART_WAIT_TICS,
     FIELD_CENTER,
-    RESTART_BALL_SPEED,
+    CONTEST_SCORE_MARGIN,
     )
-from app.game.physics import(
+from app.game.physics import (
     max_move_speed,
     control_range,
     max_kick_force,
@@ -197,25 +197,27 @@ class GameEngine:
         if not valid_kickers:
             return None
 
-        best_key = max(
-            self._kick_contest_key(snapshot, player)
+        scores = {
+            player.player_id: self._kick_contest_score(player)
             for player in valid_kickers
-        )
+        }
 
-        tied_players = [
+        best_score = max(scores.values())
+
+        contenders = [
             player
             for player in valid_kickers
-            if self._kick_contest_key(snapshot, player) == best_key
+            if best_score - scores[player.player_id] <= CONTEST_SCORE_MARGIN
         ]
 
-        if len(tied_players) == 1:
-            winner = tied_players[0]
+        if len(contenders) == 1:
+            winner = contenders[0]
         else:
             winner = self._seeded_tiebreak(
                 match_id=match_id,
                 current_tick=snapshot.current_tick,
                 contest_type="kick",
-                players=tied_players,
+                players=contenders,
             )
 
         loser_ids = tuple(
@@ -611,62 +613,29 @@ class GameEngine:
         )
 
 
-    def _kick_contest_key(
+    def _kick_contest_score(
         self,
-        snapshot: MatchSnapshot,
         player: PlayerInMatchSnapshot,
-    ) -> tuple[float, float, int, int]:
-        effective_control = effective_physical_value(
+    ) -> float:
+        return self._weighted_pacss_score(
             player.control,
-            player.collision_penalty_remaining,
-            control_range,
-        )
-
-        effective_speed = effective_physical_value(
             player.speed,
-            player.collision_penalty_remaining,
-            max_move_speed,
-        )
-
-        player_side = self._get_player_side(
-            snapshot,
-            player.player_id,
-        )
-
-        last_conceding_advantage = (
-            1
-            if player_side == snapshot.last_conceding_side
-            else 0
-        )
-
-        return (
-            effective_control,
-            effective_speed,
+            player.agility,
+            player.power,
             player.strength,
-            last_conceding_advantage,
         )
 
 
-    def _collision_contest_key(
+    def _collision_contest_score(
         self,
         player: PlayerInMatchSnapshot,
-    ) -> tuple[int, float, float]:
-        effective_power = effective_physical_value(
-            player.power,
-            player.collision_penalty_remaining,
-            max_kick_force,
-        )
-
-        effective_speed = effective_physical_value(
-            player.speed,
-            player.collision_penalty_remaining,
-            max_move_speed,
-        )
-
-        return (
+    ) -> float:
+        return self._weighted_pacss_score(
             player.strength,
-            effective_power,
-            effective_speed,
+            player.power,
+            player.speed,
+            player.control,
+            player.agility,
         )
 
 
@@ -716,25 +685,27 @@ class GameEngine:
         current_tick: int,
         match_id: int,
     ) -> ContestResolution:
-        best_key = max(
-            self._collision_contest_key(player)
+        scores = {
+            player.player_id: self._collision_contest_score(player)
             for player in players
-        )
+        }
 
-        tied_players = [
+        best_score = max(scores.values())
+
+        contenders = [
             player
             for player in players
-            if self._collision_contest_key(player) == best_key
+            if best_score - scores[player.player_id] <= CONTEST_SCORE_MARGIN
         ]
 
-        if len(tied_players) == 1:
-            winner = tied_players[0]
+        if len(contenders) == 1:
+            winner = contenders[0]
         else:
             winner = self._seeded_tiebreak(
                 match_id=match_id,
                 current_tick=current_tick,
                 contest_type="collision",
-                players=tied_players,
+                players=contenders,
             )
 
         loser_ids = tuple(
@@ -1021,3 +992,19 @@ class GameEngine:
         rng = random.Random(seed)
 
         return rng.choice(ordered_players)
+
+    @staticmethod
+    def _weighted_pacss_score(
+        primary: int,
+        secondary_a: int,
+        secondary_b: int,
+        tertiary_a: int,
+        tertiary_b: int,
+    ) -> float:
+        return (
+            primary * 0.4
+            + secondary_a * 0.2
+            + secondary_b * 0.2
+            + tertiary_a * 0.1
+            + tertiary_b * 0.1
+        )
