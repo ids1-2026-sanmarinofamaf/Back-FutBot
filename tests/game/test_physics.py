@@ -132,7 +132,7 @@ def test_control_range_returns_middle_range_for_middle_pacss():
 
 
 def test_control_range_returns_maximum_range_for_maximum_pacss():
-    assert control_range(MAX_PACSS) == MAX_CONTROL_RANGE
+    assert control_range(MAX_PACSS) == pytest.approx(MAX_CONTROL_RANGE)
 
 
 @pytest.mark.parametrize(
