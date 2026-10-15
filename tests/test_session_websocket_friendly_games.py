@@ -1,3 +1,4 @@
+
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -37,12 +38,14 @@ def make_game(
     club_name: str,
     participants: int,
     state: FriendlyGameState,
+    match_id: int | None = None,
 ):
     return SimpleNamespace(
         id=game_id,
         creator=SimpleNamespace(name=club_name),
         participations=[object() for _ in range(participants)],
         state=state,
+        match_id=match_id,
     )
 
 
@@ -102,6 +105,7 @@ def test_session_websocket_sends_initial_available_friendly_games(
                 "current_participants": 1,
                 "capacity": 2,
                 "state": "POR_COMENZAR",
+                "match_id": None,
             }
         ]
     }
@@ -234,6 +238,7 @@ def test_create_friendly_game_broadcasts_created_game_to_all_connections(
                 "current_participants": 1,
                 "capacity": 2,
                 "state": "POR_COMENZAR",
+                "match_id": None,
             }
         ]
     }
@@ -294,6 +299,7 @@ def test_join_friendly_game_broadcasts_updated_capacity_to_all_connections(
                 "current_participants": 2,
                 "capacity": 2,
                 "state": "POR_COMENZAR",
+                "match_id": None,
             }
         ]
     }
@@ -318,6 +324,7 @@ def test_start_friendly_game_broadcasts_updated_state_to_all_connections(
         club_name="Creator Club",
         participants=2,
         state=FriendlyGameState.JUGANDO,
+        match_id=900,
     )
 
     with (
@@ -352,6 +359,7 @@ def test_start_friendly_game_broadcasts_updated_state_to_all_connections(
                 "current_participants": 2,
                 "capacity": 2,
                 "state": "JUGANDO",
+                "match_id": 900,
             }
         ]
     }

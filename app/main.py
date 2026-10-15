@@ -2,6 +2,7 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 from app.api import auth, users, friendly_games, sessions_websocket
+from app.services.startup_service import recover_interrupted_games
 
 
 from sqlalchemy import text
@@ -27,6 +28,8 @@ async def lifespan(app: FastAPI):
     # 1. STARTUP: runs before the server accepts requests
     with engine.connect() as connection:
         connection.execute(text("SELECT 1"))
+
+    recover_interrupted_games()
     yield
     # 2. SHUTDOWN: runs while the server is shutting down (Ctrl+C, deploy, etc.)
     engine.dispose()
