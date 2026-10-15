@@ -10,6 +10,7 @@ from sqlalchemy import text
 from app.database import engine
 from app.api import friendly_games, players
 from app.api import behaviors
+from app.api import leagues
 
 
 
@@ -49,6 +50,7 @@ app.include_router(users.router)
 app.include_router(sessions_websocket.router)
 app.include_router(friendly_game_websocket_router)
 app.include_router(behaviors.router)
+app.include_router(leagues.router)
 
 
 @app.get("/")
