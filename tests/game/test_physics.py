@@ -34,6 +34,8 @@ from app.game.physics import (
     calculate_ball_next_position,
     calculate_kick_velocity,
     calculate_ball_next_state,
+    calculate_ball_state_after,
+    calculate_ball_speed_after_distance,
 )
 
 
@@ -552,4 +554,109 @@ def test_calculate_ball_next_state_stops_below_threshold():
     assert next_state == (
         (20.0, 10.0),
         (0.0, 0.0),
+    )
+
+
+def test_ball_speed_after_zero_distance_returns_initial_speed():
+    result = calculate_ball_speed_after_distance(
+        initial_speed=10.0,
+        distance=0.0,
+    )
+
+    assert result == pytest.approx(10.0)
+
+
+def test_ball_speed_after_distance_is_lower_than_initial_speed():
+    result = calculate_ball_speed_after_distance(
+        initial_speed=10.0,
+        distance=1.0,
+    )
+
+    assert result is not None
+    assert result < 10.0
+    assert result > 0.0
+
+
+def test_ball_speed_after_longer_distance_is_lower():
+    speed_after_short_distance = calculate_ball_speed_after_distance(
+        initial_speed=15.0,
+        distance=2.0,
+    )
+
+    speed_after_long_distance = calculate_ball_speed_after_distance(
+        initial_speed=15.0,
+        distance=5.0,
+    )
+
+    assert speed_after_short_distance is not None
+    assert speed_after_long_distance is not None
+
+    assert (
+        speed_after_long_distance
+        < speed_after_short_distance
+    )
+
+
+def test_ball_speed_after_distance_returns_none_if_ball_stops_before_target():
+    result = calculate_ball_speed_after_distance(
+        initial_speed=2.0,
+        distance=100.0,
+    )
+
+    assert result is None
+
+
+def test_ball_speed_after_distance_returns_none_when_initial_speed_is_stopped():
+    result = calculate_ball_speed_after_distance(
+        initial_speed=BALL_STOP_THRESHOLD,
+        distance=1.0,
+    )
+
+    assert result is None
+
+
+def test_ball_speed_after_distance_rejects_negative_distance():
+    with pytest.raises(ValueError):
+        calculate_ball_speed_after_distance(
+            initial_speed=10.0,
+            distance=-1.0,
+        )
+
+
+def test_ball_speed_after_distance_rejects_negative_speed():
+    with pytest.raises(ValueError):
+        calculate_ball_speed_after_distance(
+            initial_speed=-1.0,
+            distance=1.0,
+        )
+
+
+def test_ball_speed_after_distance_rejects_speed_above_maximum():
+    with pytest.raises(ValueError):
+        calculate_ball_speed_after_distance(
+            initial_speed=MAX_BALL_SPEED + 1.0,
+            distance=1.0,
+        )
+
+
+def test_ball_speed_after_distance_matches_ball_simulation():
+    initial_speed = 10.0
+
+    position, velocity = calculate_ball_state_after(
+        (
+            (0.0, 0.0),
+            (initial_speed, 0.0),
+        ),
+        TIC_DURATION,
+    )
+
+    travelled_distance = position[0]
+
+    result = calculate_ball_speed_after_distance(
+        initial_speed,
+        travelled_distance,
+    )
+
+    assert result == pytest.approx(
+        velocity[0],
     )
