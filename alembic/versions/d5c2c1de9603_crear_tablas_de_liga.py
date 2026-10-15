@@ -1,7 +1,7 @@
 """crear tablas de liga
 
 Revision ID: d5c2c1de9603
-Revises: c3a9d2e1f4b7
+Revises: e8b335ca55cb
 Create Date: 2026-10-13 01:01:30.504709
 
 """
@@ -13,7 +13,7 @@ import sqlalchemy as sa
 
 # revision identifiers, used by Alembic.
 revision: str = 'd5c2c1de9603'
-down_revision: Union[str, Sequence[str], None] = 'c3a9d2e1f4b7'
+down_revision: Union[str, Sequence[str], None] = 'e8b335ca55cb'
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
