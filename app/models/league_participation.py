@@ -10,6 +10,7 @@ from app.database import Base
 if TYPE_CHECKING:
     from app.models.league import League
     from app.models.club import Club 
+    from app.models.roster import Roster
 
 class LeagueParticipation(Base):
     __tablename__ = "league_participations"
@@ -35,6 +36,7 @@ class LeagueParticipation(Base):
     # composite PK: a club joins a given league only once
     league_id: Mapped[int] = mapped_column(ForeignKey("leagues.id", ondelete="CASCADE"), primary_key=True)
     club_id: Mapped[int] = mapped_column(ForeignKey("clubs.id", ondelete="CASCADE"), primary_key=True)
+    roster_id: Mapped[int] = mapped_column(ForeignKey("rosters.id"),nullable=False)
     points: Mapped[int] = mapped_column(default=0, server_default="0")
     matches_played: Mapped[int] = mapped_column(default=0, server_default="0")
     matches_won: Mapped[int] = mapped_column(default=0, server_default="0")
@@ -44,3 +46,4 @@ class LeagueParticipation(Base):
     goals_against: Mapped[int] = mapped_column(default=0, server_default="0")
     league: Mapped["League"] = relationship(back_populates="league_participations")
     club: Mapped["Club"] = relationship(back_populates="league_participations")
+    roster: Mapped["Roster"] = relationship("Roster")
