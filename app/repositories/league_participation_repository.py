@@ -25,3 +25,22 @@ def delete_participation(
 ) -> None:
     db.delete(participation)
     db.flush()
+
+
+# create and persist leagueParticipation
+def create_participation(
+    db: Session,
+    league_id: int,
+    club_id: int,
+    roster_id: int,
+) -> LeagueParticipation:
+    participation = LeagueParticipation(
+        league_id=league_id,
+        club_id=club_id,
+        roster_id=roster_id,
+    )
+
+    db.add(participation)
+    db.flush()
+
+    return participation
