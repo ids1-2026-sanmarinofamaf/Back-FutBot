@@ -9,6 +9,11 @@ from app.repositories import (
     roster_repository,
 )
 
+from app.services.league_websocket_service import (
+    league_connection_manager,
+    build_league_user_event,
+)
+
 # add this classes in order to distinguish the errors
 class LeagueNotFound(Exception):
     pass
@@ -26,7 +31,7 @@ class LeagueParticipationNotFound(Exception):
     pass
 
 
-def leave_league(
+async def leave_league(
     db: Session,
     league_id: int,
     user_id: int,
@@ -66,6 +71,13 @@ def leave_league(
         if participation is None:
             raise LeagueParticipationNotFound("User is not participating in this league")
 
+        # build the event before 
+        event = build_league_user_event(
+            league=league,
+            club=club,
+            event_type="user_left",
+        )
+
         # get the roster associated with the participation
         roster = participation.roster
 
@@ -81,3 +93,11 @@ def leave_league(
     except Exception:
         db.rollback()
         raise
+
+    # broadcast the event after a successful commit
+    # if we perform the broadcast immediately after the commit, 
+    # a websocket error could trigger a rollback, and we don’t want that.
+    await league_connection_manager.broadcast(
+        league_id=league_id,
+        state=event,
+    )
