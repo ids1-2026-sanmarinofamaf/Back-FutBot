@@ -1,4 +1,3 @@
-
 from fastapi import (
     APIRouter,
     Query,
@@ -110,9 +109,14 @@ async def league_websocket(
 
         # build the initial lobby state
         initial_state = build_league_lobby_state(league)
+        user_id = user.id
 
     # accept and register the WebSocket connection
-    await league_connection_manager.connect(league_id,websocket)
+    await league_connection_manager.connect(
+        league_id,
+        user_id,
+        websocket,
+    )
 
     try:
         # when a user connect to a league websocket, we send the currente league state
@@ -127,4 +131,8 @@ async def league_websocket(
 
     finally:
         # remove the connection when it closes
-        league_connection_manager.disconnect(league_id,websocket)
+        league_connection_manager.disconnect(
+            league_id,
+            user_id,
+            websocket,
+        )

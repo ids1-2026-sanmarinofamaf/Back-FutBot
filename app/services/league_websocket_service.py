@@ -13,50 +13,89 @@ from app.schemas.league_websocket import (
 class LeagueConnectionManager:
 
     def __init__(self):
-        # league_id -> websocket connections
-        self.active_connections: dict[int, list[WebSocket]] = {}
+        # league_id -> user_id -> websocket connections
+        self.active_connections: dict[int, dict[int, set[WebSocket]]] = {}
 
-    
+    # accept and register a new WebSocket connection
     async def connect(
         self,
         league_id: int,
+        user_id: int,
         websocket: WebSocket,
     ) -> None:
-        # accept and register a new WebSocket connection
         await websocket.accept()
 
-        if league_id not in self.active_connections:
-            self.active_connections[league_id] = []
+        league_connections = self.active_connections.setdefault(
+            league_id, {}
+        )
 
-        self.active_connections[league_id].append(websocket)
+        league_connections.setdefault(user_id, set()).add(websocket)
 
+     # remove a WebSocket connection from its league
     def disconnect(
         self,
         league_id: int,
+        user_id: int,
         websocket: WebSocket,
     ) -> None:
-        # remove a WebSocket connection from its league
-        connections = self.active_connections.get(league_id)
+        league_connections = self.active_connections.get(league_id)
 
-        if connections is None:
+        if league_connections is None:
             return
 
-        if websocket in connections:
-            connections.remove(websocket)
+        user_connections = league_connections.get(user_id)
 
-        if not connections:
+        if user_connections is None:
+            return
+
+        user_connections.discard(websocket)
+
+        if not user_connections:
+            league_connections.pop(user_id, None)
+
+        if not league_connections:
             self.active_connections.pop(league_id, None)
 
+    async def disconnect_user(
+        self,
+        league_id: int,
+        user_id: int,
+    ) -> None:
+        league_connections = self.active_connections.get(league_id)
+
+        if league_connections is None:
+            return
+
+        connections = list(league_connections.pop(user_id, set()))
+
+        if not league_connections:
+            self.active_connections.pop(league_id, None)
+
+        for websocket in connections:
+            try:
+                await websocket.close(
+                    code=1008,
+                    reason="User left the league",
+                )
+            except Exception:
+                pass
+
+    # close all WebSocket connections associated with a league
     async def close_lobby(
         self,
         league_id: int,
         code: int = 1000,
         reason: str = "Lobby closed",
     ) -> None:
-        # close all WebSocket connections associated with a league
-        connections = list(
-            self.active_connections.get(league_id, [])
+        league_connections = self.active_connections.pop(
+            league_id, {}
         )
+
+        connections = [
+            websocket
+            for user_connections in league_connections.values()
+            for websocket in user_connections
+        ]
 
         for websocket in connections:
             try:
@@ -67,13 +106,11 @@ class LeagueConnectionManager:
             except Exception:
                 pass
 
-        self.active_connections.pop(league_id, None)
-
     # send the current lobby state to a specific connection (used when a user join to a new league)
     async def send_state(
         self,
         websocket: WebSocket,
-        state,
+        state: LeagueLobbyState,
     ) -> None:
         await websocket.send_json(state.model_dump())
 
@@ -81,24 +118,29 @@ class LeagueConnectionManager:
     async def broadcast(
         self,
         league_id: int,
-        state,
+        state: LeagueLobbyState | LeagueUserEvent,
     ) -> None:
-
-        connections = list(
-            self.active_connections.get(league_id, [])
+        league_connections = self.active_connections.get(
+            league_id, {}
         )
 
-        disconnected = []
+        # Copy connections to avoid changes during await
+        connections = [
+            (user_id, websocket)
+            for user_id, user_connections in league_connections.items()
+            for websocket in user_connections
+        ]
 
-        for websocket in connections:
+        for user_id, websocket in connections:
             try:
                 await websocket.send_json(state.model_dump())
             except Exception:
-                disconnected.append(websocket)
-
-        for websocket in disconnected:
-            self.disconnect(league_id, websocket)
-
+                self.disconnect(
+                    league_id,
+                    user_id,
+                    websocket,
+                )
+                
 # build the list of clubs participating in the league
 def build_league_lobby_state(
     league: League,

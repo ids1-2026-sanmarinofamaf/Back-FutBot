@@ -97,7 +97,12 @@ async def leave_league(
     # broadcast the event after a successful commit
     # if we perform the broadcast immediately after the commit, 
     # a websocket error could trigger a rollback, and we don’t want that.
-    await league_connection_manager.broadcast(
-        league_id=league_id,
-        state=event,
-    )
+    try:
+        await league_connection_manager.broadcast(
+            league_id=league_id,
+            state=event,
+        )
+    finally:
+        # close all connections belonging to the user
+        # who left the league
+        await league_connection_manager.disconnect_user(league_id=league_id,user_id=user_id)
