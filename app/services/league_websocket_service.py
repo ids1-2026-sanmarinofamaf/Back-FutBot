@@ -1,4 +1,14 @@
+from typing import Literal
+
 from fastapi import WebSocket
+
+from app.models.league import League
+from app.models.club import Club
+from app.schemas.league_websocket import (
+    LeagueLobbyState,
+    LeagueLobbyUser,
+    LeagueUserEvent,
+)
 
 class LeagueConnectionManager:
 
@@ -88,6 +98,48 @@ class LeagueConnectionManager:
 
         for websocket in disconnected:
             self.disconnect(league_id, websocket)
+
+# build the list of clubs participating in the league
+def build_league_lobby_state(
+    league: League,
+) -> LeagueLobbyState:
+    users = [
+        LeagueLobbyUser(
+            club_id=participation.club_id,
+            user_name=participation.club.name,
+            avatar=participation.club.avatar,
+            is_creator=(
+                participation.club_id == league.creator_id
+            ),
+        )
+        for participation in league.league_participations
+    ]
+    # the actual lobby state
+    return LeagueLobbyState(
+        league_id=league.id,
+        state=league.state.value,
+        current_users=len(users),
+        users=users,
+    )
+
+# build an event when a club joins or leaves a league 
+def build_league_user_event(
+    league: League,
+    club: Club,
+    event_type: Literal["user_joined", "user_left"],
+) -> LeagueUserEvent:
+    
+    return LeagueUserEvent(
+        type=event_type,
+        league_id=league.id,
+        user=LeagueLobbyUser(
+            club_id=club.id,
+            user_name=club.name,
+            avatar=club.avatar,
+            is_creator=(club.id == league.creator_id),
+        ),
+    )
+
 
 # shared instance used to manage all league WebSocket connections
 league_connection_manager = LeagueConnectionManager()
