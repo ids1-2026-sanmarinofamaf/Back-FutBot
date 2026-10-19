@@ -1,5 +1,3 @@
-
-
 from sqlalchemy import select, or_
 from sqlalchemy.orm import Session
 
@@ -60,3 +58,14 @@ def get_available_by_id(
             or_(Behavior.is_default.is_(True), Behavior.club_id == club_id)
         )
     )
+
+def get_available_by_name(db: Session, club_id: int, name: str) -> Behavior | None:
+    return db.scalars(
+        select(Behavior)
+        .where(
+            Behavior.name == name,
+            or_(Behavior.is_default.is_(True), Behavior.club_id == club_id),
+        )
+        # si hay uno del club con el mismo nombre que un default, gana el del club
+        .order_by(Behavior.is_default.asc())
+    ).first()

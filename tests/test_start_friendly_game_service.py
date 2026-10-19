@@ -70,6 +70,7 @@ def test_start_friendly_game_success(
     mock_start_match,
 ):
     db = MagicMock()
+    db.execute.return_value.scalar_one.return_value = 50
 
     (
         friendly_game,
@@ -97,7 +98,6 @@ def test_start_friendly_game_success(
     behaviors = [MagicMock(), MagicMock()]
 
     mock_load_match_behaviors.return_value = behaviors
-    mock_start_match.return_value = 50
 
     result = asyncio.run(
         start_friendly_game(
@@ -164,7 +164,8 @@ def test_start_friendly_game_success(
         state=FriendlyGameState.JUGANDO,
     )
 
-    db.commit.assert_called_once()
+    assert db.commit.call_count == 2
+    assert friendly_game.match_id == 50
 
 @patch("app.services.friendly_game_service.friendly_game_repository")
 def test_start_friendly_game_not_found(

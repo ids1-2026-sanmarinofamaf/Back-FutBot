@@ -324,6 +324,7 @@ def test_successful_start_broadcasts_match_id(
     mock_close_lobby,
 ):
     db = MagicMock()
+    db.execute.return_value.scalar_one.return_value = 55
     creator = MagicMock()
     creator.role = FriendlyGameRole.CREATOR
     guest = MagicMock()

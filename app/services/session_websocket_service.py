@@ -27,6 +27,7 @@ def build_friendly_games_payload(
                 ),
                 capacity=2,
                 state=friendly_game.state,
+                match_id=friendly_game.match_id,
             )
             for friendly_game in friendly_games
         ]

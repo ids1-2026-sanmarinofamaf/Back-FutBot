@@ -34,6 +34,11 @@ class FriendlyGame(Base):
         nullable=False
     )
 
+    match_id: Mapped[int | None] = mapped_column(
+        nullable=True,
+        unique=True,
+    )
+
     state: Mapped[FriendlyGameState] = mapped_column(
         SAEnum(FriendlyGameState),
         nullable=False,
