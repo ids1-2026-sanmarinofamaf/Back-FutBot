@@ -26,6 +26,17 @@ class LeagueParticipationNotFound(Exception):
     pass
 
 
+class LeagueForbidden(Exception):
+    pass
+
+
+class InvalidLeagueState(Exception):
+    pass
+
+
+class InsufficientLeagueParticipants(Exception):
+    pass
+
 def leave_league(
     db: Session,
     league_id: int,
@@ -76,6 +87,61 @@ def leave_league(
         roster_repository.delete_roster(db=db,roster=roster)
 
         # confirm both deletions in the db
+        db.commit()
+
+    except Exception:
+        db.rollback()
+        raise
+
+
+def start_league(
+    db: Session,
+    league_id: int,
+    user_id: int,
+    requested_state: LeagueState,
+) -> None:
+    try:
+        league = league_repository.get_by_id(
+            db=db,
+            league_id=league_id,
+        )
+
+        if league is None:
+            raise LeagueNotFound("League does not exist")
+
+        club = club_repository.get_by_user_id(
+            db=db,
+            user_id=user_id,
+        )
+
+        if club is None or league.creator_id != club.id:
+            raise LeagueForbidden("Only the league creator can start the league")
+
+        if requested_state != LeagueState.INICIADA:
+            raise InvalidLeagueState("Invalid state transition")
+
+        if league.state != LeagueState.POR_COMENZAR:
+            raise LeagueAlreadyStarted("League cannot be started")
+
+        # verify that the league has 3 or more participants
+        participants_count = (
+            league_participation_repository.count_participations(
+                db=db,
+                league_id=league_id,
+            )
+        )
+
+        if participants_count < 3:
+            raise InsufficientLeagueParticipants("League does not have enough participants")
+
+        # update state
+        league_repository.update_state(
+            db=db,
+            league=league,
+            state=LeagueState.INICIADA,
+        )
+
+        # persist if no errors
         db.commit()
 
     except Exception:
