@@ -17,9 +17,11 @@ from app.services.league_service import (
     join_league,
     AlreadyParticipating,
     InvalidRoster,
+    InvalidLeaguePassword,
 )
 from app.models.league_participation import LeagueParticipation
 from app.models.roster import Roster
+from app.core.security import get_password_hash
 
 
 
@@ -322,3 +324,114 @@ def test_join_league_rejects_foreign_player(
     )
 
     assert roster_count == 0
+
+
+@pytest.fixture
+def test_private_league(db, test_league):
+    test_league.privacy = LeaguePrivacy.PRIVADA
+    test_league.password_hash = get_password_hash("secret123")
+
+    db.flush()
+
+    return test_league
+
+
+def test_join_private_league_without_password(
+    db,
+    test_user,
+    test_club,
+    test_private_league,
+    valid_join_data,
+):
+    valid_join_data.password = None
+
+    with pytest.raises(InvalidLeaguePassword):
+        join_league(
+            db=db,
+            league_id=test_private_league.id,
+            user_id=test_user.id,
+            data=valid_join_data,
+        )
+
+    participation_count = db.scalar(
+        select(func.count())
+        .select_from(LeagueParticipation)
+        .where(LeagueParticipation.league_id == test_private_league.id)
+    )
+
+    assert participation_count == 0
+
+    roster_count = db.scalar(
+        select(func.count())
+        .select_from(Roster)
+        .where(Roster.club_id == test_club.id)
+    )
+
+    assert roster_count == 0
+
+
+def test_join_private_league_with_wrong_password(
+    db,
+    test_user,
+    test_club,
+    test_private_league,
+    valid_join_data,
+):
+    valid_join_data.password = "wrong_password"
+
+    with pytest.raises(InvalidLeaguePassword):
+        join_league(
+            db=db,
+            league_id=test_private_league.id,
+            user_id=test_user.id,
+            data=valid_join_data,
+        )
+
+    participation_count = db.scalar(
+        select(func.count())
+        .select_from(LeagueParticipation)
+        .where(LeagueParticipation.league_id == test_private_league.id)
+    )
+
+    assert participation_count == 0
+
+    roster_count = db.scalar(
+        select(func.count())
+        .select_from(Roster)
+        .where(Roster.club_id == test_club.id)
+    )
+
+    assert roster_count == 0
+
+
+def test_join_private_league_with_correct_password(
+    db,
+    test_user,
+    test_club,
+    test_private_league,
+    valid_join_data,
+):
+    valid_join_data.password = "secret123"
+
+    join_league(
+            db=db,
+            league_id=test_private_league.id,
+            user_id=test_user.id,
+            data=valid_join_data,
+        )
+
+    participation_count = db.scalar(
+        select(func.count())
+        .select_from(LeagueParticipation)
+        .where(LeagueParticipation.league_id == test_private_league.id)
+    )
+
+    assert participation_count == 1
+
+    roster_count = db.scalar(
+        select(func.count())
+        .select_from(Roster)
+        .where(Roster.club_id == test_club.id)
+    )
+
+    assert roster_count == 1
