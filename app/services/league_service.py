@@ -1,5 +1,4 @@
 from sqlalchemy.orm import Session
-from sqlalchemy.exc import IntegrityError
 
 from app.models.league import LeagueState, LeaguePrivacy
 from app.models.league_participation import LeagueParticipation
@@ -246,14 +245,7 @@ def join_league(
 
         db.commit()
 
-        return participation, roster
-
-    except IntegrityError:
-        db.rollback()
-
-        raise LeagueNotAvailable(
-            "League is no longer available"
-        )
+        return participation, roster 
 
     except Exception:
         db.rollback()
