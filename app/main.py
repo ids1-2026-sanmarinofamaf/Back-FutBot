@@ -53,6 +53,7 @@ app.include_router(behaviors.router)
 app.include_router(leagues.router)
 
 
+
 @app.get("/")
 def root():
     return{"message": "FutBot backend running"}

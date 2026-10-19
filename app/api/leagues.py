@@ -16,7 +16,13 @@ from app.services.league_service import (
     LeagueCreatorCannotLeave,
     LeagueAlreadyStarted,
     LeagueParticipationNotFound,
+    start_league,
+    LeagueForbidden,
+    InvalidLeagueState,
+    InsufficientLeagueParticipants,
 )
+
+from app.schemas.league import LeagueUpdate
 
 
 router = APIRouter(prefix="/leagues",tags=["Leagues"])
@@ -58,3 +64,45 @@ def leave(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=str(error),
         )
+
+
+@router.patch(
+    "/{league_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+)
+def start(
+    league_id: int,
+    data: LeagueUpdate,
+    db: Session = Depends(get_db),
+    current_user=Depends(get_current_user),
+):
+    try:
+        start_league(
+            db=db,
+            league_id=league_id,
+            user_id=current_user.id,
+            requested_state=data.state,
+        )
+
+    except LeagueNotFound as error:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=str(error),
+        )
+
+    except LeagueForbidden as error:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=str(error),
+        )
+
+    except (
+        LeagueAlreadyStarted,
+        InvalidLeagueState,
+        InsufficientLeagueParticipants,
+    ) as error:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=str(error),
+        )
+
