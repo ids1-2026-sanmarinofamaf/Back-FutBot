@@ -144,12 +144,12 @@ def test_join_private_league_with_wrong_password_returns_403(
     valid_join_payload["password"] = "wrongpassword"
     with patch(
         "app.api.leagues.join_league",
-        side_effect=InvalidLeaguePassword("Password is incorrect"),
+        side_effect=InvalidLeaguePassword("Incorrect password"),
     ):
         response = authenticated_client.post(JOIN_URL, json=valid_join_payload)
 
     assert response.status_code == 403
-    assert response.json()["detail"] == "Password is incorrect"
+    assert response.json()["detail"] == "Incorrect password"
 
 
 def test_join_private_league_with_correct_password_returns_200(

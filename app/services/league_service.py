@@ -142,7 +142,7 @@ def join_league(
             
             if not verify_password(password, password_hash):
                 raise InvalidLeaguePassword(
-                    "Password is incorrect"
+                    "Incorrect password"
                 )
 
 
