@@ -413,12 +413,16 @@ def test_join_private_league_with_correct_password(
 ):
     valid_join_data.password = "secret123"
 
-    join_league(
+    participation, roster = join_league(
             db=db,
             league_id=test_private_league.id,
             user_id=test_user.id,
             data=valid_join_data,
         )
+
+    assert participation.league_id == test_private_league.id
+    assert participation.club_id == test_club.id
+    assert participation.roster_id == roster.id
 
     participation_count = db.scalar(
         select(func.count())
