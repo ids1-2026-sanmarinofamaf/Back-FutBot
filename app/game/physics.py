@@ -20,6 +20,7 @@ from .constants import (
     KICK_INERTIA_FACTOR,
     BALL_STOP_THRESHOLD,
     COLLISION_PENALTY,
+    MAX_CONTROLLABLE_BALL_SPEED,
 )
 
 
@@ -272,36 +273,52 @@ def calculate_kick_force_factor(
     validate_direction(kick_direction)
 
     if kick_force <= 0:
-        raise ValueError(f"Fuerza maxima invalida: {kick_force}")
+        raise ValueError(
+            f"Fuerza maxima invalida: {kick_force}"
+        )
 
     if distance == 0:
         return 0.0
 
-    max_distance = calculate_kick_travel_distance(
+    max_initial_speed = _kick_initial_speed(
         ball_velocity,
         kick_direction,
         kick_force,
     )
 
-    if distance >= max_distance:
+    max_arrival_speed = calculate_ball_speed_after_distance(
+        max_initial_speed,
+        distance,
+    )
+
+    # Ni siquiera con máxima fuerza llega suficientemente rápido.
+    if (
+        max_arrival_speed is None
+        or max_arrival_speed < MAX_CONTROLLABLE_BALL_SPEED
+    ):
         return 1.0
 
     low = 0.0
     high = 1.0
 
-    # Binary search to found the smallest factor which reach the target
     for _ in range(12):
         middle = (low + high) / 2
 
-        test_force = kick_force * middle
-
-        travel_distance = calculate_kick_travel_distance(
+        initial_speed = _kick_initial_speed(
             ball_velocity,
             kick_direction,
-            test_force,
+            kick_force * middle,
         )
 
-        if travel_distance < distance:
+        arrival_speed = calculate_ball_speed_after_distance(
+            initial_speed,
+            distance,
+        )
+
+        if (
+            arrival_speed is None
+            or arrival_speed < MAX_CONTROLLABLE_BALL_SPEED
+        ):
             low = middle
         else:
             high = middle
@@ -580,6 +597,23 @@ def calculate_kick_velocity(
     )
 
 
+def normalize_vector(
+    vector: tuple[float, float],
+) -> tuple[float, float]:
+    magnitude = hypot(
+        vector[0],
+        vector[1],
+    )
+
+    if magnitude == 0.0:
+        raise ValueError("Cannot normalize zero vector")
+
+    return (
+        vector[0] / magnitude,
+        vector[1] / magnitude,
+    )
+
+
 def _validate_pacss(pacss: int) -> None:
     """
     Validate that a PACSS attribute is within the valid range.
@@ -738,3 +772,65 @@ def _kick_initial_speed(
         max(kick_force + inherited_velocity, 0.0),
         MAX_BALL_SPEED,
     )
+
+
+def calculate_ball_speed_after_distance(
+    initial_speed: float,
+    distance: float,
+) -> float | None:
+    """
+    Return the ball speed after travelling a given distance.
+
+    Returns None if the ball stops before reaching the distance.
+    """
+    validate_distance(distance)
+
+    if not 0.0 <= initial_speed <= MAX_BALL_SPEED:
+        raise ValueError(
+            f"Velocidad de pelota invalida: {initial_speed}"
+        )
+
+    if distance == 0.0:
+        return initial_speed
+
+    if initial_speed <= BALL_STOP_THRESHOLD:
+        return None
+
+    remaining_distance = distance
+    current_speed = initial_speed
+
+    while current_speed > BALL_STOP_THRESHOLD:
+        deceleration = _ball_deceleration(current_speed)
+
+        next_speed = max(
+            current_speed
+            - deceleration * TIC_DURATION,
+            0.0,
+        )
+
+        if next_speed <= BALL_STOP_THRESHOLD:
+            next_speed = 0.0
+
+        average_speed = (
+            current_speed + next_speed
+        ) / 2
+
+        step_distance = (
+            average_speed * TIC_DURATION
+        )
+
+        if step_distance >= remaining_distance:
+            return sqrt(
+                max(
+                    current_speed**2
+                    - 2
+                    * deceleration
+                    * remaining_distance,
+                    0.0,
+                )
+            )
+
+        remaining_distance -= step_distance
+        current_speed = next_speed
+
+    return None
