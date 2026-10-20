@@ -16,11 +16,34 @@ from app.services.league_service import (
     LeagueCreatorCannotLeave,
     LeagueAlreadyStarted,
     LeagueParticipationNotFound,
+    ClubNotFound,
+    create_league
 )
+from app.schemas.league import LeagueCreate
 
 
 router = APIRouter(prefix="/leagues",tags=["Leagues"])
 
+
+@router.post("", status_code=status.HTTP_201_CREATED)
+def create(
+    data: LeagueCreate,
+    db: Session = Depends(get_db),
+    current_user= Depends(get_current_user), 
+):
+    try: 
+        league = create_league(
+            db,
+            data,
+            current_user.id
+        )
+        return {"league_id": league.id}
+    # here we use the exception classes
+    except ClubNotFound as error:
+        raise HTTPException(
+            status_code= status.HTTP_404_NOT_FOUND,
+            detail=str(error),
+        )
 
 @router.delete(
     "/{league_id}/users/me",
