@@ -5,8 +5,8 @@ import random
 from app.game.models.match import Match, MatchSnapshot
 from app.game.models.player_in_match import PlayerInMatchSnapshot
 from app.game.models.actions import MoveAction, KickAction, WaitAction
-from app.game.types import Position, Side, BallState
-from app.game.constants import(
+from app.game.types import Position, Side, BallState, Direction
+from app.game.constants import (
     TIC_DURATION,
     FIELD_HEIGHT,
     FIELD_WIDTH,
@@ -18,9 +18,10 @@ from app.game.constants import(
     WALL_BOUNCE_SPEED_FACTOR,
     GOAL_RESTART_WAIT_TICS,
     FIELD_CENTER,
-    RESTART_BALL_SPEED,
+    CONTEST_SCORE_MARGIN,
+    COLLISION_KNOCKBACK_DISTANCE,
     )
-from app.game.physics import(
+from app.game.physics import (
     max_move_speed,
     control_range,
     max_kick_force,
@@ -31,6 +32,7 @@ from app.game.physics import(
     calculate_kick_velocity,
     calculate_ball_state_after,
     direction_to,
+    normalize_vector,
     kick_cooldown_tics,
 )
 
@@ -78,7 +80,6 @@ class GameEngine:
         if snapshot.current_tick == 0:
             self._restitute_ball(
                 match,
-                Side.LEFT,
             )
             return
 
@@ -133,7 +134,6 @@ class GameEngine:
         if restart_ending:
             self._restitute_ball(
                 match,
-                match.last_conceding_side,
             )
 
 
@@ -197,25 +197,27 @@ class GameEngine:
         if not valid_kickers:
             return None
 
-        best_key = max(
-            self._kick_contest_key(snapshot, player)
+        scores = {
+            player.player_id: self._kick_contest_score(player)
             for player in valid_kickers
-        )
+        }
 
-        tied_players = [
+        best_score = max(scores.values())
+
+        contenders = [
             player
             for player in valid_kickers
-            if self._kick_contest_key(snapshot, player) == best_key
+            if best_score - scores[player.player_id] <= CONTEST_SCORE_MARGIN
         ]
 
-        if len(tied_players) == 1:
-            winner = tied_players[0]
+        if len(contenders) == 1:
+            winner = contenders[0]
         else:
             winner = self._seeded_tiebreak(
                 match_id=match_id,
                 current_tick=snapshot.current_tick,
                 contest_type="kick",
-                players=tied_players,
+                players=contenders,
             )
 
         loser_ids = tuple(
@@ -349,10 +351,12 @@ class GameEngine:
 
             for loser_id in contest.loser_ids:
                 loser = players[loser_id]
+                winner = players[contest.winner_id]
 
-                final_positions[loser_id] = position_at_time(
-                    loser.position,
-                    proposed_positions[loser_id],
+                final_positions[loser_id] = self._collision_knockback_position(
+                    winner,
+                    loser,
+                    proposed_positions,
                     time,
                 )
 
@@ -481,8 +485,10 @@ class GameEngine:
         # Score for the opposite side.
         if conceding_side == Side.LEFT:
             match.participation_b.goals += 1
+            conceding_participation = match.participation_a
         else:
             match.participation_a.goals += 1
+            conceding_participation = match.participation_b
 
         match.last_conceding_side = conceding_side
 
@@ -508,6 +514,29 @@ class GameEngine:
                 player.forced_wait_remaining = (
                     GOAL_RESTART_WAIT_TICS + 1
                 )
+
+        # Give the conceding team restart possesion.
+        restart_player = max(
+            (
+                player
+                for player in conceding_participation.players
+                if player.is_on_field
+            ),
+            key=lambda player: player.control,
+        )
+
+        restart_distance = PLAYER_RADIUS + BALL_RADIUS
+
+        if conceding_side == Side.LEFT:
+            restart_player.position = (
+                FIELD_CENTER[0] - restart_distance,
+                FIELD_CENTER[1],
+            )
+        else:
+            restart_player.position = (
+                FIELD_CENTER[0] + restart_distance,
+                FIELD_CENTER[1],
+            )
 
 
     def _update_timers(
@@ -535,7 +564,6 @@ class GameEngine:
     def _restitute_ball(
             self,
             match: Match,
-            side: Side,
     ) -> None:
         match.ball.position = FIELD_CENTER
         match.ball.velocity = (0.0, 0.0)
@@ -611,62 +639,29 @@ class GameEngine:
         )
 
 
-    def _kick_contest_key(
+    def _kick_contest_score(
         self,
-        snapshot: MatchSnapshot,
         player: PlayerInMatchSnapshot,
-    ) -> tuple[float, float, int, int]:
-        effective_control = effective_physical_value(
+    ) -> float:
+        return self._weighted_pacss_score(
             player.control,
-            player.collision_penalty_remaining,
-            control_range,
-        )
-
-        effective_speed = effective_physical_value(
             player.speed,
-            player.collision_penalty_remaining,
-            max_move_speed,
-        )
-
-        player_side = self._get_player_side(
-            snapshot,
-            player.player_id,
-        )
-
-        last_conceding_advantage = (
-            1
-            if player_side == snapshot.last_conceding_side
-            else 0
-        )
-
-        return (
-            effective_control,
-            effective_speed,
+            player.agility,
+            player.power,
             player.strength,
-            last_conceding_advantage,
         )
 
 
-    def _collision_contest_key(
+    def _collision_contest_score(
         self,
         player: PlayerInMatchSnapshot,
-    ) -> tuple[int, float, float]:
-        effective_power = effective_physical_value(
-            player.power,
-            player.collision_penalty_remaining,
-            max_kick_force,
-        )
-
-        effective_speed = effective_physical_value(
-            player.speed,
-            player.collision_penalty_remaining,
-            max_move_speed,
-        )
-
-        return (
+    ) -> float:
+        return self._weighted_pacss_score(
             player.strength,
-            effective_power,
-            effective_speed,
+            player.power,
+            player.speed,
+            player.control,
+            player.agility,
         )
 
 
@@ -716,25 +711,27 @@ class GameEngine:
         current_tick: int,
         match_id: int,
     ) -> ContestResolution:
-        best_key = max(
-            self._collision_contest_key(player)
+        scores = {
+            player.player_id: self._collision_contest_score(player)
             for player in players
-        )
+        }
 
-        tied_players = [
+        best_score = max(scores.values())
+
+        contenders = [
             player
             for player in players
-            if self._collision_contest_key(player) == best_key
+            if best_score - scores[player.player_id] <= CONTEST_SCORE_MARGIN
         ]
 
-        if len(tied_players) == 1:
-            winner = tied_players[0]
+        if len(contenders) == 1:
+            winner = contenders[0]
         else:
             winner = self._seeded_tiebreak(
                 match_id=match_id,
                 current_tick=current_tick,
                 contest_type="collision",
-                players=tied_players,
+                players=contenders,
             )
 
         loser_ids = tuple(
@@ -1021,3 +1018,114 @@ class GameEngine:
         rng = random.Random(seed)
 
         return rng.choice(ordered_players)
+
+    @staticmethod
+    def _weighted_pacss_score(
+        primary: int,
+        secondary_a: int,
+        secondary_b: int,
+        tertiary_a: int,
+        tertiary_b: int,
+    ) -> float:
+        return (
+            primary * 0.4
+            + secondary_a * 0.2
+            + secondary_b * 0.2
+            + tertiary_a * 0.1
+            + tertiary_b * 0.1
+        )
+
+
+    def _collision_knockback_direction(
+        self,
+        winner: PlayerInMatchSnapshot,
+        loser: PlayerInMatchSnapshot,
+        proposed_positions: dict[int, Position],
+    ) -> Direction:
+        winner_moved = (
+            winner.position
+            != proposed_positions[winner.player_id]
+        )
+
+        loser_moved = (
+            loser.position
+            != proposed_positions[loser.player_id]
+        )
+
+        winner_direction = (
+            direction_to(
+                winner.position,
+                proposed_positions[winner.player_id],
+            )
+            if winner_moved
+            else None
+        )
+
+        loser_direction = (
+            direction_to(
+                loser.position,
+                proposed_positions[loser.player_id],
+            )
+            if loser_moved
+            else None
+        )
+
+        if winner_direction is None and loser_direction is None:
+            return direction_to(
+                winner.position,
+                loser.position,
+            )
+
+        if loser_direction is None:
+            return (
+                -winner_direction[0],
+                -winner_direction[1],
+            )
+
+        if winner_direction is None:
+            return (
+                -loser_direction[0],
+                -loser_direction[1],
+            )
+
+        relative_direction = (
+            loser_direction[0] - winner_direction[0],
+            loser_direction[1] - winner_direction[1],
+        )
+
+        if relative_direction == (0.0, 0.0):
+            return (
+                -winner_direction[0],
+                -winner_direction[1],
+            )
+
+        return normalize_vector(relative_direction)
+
+
+    def _collision_knockback_position(
+        self,
+        winner: PlayerInMatchSnapshot,
+        loser: PlayerInMatchSnapshot,
+        proposed_positions: dict[int, Position],
+        collision_time: float,
+    ) -> Position:
+        collision_position = position_at_time(
+            loser.position,
+            proposed_positions[loser.player_id],
+            collision_time,
+        )
+
+        knockback_direction = self._collision_knockback_direction(
+            winner,
+            loser,
+            proposed_positions,
+        )
+
+        knockback_position = (
+            collision_position[0]
+            + knockback_direction[0] * COLLISION_KNOCKBACK_DISTANCE,
+            collision_position[1]
+            + knockback_direction[1] * COLLISION_KNOCKBACK_DISTANCE,
+        )
+
+        return self._clamp_player_position(knockback_position)
