@@ -1,6 +1,10 @@
 from sqlalchemy.orm import Session
 
-from app.models.league import LeagueState
+from app.core.security import get_password_hash
+
+from app.schemas.league import LeagueCreate
+
+from app.models.league import League, LeagueState, LeaguePrivacy
 
 from app.repositories import (
     league_repository,
@@ -24,6 +28,38 @@ class LeagueAlreadyStarted(Exception):
 
 class LeagueParticipationNotFound(Exception):
     pass
+
+class ClubNotFound(Exception):
+    pass
+
+def create_league(db: Session, data: LeagueCreate , current_user_id):
+    try:
+        club = club_repository.get_by_user_id(db, current_user_id)
+        if club is None:
+            raise ClubNotFound("Club does not exist")
+
+        password_hash = None
+        if data.privacy == LeaguePrivacy.PRIVADA:
+            password_hash = get_password_hash(data.password)
+
+        league = League(
+            name = data.name,
+            match_duration = data.match_duration,
+            max_clubs = data.max_clubs,
+            privacy = data.privacy,
+            password_hash = password_hash,
+            creator_id = club.id
+        )
+        
+        league_repository.create(db=db, league=league)
+        db.commit()
+        return league
+    
+    except Exception:
+        db.rollback()
+        raise
+
+
 
 
 def leave_league(
@@ -81,3 +117,4 @@ def leave_league(
     except Exception:
         db.rollback()
         raise
+
