@@ -90,9 +90,8 @@ def start_match(
         game_engine=engine,
     )
     # register the match in the active matches
-    match_id = register_match(
-        match
-    )
+    register_match(match)
+    
     # create the background task that executes the match asynchronously
     task = asyncio.create_task(
         _run_match(
@@ -111,4 +110,4 @@ def start_match(
         _running_match_tasks.discard
     )
 
-    return match_id
+    return match.match_id

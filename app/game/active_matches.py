@@ -1,21 +1,21 @@
-from itertools import count
-
 from app.game.models.match import Match
 
 
 active_matches: dict[int, Match] = {}
 
-_match_id_counter = count(1)
+# here only register the match in memory
+def register_match(match: Match) -> None:
+    match_id = match.match_id
 
-# registers a match in memory and assigns it a unique id
-# during the lifetime of the backend process.
-def register_match(match: Match) -> int:
-    match_id = next(_match_id_counter)
+    if match_id <= 0:
+        raise ValueError("Invalid match ID")
 
-    match.match_id = match_id
+    if match_id in active_matches:
+        raise ValueError(
+            f"Match {match_id} is already active"
+        )
+
     active_matches[match_id] = match
-
-    return match_id
 
 
 def get_match(match_id: int) -> Match | None:
