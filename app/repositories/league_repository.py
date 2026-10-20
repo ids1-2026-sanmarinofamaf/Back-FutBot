@@ -11,3 +11,9 @@ def get_by_id(
 ) -> League | None:
     return db.get(League, league_id)
 
+def create(db: Session, league: League):
+    # use flush instead of commit to keep transaction control outside this function, so we can rollback later
+    db.add(league)
+    db.flush()
+    db.refresh(league)  # Recarga el objeto desde la base
+    return league
