@@ -150,19 +150,20 @@ def test_execution_updates_players_and_clears_pending(participation):
     assert participation.pending_substitution is None
     assert participation.last_substitution_period == Period.FIRST_QUARTER
 
-
-def test_incoming_inherits_current_position_start_and_behavior(participation):
-    # checks that the incoming player inherits the current position and behavior
+# checks that the incoming player inherits the current position and behavior
+def test_incoming_inherits_starting_position_and_behavior(participation):
     outgoing = participation.get_player(1)
     incoming = participation.get_player(4)
+
     outgoing.position = (15.0, 7.0)
     outgoing.starting_position = (8.0, 5.0)
+
     participation.plan_substitution(1, 4, Period.FIRST_QUARTER)
-    outgoing.current_behavior_id = 25  
+    outgoing.current_behavior_id = 25
 
     participation.execute_pending_substitution(Period.FIRST_QUARTER)
 
-    assert incoming.position == (15.0, 7.0)
+    assert incoming.position == (8.0, 5.0)
     assert incoming.starting_position == (8.0, 5.0)
     assert incoming.current_behavior_id == 25
     assert outgoing.current_behavior_id is None
@@ -188,13 +189,11 @@ def test_incoming_keeps_own_pacss(participation):
         incoming.strength,
     ) == (10, 20, 30, 40, 50)
 
-
-def test_execution_resets_velocities_and_timers(participation):
-    # checks that velocities and temporary penalties are reset
+def test_execution_resets_timers(participation):
+    # checks temporary penalties are reset
     outgoing = participation.get_player(1)
     incoming = participation.get_player(4)
-    outgoing.velocity = (3.0, 2.0)
-    incoming.velocity = (4.0, -1.0)
+
     incoming.kick_cooldown_remaining = 3
     incoming.forced_wait_remaining = 2
     incoming.collision_penalty_remaining = 4
@@ -202,8 +201,6 @@ def test_execution_resets_velocities_and_timers(participation):
     participation.plan_substitution(1, 4, Period.FIRST_QUARTER)
     participation.execute_pending_substitution(Period.FIRST_QUARTER)
 
-    assert incoming.velocity == (0.0, 0.0)
-    assert outgoing.velocity == (0.0, 0.0)
     assert incoming.kick_cooldown_remaining == 0
     assert incoming.forced_wait_remaining == 0
     assert incoming.collision_penalty_remaining == 0

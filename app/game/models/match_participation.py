@@ -122,10 +122,9 @@ class MatchParticipation:
         outgoing = self.get_player(pending.player_out_id)
         incoming = self.get_player(pending.player_in_id)
 
-        # the incoming player takes the outgoing player's place.
-        incoming.position = outgoing.position
+        # after a break, each player returns to their starting position
+        incoming.position = outgoing.starting_position
         incoming.starting_position = outgoing.starting_position
-        incoming.velocity = (0.0, 0.0)
 
         # inherit the current behavior from the outgoing player.
         incoming.current_behavior_id = outgoing.current_behavior_id
@@ -139,7 +138,6 @@ class MatchParticipation:
         outgoing.is_on_field = False
         incoming.is_on_field = True
 
-        outgoing.velocity = (0.0, 0.0)
         outgoing.current_behavior_id = None
 
         # mark the period as used and remove the pending request.
