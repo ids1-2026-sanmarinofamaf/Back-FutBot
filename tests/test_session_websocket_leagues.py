@@ -1,13 +1,15 @@
 from types import SimpleNamespace
-from unittest.mock import patch, AsyncMock
+from unittest.mock import patch, AsyncMock, MagicMock
 
 import pytest
 
+from app.schemas.friendly_game import FriendlyGamesSessionPayload
 from app.models.league import LeaguePrivacy, LeagueState
 from app.schemas.league import LeaguesSessionPayload, LeagueSessionItem
 from app.services.session_websocket_service import (
     build_leagues_payload,
     broadcast_leagues,
+    send_session_snapshot_to_connection,
 )
 
 def make_league(
@@ -178,5 +180,61 @@ async def test_broadcast_leagues_sends_payload(
                     "state": "POR_COMENZAR",
                 }
             ]
+        }
+    )
+
+
+@pytest.mark.asyncio
+@patch(
+    "app.services.session_websocket_service.build_leagues_payload"
+)
+@patch(
+    "app.services.session_websocket_service.build_friendly_games_payload"
+)
+async def test_send_session_snapshot_includes_both_categories(
+    mock_build_friendly,
+    mock_build_leagues,
+):
+    db = object()
+    websocket = MagicMock()
+    websocket.send_json = AsyncMock()
+
+    mock_build_friendly.return_value = FriendlyGamesSessionPayload(
+        friendly_games=[]
+    )
+    mock_build_leagues.return_value = LeaguesSessionPayload(
+        leagues=[
+            LeagueSessionItem(
+                league_id=1,
+                name="Liga Argentina",
+                current_participants=4,
+                capacity=8,
+                privacy=LeaguePrivacy.PUBLICA,
+                state=LeagueState.POR_COMENZAR,
+            )
+        ]
+    )
+
+    await send_session_snapshot_to_connection(
+        websocket=websocket,
+        db=db,
+    )
+
+    mock_build_friendly.assert_called_once_with(db)
+    mock_build_leagues.assert_called_once_with(db)
+
+    websocket.send_json.assert_awaited_once_with(
+        {
+            "friendly_games": [],
+            "leagues": [
+                {
+                    "league_id": 1,
+                    "name": "Liga Argentina",
+                    "current_participants": 4,
+                    "capacity": 8,
+                    "privacy": "PUBLICA",
+                    "state": "POR_COMENZAR",
+                }
+            ],
         }
     )

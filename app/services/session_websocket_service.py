@@ -91,3 +91,18 @@ async def broadcast_leagues(
     await manager.broadcast(
         payload.model_dump(mode="json")
     )
+
+
+async def send_session_snapshot_to_connection(
+    websocket: WebSocket,
+    db: Session,
+) -> None:
+    friendly_payload = build_friendly_games_payload(db)
+    leagues_payload = build_leagues_payload(db)
+
+    await websocket.send_json(
+        {
+            **friendly_payload.model_dump(mode="json"),
+            **leagues_payload.model_dump(mode="json"),
+        }
+    )
