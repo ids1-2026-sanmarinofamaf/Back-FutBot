@@ -1,9 +1,14 @@
 from types import SimpleNamespace
-from unittest.mock import patch
+from unittest.mock import patch, AsyncMock
+
+import pytest
 
 from app.models.league import LeaguePrivacy, LeagueState
-from app.services.session_websocket_service import build_leagues_payload
-
+from app.schemas.league import LeaguesSessionPayload, LeagueSessionItem
+from app.services.session_websocket_service import (
+    build_leagues_payload,
+    broadcast_leagues,
+)
 
 def make_league(
     league_id: int,
@@ -129,3 +134,49 @@ def test_build_leagues_payload_does_not_expose_sensitive_fields(
     assert "password_hash" not in league_data
     assert "creator_id" not in league_data
     assert "league_participations" not in league_data
+
+
+@pytest.mark.asyncio
+@patch(
+    "app.services.session_websocket_service.manager.broadcast",
+    new_callable=AsyncMock,
+)
+@patch(
+    "app.services.session_websocket_service.build_leagues_payload"
+)
+async def test_broadcast_leagues_sends_payload(
+    mock_build_payload,
+    mock_broadcast,
+):
+    db = object()
+
+    mock_build_payload.return_value = LeaguesSessionPayload(
+        leagues=[
+            LeagueSessionItem(
+                league_id=1,
+                name="Liga Argentina",
+                current_participants=4,
+                capacity=8,
+                privacy=LeaguePrivacy.PUBLICA,
+                state=LeagueState.POR_COMENZAR,
+            )
+        ]
+    )
+
+    await broadcast_leagues(db)
+
+    mock_build_payload.assert_called_once_with(db)
+    mock_broadcast.assert_awaited_once_with(
+        {
+            "leagues": [
+                {
+                    "league_id": 1,
+                    "name": "Liga Argentina",
+                    "current_participants": 4,
+                    "capacity": 8,
+                    "privacy": "PUBLICA",
+                    "state": "POR_COMENZAR",
+                }
+            ]
+        }
+    )
