@@ -1,6 +1,6 @@
 
 from types import SimpleNamespace
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock, patch, AsyncMock
 
 import pytest
 from fastapi.testclient import TestClient
@@ -148,3 +148,49 @@ def test_leave_league_invalid_id(mock_leave, api_dependencies):
 
     assert response.status_code == 422
     mock_leave.assert_not_called()
+
+
+def test_leave_league_success_broadcasts_leagues(api_dependencies):
+    user, db = api_dependencies
+
+    with (
+        patch("app.api.leagues.leave_league") as mock_leave,
+        patch(
+            "app.api.leagues.session_websocket_service.broadcast_leagues",
+            new_callable=AsyncMock,
+        ) as mock_broadcast,
+    ):
+        response = client.delete("/leagues/10/users/me")
+
+    assert response.status_code == 204
+
+    mock_leave.assert_called_once_with(
+        db=db,
+        league_id=10,
+        user_id=user.id,
+    )
+
+    mock_broadcast.assert_awaited_once_with(db)
+
+
+def test_leave_league_failure_does_not_broadcast(api_dependencies):
+    with (
+        patch(
+            "app.api.leagues.leave_league",
+            side_effect=LeagueCreatorCannotLeave(
+                "League creator cannot leave the league"
+            ),
+        ),
+        patch(
+            "app.api.leagues.session_websocket_service.broadcast_leagues",
+            new_callable=AsyncMock,
+        ) as mock_broadcast,
+    ):
+        response = client.delete("/leagues/10/users/me")
+
+    assert response.status_code == 403
+    assert response.json() == {
+        "detail": "League creator cannot leave the league"
+    }
+
+    mock_broadcast.assert_not_awaited()

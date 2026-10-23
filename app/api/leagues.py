@@ -33,17 +33,21 @@ router = APIRouter(prefix="/leagues",tags=["Leagues"])
     "/{league_id}/users/me",
     status_code=status.HTTP_204_NO_CONTENT,
 )
-def leave(
+async def leave(
     league_id: int,
     db: Session = Depends(get_db),
     current_user=Depends(get_current_user),
 ):
     try:
-        leave_league(
+        await run_in_threadpool(
+            leave_league,
             db=db,
             league_id=league_id,
             user_id=current_user.id,
         )
+
+        await session_websocket_service.broadcast_leagues(db)
+
     # here we use the exception classes
     except LeagueCreatorCannotLeave as error:
         raise HTTPException(
