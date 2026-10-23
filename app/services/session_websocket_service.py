@@ -2,10 +2,14 @@ from fastapi import WebSocket
 from sqlalchemy.orm import Session
 
 from app.core.ws_manager import manager
-from app.repositories import friendly_game_repository
+from app.repositories import friendly_game_repository, league_repository
 from app.schemas.friendly_game import (
     FriendlyGameSessionItem,
     FriendlyGamesSessionPayload,
+)
+from app.schemas.league import (
+    LeagueSessionItem,
+    LeaguesSessionPayload,
 )
 
 
@@ -54,4 +58,26 @@ async def broadcast_friendly_games(
 
     await manager.broadcast(
         payload.model_dump(mode="json")
-    )   
+    )
+
+
+def build_leagues_payload(
+    db: Session,
+) -> LeaguesSessionPayload:
+    leagues = league_repository.get_visible_leagues(db)
+
+    return LeaguesSessionPayload(
+        leagues=[
+            LeagueSessionItem(
+                league_id=league.id,
+                name=league.name,
+                current_participants=len(
+                    league.league_participations
+                ),
+                capacity=league.max_clubs,
+                privacy=league.privacy,
+                state=league.state,
+            )
+            for league in leagues
+        ]
+    )

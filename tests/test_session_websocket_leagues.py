@@ -1,0 +1,131 @@
+from types import SimpleNamespace
+from unittest.mock import patch
+
+from app.models.league import LeaguePrivacy, LeagueState
+from app.services.session_websocket_service import build_leagues_payload
+
+
+def make_league(
+    league_id: int,
+    name: str = "Test League",
+    participants: int = 2,
+    capacity: int = 8,
+    privacy: LeaguePrivacy = LeaguePrivacy.PUBLICA,
+    state: LeagueState = LeagueState.POR_COMENZAR,
+):
+    return SimpleNamespace(
+        id=league_id,
+        name=name,
+        league_participations=[
+            SimpleNamespace()
+            for _ in range(participants)
+        ],
+        max_clubs=capacity,
+        privacy=privacy,
+        state=state,
+        password_hash="secret_hash",
+        creator_id=99,
+    )
+
+
+@patch(
+    "app.services.session_websocket_service."
+    "league_repository.get_visible_leagues"
+)
+def test_build_leagues_payload_returns_empty_list(mock_get_visible):
+    mock_get_visible.return_value = []
+
+    db = object()
+
+    payload = build_leagues_payload(db)
+
+    assert payload.model_dump(mode="json") == {
+        "leagues": [],
+    }
+
+    mock_get_visible.assert_called_once_with(db)
+
+
+@patch(
+    "app.services.session_websocket_service."
+    "league_repository.get_visible_leagues"
+)
+def test_build_leagues_payload_maps_league_fields(mock_get_visible):
+    mock_get_visible.return_value = [
+        make_league(
+            league_id=1,
+            name="Liga Argentina",
+            participants=4,
+            capacity=8,
+        )
+    ]
+
+    payload = build_leagues_payload(object())
+
+    assert payload.model_dump(mode="json") == {
+        "leagues": [
+            {
+                "league_id": 1,
+                "name": "Liga Argentina",
+                "current_participants": 4,
+                "capacity": 8,
+                "privacy": "PUBLICA",
+                "state": "POR_COMENZAR",
+            }
+        ]
+    }
+
+
+@patch(
+    "app.services.session_websocket_service."
+    "league_repository.get_visible_leagues"
+)
+def test_build_leagues_payload_handles_private_started_league(
+    mock_get_visible,
+):
+    mock_get_visible.return_value = [
+        make_league(
+            league_id=2,
+            name="Liga Privada",
+            participants=6,
+            capacity=6,
+            privacy=LeaguePrivacy.PRIVADA,
+            state=LeagueState.INICIADA,
+        )
+    ]
+
+    payload = build_leagues_payload(object())
+
+    assert payload.model_dump(mode="json") == {
+        "leagues": [
+            {
+                "league_id": 2,
+                "name": "Liga Privada",
+                "current_participants": 6,
+                "capacity": 6,
+                "privacy": "PRIVADA",
+                "state": "INICIADA",
+            }
+        ]
+    }
+
+
+@patch(
+    "app.services.session_websocket_service."
+    "league_repository.get_visible_leagues"
+)
+def test_build_leagues_payload_does_not_expose_sensitive_fields(
+    mock_get_visible,
+):
+    mock_get_visible.return_value = [
+        make_league(league_id=3)
+    ]
+
+    payload = build_leagues_payload(object())
+
+    serialized = payload.model_dump(mode="json")
+    league_data = serialized["leagues"][0]
+
+    assert "password_hash" not in league_data
+    assert "creator_id" not in league_data
+    assert "league_participations" not in league_data
