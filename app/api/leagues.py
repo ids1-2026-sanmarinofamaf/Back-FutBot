@@ -37,11 +37,17 @@ def create(
             data,
             current_user.id
         )
-        return {"league_id": league.id}
+        return {"id_liga": league.id}
     # here we use the exception classes
     except ClubNotFound as error:
         raise HTTPException(
             status_code= status.HTTP_404_NOT_FOUND,
+            detail=str(error),
+        )
+    # invalid roster (players or behaviors)
+    except ValueError as error:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
             detail=str(error),
         )
 
