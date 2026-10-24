@@ -1,3 +1,4 @@
+
 import pytest
 from fastapi.testclient import TestClient
 
@@ -78,6 +79,8 @@ def auth_header(token):
     }
 
 
+# Tests for GET /clubes/me/behaviors
+
 def default_behavior_ids(db):
     return {
         behavior.id
@@ -148,6 +151,106 @@ def test_get_behaviors_user_without_club_returns_400(user, db):
     )
 
     assert response.status_code == 400
+
+
+# tests for GET /clubes/me/behaviors/{behavior_id}
+
+def test_get_behavior_by_id_returns_own_behavior(user, db):
+    behavior = Behavior(
+        club_id=user.club.id,
+        name="Delantero",
+        code=CODE,
+    )
+    db.add(behavior)
+    db.commit()
+    db.refresh(behavior)
+
+    response = client.get(
+        f"/clubes/me/behaviors/{behavior.id}",
+        headers=auth_header(login()),
+    )
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "behavior_id": behavior.id,
+        "name": "Delantero",
+        "code": CODE,
+    }
+
+
+def test_get_behavior_by_id_returns_default(user, db):
+    behavior = (
+        db.query(Behavior)
+        .filter(Behavior.is_default.is_(True))
+        .first()
+    )
+
+    assert behavior is not None
+
+    response = client.get(
+        f"/clubes/me/behaviors/{behavior.id}",
+        headers=auth_header(login()),
+    )
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "behavior_id": behavior.id,
+        "name": behavior.name,
+        "code": behavior.code,
+    }
+
+
+def test_get_behavior_by_id_other_club_returns_404(
+    user, other_club, db
+):
+    behavior = Behavior(
+        club_id=other_club.id,
+        name="Ajeno",
+        code=CODE,
+    )
+    db.add(behavior)
+    db.commit()
+    db.refresh(behavior)
+
+    response = client.get(
+        f"/clubes/me/behaviors/{behavior.id}",
+        headers=auth_header(login()),
+    )
+
+    assert response.status_code == 404
+
+
+def test_get_behavior_by_id_not_found(user, db):
+    max_id = (
+        db.query(Behavior.id)
+        .order_by(Behavior.id.desc())
+        .first()
+    )
+    nonexistent_id = max_id[0] + 1 if max_id else 1
+
+    response = client.get(
+        f"/clubes/me/behaviors/{nonexistent_id}",
+        headers=auth_header(login()),
+    )
+
+    assert response.status_code == 404
+
+
+def test_get_behavior_by_id_without_token():
+    response = client.get(
+        "/clubes/me/behaviors/1"
+    )
+
+    assert response.status_code == 401
+
+
+def test_get_behavior_by_id_invalid_token():
+    response = client.get(
+        "/clubes/me/behaviors/1",
+        headers=auth_header("invalid.token.value"),
+    )
+
+    assert response.status_code == 401
 
 
 def test_get_behavior_by_name_without_token_returns_401():

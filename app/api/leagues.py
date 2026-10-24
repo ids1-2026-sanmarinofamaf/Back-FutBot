@@ -4,23 +4,29 @@ from fastapi import (
     HTTPException,
     status,
 )
+from fastapi.concurrency import run_in_threadpool
 
 from sqlalchemy.orm import Session
 
 from app.database import get_db
 from app.api.deps import get_current_user
-
+from app.services import session_websocket_service
 from app.services.league_service import (
     leave_league,
     LeagueNotFound,
     LeagueCreatorCannotLeave,
     LeagueAlreadyStarted,
     LeagueParticipationNotFound,
+    join_league,
+    InvalidLeaguePassword,
+    LeagueFull,
+    InvalidRoster,
+    LeagueNotAvailable,
+    AlreadyParticipating,
     ClubNotFound,
-    create_league
+    create_league,
 )
-from app.schemas.league import LeagueCreate
-
+from app.schemas.league import LeagueCreate, LeagueJoin, LeagueJoinResponse
 
 router = APIRouter(prefix="/leagues",tags=["Leagues"])
 
@@ -51,21 +57,26 @@ def create(
             detail=str(error),
         )
 
+
 @router.delete(
     "/{league_id}/users/me",
     status_code=status.HTTP_204_NO_CONTENT,
 )
-def leave(
+async def leave(
     league_id: int,
     db: Session = Depends(get_db),
     current_user=Depends(get_current_user),
 ):
     try:
-        leave_league(
+        await run_in_threadpool(
+            leave_league,
             db=db,
             league_id=league_id,
             user_id=current_user.id,
         )
+
+        await session_websocket_service.broadcast_leagues(db)
+
     # here we use the exception classes
     except LeagueCreatorCannotLeave as error:
         raise HTTPException(
@@ -87,3 +98,62 @@ def leave(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=str(error),
         )
+
+
+@router.post(
+    "/{league_id}/users",
+    response_model=LeagueJoinResponse,
+    status_code=status.HTTP_200_OK,
+)
+async def join(
+    league_id: int,
+    data: LeagueJoin,
+    db: Session = Depends(get_db),
+    current_user=Depends(get_current_user),
+):
+    try:
+        participation, roster = await run_in_threadpool(
+            join_league,
+            db=db,
+            league_id=league_id,
+            user_id=current_user.id,
+            data=data,
+        )
+
+        await session_websocket_service.broadcast_leagues(db)
+
+        return LeagueJoinResponse(
+            league_id=league_id,
+            club_id=participation.club_id,
+            roster_id=roster.id,
+        )
+
+    except LeagueNotFound as error:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=str(error),
+        ) from error
+
+    except (
+        InvalidLeaguePassword,
+        LeagueFull
+    ) as error:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=str(error),
+        ) from error
+
+    except (
+        LeagueNotAvailable,
+        AlreadyParticipating,
+    ) as error:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=str(error),
+        ) from error
+
+    except InvalidRoster as error:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(error),
+        ) from error

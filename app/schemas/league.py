@@ -1,6 +1,6 @@
 from pydantic import BaseModel, Field, model_validator
 
-from app.models.league import LeaguePrivacy
+from app.models.league import LeagueState, LeaguePrivacy
 
 from app.schemas.roster import RosterCreate
 
@@ -32,3 +32,27 @@ class LeagueCreate(BaseModel):
         if not self.is_private and self.password:
             raise ValueError("Public leagues cannot have a password")
         return self
+
+
+class LeagueJoin(BaseModel):
+    roster: RosterCreate
+    password: str | None = None
+
+
+class LeagueJoinResponse(BaseModel):
+    league_id: int
+    club_id: int
+    roster_id: int
+
+
+class LeagueSessionItem(BaseModel):
+    league_id: int
+    name: str
+    current_participants: int
+    capacity: int
+    privacy: LeaguePrivacy
+    state: LeagueState
+
+
+class LeaguesSessionPayload(BaseModel):
+    leagues: list[LeagueSessionItem]
