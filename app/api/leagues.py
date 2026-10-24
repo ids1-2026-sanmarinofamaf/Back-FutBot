@@ -32,24 +32,28 @@ router = APIRouter(prefix="/leagues",tags=["Leagues"])
 
 
 @router.post("", status_code=status.HTTP_201_CREATED)
-def create(
+async def create(
     data: LeagueCreate,
     db: Session = Depends(get_db),
     current_user= Depends(get_current_user), 
 ):
     try: 
-        league = create_league(
+        league = await run_in_threadpool(
+            create_league,
             db,
             data,
             current_user.id
         )
+        await session_websocket_service.broadcast_leagues(db)
         return {"id_liga": league.id}
+    
     # here we use the exception classes
     except ClubNotFound as error:
         raise HTTPException(
             status_code= status.HTTP_404_NOT_FOUND,
             detail=str(error),
         )
+    
     # invalid roster (players or behaviors)
     except ValueError as error:
         raise HTTPException(
