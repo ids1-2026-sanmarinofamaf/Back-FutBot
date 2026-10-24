@@ -30,14 +30,21 @@ def valid_body(**overrides):
     return body
 
 
+
+from app.models.club_statistics import ClubStatistics
+
 @pytest.fixture(autouse=True)
 def clean_users():
     yield
+
     db = SessionLocal()
-    db.query(Club).delete()
-    db.query(User).delete()
-    db.commit()
-    db.close()
+    try:
+        db.query(ClubStatistics).delete()
+        db.query(Club).delete()
+        db.query(User).delete()
+        db.commit()
+    finally:
+        db.close()
 
 
 def count_users():
