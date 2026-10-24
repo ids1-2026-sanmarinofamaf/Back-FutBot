@@ -37,38 +37,32 @@ El entorno virtual tiene que estar activado **cada vez** que trabajes en el proy
 make install
 ```
 
-### 4. Crear el archivo `.env`
+### 4. Inicializar el entorno y la base de datos
 
 ```bash
-cp .env.example .env
+make setup
 ```
 
-Después abrí el `.env` y reemplazá el valor de `SECRET_KEY` por una clave generada con:
+Este comando automatiza la configuración inicial en un solo paso:
+1. Crea el archivo `.env` a partir de `.env.example` y autogenera una `SECRET_KEY` segura (si `.env` no existía).
+2. Levanta el contenedor de PostgreSQL en Docker (`make up`) y espera a que esté listo.
+3. Aplica todas las migraciones con Alembic (`make migrate`).
+4. Siembra los datos de desarrollo (`make seed`): crea las dos cuentas de prueba con sus respectivos clubes y sus 6 jugadores listos para jugar.
 
-```bash
-openssl rand -hex 32
-```
+> **Nota:** Si preferís configurar el `.env` manualmente, podés hacer `cp .env.example .env` y generar tu clave con `openssl rand -hex 32`.
 
-El resto de los valores ya viene listo para desarrollo local: `DATABASE_URL` apunta al
-Postgres de Docker. El `.env` se carga automáticamente con `python-dotenv` y está en
-`.gitignore`, así que nunca se commitea.
-
-### 5. Levantar el sistema
+### 5. Arrancar la API
 
 ```bash
 make run
 ```
 
-Este comando hace tres cosas en orden:
-
-1. Levanta PostgreSQL en Docker (`localhost:5432`) y espera a que esté listo.
-2. Aplica las migraciones de Alembic (crea las tablas).
-3. Arranca la API con recarga automática.
+Levanta el servidor Uvicorn con recarga automática en `http://127.0.0.1:8000`.
 
 ### 6. Verificar que funciona
 
 - API: http://127.0.0.1:8000
-- Documentación interactiva: http://127.0.0.1:8000/docs
+- Documentación interactiva (Swagger): http://127.0.0.1:8000/docs
 
 > Si aparece `ModuleNotFoundError: No module named 'app'`, verificá que el venv
 > esté activado y que estés parado en la raíz del repo.
@@ -79,10 +73,20 @@ Una vez hecha la puesta en marcha, el día a día es:
 
 ```bash
 source .venv/bin/activate   # activar el entorno virtual
-make run                    # levantar DB + migraciones + API
+make run                    # asegura DB + migraciones + arranca la API
 ```
 
-Para frenar: `Ctrl+C` corta la API y `make down` frena la base. Los datos se conservan.
+Para frenar: `Ctrl+C` corta la API y `make down` frena la base en Docker (los datos se conservan).
+
+### Si necesitás reiniciar todo de cero
+
+Si estuviste probando cambios o las migraciones quedaron en un estado inconsistente:
+
+```bash
+make reset-db
+```
+
+Borra la base por completo, la levanta de nuevo, corre las migraciones y vuelve a cargar los usuarios y jugadores de prueba.
 
 ### Después de cada `git pull`
 
@@ -95,21 +99,75 @@ make run       # aplica las migraciones nuevas y levanta la API
 
 | Comando | Qué hace |
 |---|---|
-| `make` / `make help` | Lista los comandos disponibles |
+| `make` / `make help` | Lista los comandos disponibles organizados por categoría |
+| `make setup` | Puesta en marcha inicial (crea `.env`, levanta Postgres, migra y siembra datos) |
 | `make install` | Instala las dependencias de Python |
-| `make up` | Levanta Postgres y espera a que esté listo |
+| `make run` | Levanta la DB, aplica migraciones y corre la API con recarga automática |
+| `make up` | Levanta Postgres en segundo plano y espera a que esté listo |
 | `make down` | Frena Postgres (los datos se conservan) |
-| `make migrate` | Aplica las migraciones pendientes |
+| `make down-v` | Frena Postgres y borra el volumen de datos |
+| `make reset-db` | Reinicia la base desde cero (borra volumen, levanta, migra y corre `seed`) |
+| `make seed` | Crea los dos usuarios de prueba con sus clubes y 6 jugadores cada uno |
+| `make migrate` | Aplica las migraciones pendientes con Alembic |
 | `make migration m="descripcion"` | Genera una migración nueva con autogenerate |
-| `make run` | Levanta la DB, aplica migraciones y corre la API |
-| `make test` | Corre los tests |
+| `make db-shell` | Abre una consola interactiva `psql` dentro del contenedor |
+| `make logs` | Sigue en vivo los logs del contenedor de base de datos |
+| `make test` | Corre toda la suite de tests (acepta `args="..."`, ej: `make test args="-k match"`) |
+| `make test-fast` | Corre tests deteniéndose en el primer fallo (`-x`) |
+| `make test-lf` | Re-ejecuta únicamente los tests que fallaron en la última corrida (`--lf`) |
+| `make test-cov` | Corre los tests y muestra el reporte de cobertura en consola |
+| `make test-game` | Corre exclusivamente los tests del motor de juego (`tests/game/`) |
+| `make test-api` | Corre exclusivamente los tests de endpoints y websockets |
+| `make check` | Verificación de salud completa antes de commitear |
+| `make clean` | Limpia caches (`__pycache__`, `.pytest_cache`) y base SQLite temporal |
+
+## Datos de prueba y desarrollo (`make seed` / `make reset-db`)
+
+Para probar la plataforma localmente y jugar partidos amistosos desde el frontend o Swagger, `make seed` (o `make reset-db`) genera automáticamente dos cuentas listas con sus respectivos clubes y los 6 jugadores necesarios (3 titulares y 3 suplentes, todos con PACSS = 60):
+
+### Cuenta 1 (Local / Retador)
+* **Email:** `test@futbot.com`
+* **Contraseña:** `test1234`
+* **Club:** `Test FC`
+* **Jugadores (Power: 60, Agility: 60, Control: 60, Speed: 60, Strength: 60):**
+  * Andy
+  * Santiago
+  * Santino
+  * Lotu
+  * Joaco
+  * Luca
+
+### Cuenta 2 (Visitante / Rival)
+* **Email:** `rival@futbot.com`
+* **Contraseña:** `rival1234`
+* **Club:** `Rival FC`
+* **Jugadores (Power: 60, Agility: 60, Control: 60, Speed: 60, Strength: 60):**
+  * Santi
+  * Julio
+  * Lean
+  * Chun
+  * Gonzalo
+  * Diego
+
+Si durante el desarrollo modificás modelos o migraciones y querés volver a **probar todo de cero**, ejecutá:
+
+```bash
+make reset-db
+```
+
+Este comando frena Postgres, elimina su volumen para descartar datos viejos, lo vuelve a levantar con el esquema nuevo migrado y recarga las cuentas y jugadores iniciales.
 
 ## Tests
 
-Los tests están en `tests/` y se corren con:
+Los tests están en `tests/` y se pueden correr con distintas variantes:
 
 ```bash
-make test
+make test             # Corre todos los tests
+make test-fast        # Se detiene en el primer error (-x)
+make test-lf          # Corre solo los últimos que fallaron (--lf)
+make test-game        # Corre los tests de simulación física y motor
+make test-api         # Corre los tests de endpoints y websockets
+make test args="-k match -v"  # Permite pasar argumentos personalizados a pytest
 ```
 
 Los tests **no usan la base de desarrollo**: `tests/conftest.py` apunta `DATABASE_URL` a una
@@ -141,11 +199,14 @@ Son solo para desarrollo.
 4. Aplicala localmente: `make migrate`.
 5. Commiteá la migración **en el mismo PR** que el cambio del modelo.
 
-### Comandos útiles de Docker
+### Comandos útiles para la base de datos
 
-* `docker compose down -v` : Frena la base **y borra todos los datos** (base limpia)
-* `docker compose logs -f db` : Muestra los logs de Postgres
-* `docker exec -it futbot-db psql -U futbot` : Abre una consola SQL
+En lugar de recordar los comandos largos de Docker, podés usar los atajos del Makefile:
+
+* `make reset-db` : Frena Postgres, **borra todos los datos**, levanta de nuevo, migra y siembra las cuentas/jugadores.
+* `make down-v` : Frena Postgres y borra el volumen persistente de datos.
+* `make logs` : Muestra los logs de Postgres en vivo.
+* `make db-shell` : Abre una consola interactiva `psql` dentro del contenedor.
 
 ## Dependencias
 
