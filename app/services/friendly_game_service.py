@@ -80,7 +80,6 @@ def _create_player_in_match(
         player_id=player.id,
 
         position=position,
-        velocity=(0.0, 0.0),
 
         starting_position=starting_position,
 

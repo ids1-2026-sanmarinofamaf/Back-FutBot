@@ -8,7 +8,6 @@ class PlayerInMatchSnapshot:
     player_id: int
 
     position: Position
-    velocity: Velocity
     starting_position: Position | None
 
     power: int
@@ -29,7 +28,6 @@ class PlayerInMatch:
     player_id: int  # we don't use a player to build it, since it would increase coupling too much, because player uses a database
 
     position: Position
-    velocity: Velocity
     starting_position: Position | None
 
     power: int      # repeat PACSS so we don't have to go fetch them from databases when we need them during the match
@@ -50,7 +48,6 @@ class PlayerInMatch:
             return PlayerInMatchSnapshot(
                     player_id=self.player_id,
                     position=self.position,
-                    velocity=self.velocity,
                     starting_position=self.starting_position,
                     power=self.power,
                     agility=self.agility,
