@@ -1,7 +1,12 @@
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
-from app.api import auth, users, friendly_games, sessions_websocket
+from app.api import (
+    auth, users,
+    friendly_games,
+    sessions_websocket,
+    matches,
+)
 from app.services.startup_service import recover_interrupted_games
 
 
@@ -52,7 +57,6 @@ app.include_router(friendly_game_websocket_router)
 app.include_router(behaviors.router)
 app.include_router(leagues.router)
 
-
 @app.get("/")
 def root():
     return{"message": "FutBot backend running"}
@@ -61,3 +65,4 @@ def root():
 app.include_router(friendly_games.router)
 app.include_router(players.router)
 app.include_router(match_websocket_router)
+app.include_router(matches.router)
