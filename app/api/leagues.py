@@ -4,12 +4,13 @@ from fastapi import (
     HTTPException,
     status,
 )
+from fastapi.concurrency import run_in_threadpool
 
 from sqlalchemy.orm import Session
 
 from app.database import get_db
 from app.api.deps import get_current_user
-
+from app.services import session_websocket_service
 from app.services.league_service import (
     leave_league,
     LeagueNotFound,
@@ -32,17 +33,21 @@ router = APIRouter(prefix="/leagues",tags=["Leagues"])
     "/{league_id}/users/me",
     status_code=status.HTTP_204_NO_CONTENT,
 )
-def leave(
+async def leave(
     league_id: int,
     db: Session = Depends(get_db),
     current_user=Depends(get_current_user),
 ):
     try:
-        leave_league(
+        await run_in_threadpool(
+            leave_league,
             db=db,
             league_id=league_id,
             user_id=current_user.id,
         )
+
+        await session_websocket_service.broadcast_leagues(db)
+
     # here we use the exception classes
     except LeagueCreatorCannotLeave as error:
         raise HTTPException(
@@ -71,19 +76,22 @@ def leave(
     response_model=LeagueJoinResponse,
     status_code=status.HTTP_200_OK,
 )
-def join(
+async def join(
     league_id: int,
     data: LeagueJoin,
     db: Session = Depends(get_db),
     current_user=Depends(get_current_user),
 ):
     try:
-        participation, roster = join_league(
+        participation, roster = await run_in_threadpool(
+            join_league,
             db=db,
             league_id=league_id,
             user_id=current_user.id,
             data=data,
         )
+
+        await session_websocket_service.broadcast_leagues(db)
 
         return LeagueJoinResponse(
             league_id=league_id,

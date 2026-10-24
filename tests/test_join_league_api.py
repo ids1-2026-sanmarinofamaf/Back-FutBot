@@ -1,5 +1,5 @@
 from types import SimpleNamespace
-from unittest.mock import patch
+from unittest.mock import patch, AsyncMock
 
 import pytest
 from fastapi.testclient import TestClient
@@ -221,3 +221,61 @@ def test_join_league_invalid_payload_returns_422(authenticated_client):
 
     assert response.status_code == 422
     mock_join.assert_not_called()
+
+
+def test_join_league_success_broadcasts_leagues(
+    authenticated_client,
+    valid_join_payload,
+):
+    participation = SimpleNamespace(club_id=CLUB_ID)
+    roster = SimpleNamespace(id=ROSTER_ID)
+
+    with (
+        patch(
+            "app.api.leagues.join_league",
+            return_value=(participation, roster),
+        ) as mock_join,
+        patch(
+            "app.api.leagues.session_websocket_service.broadcast_leagues",
+            new_callable=AsyncMock,
+        ) as mock_broadcast,
+    ):
+        response = authenticated_client.post(
+            JOIN_URL,
+            json=valid_join_payload,
+        )
+
+    assert response.status_code == 200
+    mock_join.assert_called_once()
+    mock_broadcast.assert_awaited_once()
+
+    # El broadcast debe recibir la misma sesión que join_league.
+    assert (
+        mock_broadcast.call_args.args[0]
+        is mock_join.call_args.kwargs["db"]
+    )
+
+
+def test_join_league_failure_does_not_broadcast(
+    authenticated_client,
+    valid_join_payload,
+):
+    with (
+        patch(
+            "app.api.leagues.join_league",
+            side_effect=AlreadyParticipating(
+                "Club is already participating in this league"
+            ),
+        ),
+        patch(
+            "app.api.leagues.session_websocket_service.broadcast_leagues",
+            new_callable=AsyncMock,
+        ) as mock_broadcast,
+    ):
+        response = authenticated_client.post(
+            JOIN_URL,
+            json=valid_join_payload,
+        )
+
+    assert response.status_code == 409
+    mock_broadcast.assert_not_awaited()
