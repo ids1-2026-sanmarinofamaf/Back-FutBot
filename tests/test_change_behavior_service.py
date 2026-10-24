@@ -426,3 +426,35 @@ def test_change_behavior_reflected_in_next_snapshot(
 
     # Opponent's behavior remains unchanged
     assert next_snapshot.players_b[0].current_behavior_id == 6
+
+
+@patch("app.services.match_service.behavior_repository.get_available_by_id")
+@patch("app.services.match_service.club_repository.get_by_user_id")
+@patch("app.services.match_service.get_match")
+def test_change_behavior_same_behavior(
+    mock_get_match,
+    mock_get_club,
+    mock_get_behavior,
+    setup_match,
+):
+    db, club, player, _, match = setup_match
+
+    mock_get_match.return_value = match
+    mock_get_club.return_value = club
+    mock_get_behavior.return_value = MagicMock(id=5)
+
+    change_player_behavior(
+        db=db,
+        user_id=1,
+        match_id=100,
+        player_id=10,
+        behavior_id=5,
+    )
+
+    assert player.current_behavior_id == 5
+
+    mock_get_behavior.assert_called_once_with(
+        db=db,
+        club_id=1,
+        behavior_id=5,
+    )
