@@ -1,9 +1,12 @@
-from unittest.mock import patch
+import asyncio
+from unittest.mock import AsyncMock, patch
 
 import pytest
 from fastapi.testclient import TestClient
+from sqlalchemy.orm import Session
 
 from app.core.security import get_password_hash, verify_password
+from app.core.ws_manager import manager
 from app.database import SessionLocal
 from app.main import app
 from app.models.behavior import Behavior
@@ -354,3 +357,157 @@ def test_create_league_without_club_returns_404(user, db, players, behavior):
 
     assert response.status_code == 404
     assert response.json() == {"detail": "Club does not exist"}
+
+
+# ---------------------------------------------------------------------------
+# Broadcast to the session websocket (ws/sessions)
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def clean_manager():
+    # empty the global manager so connections from other tests don't receive messages
+    manager.active.clear()
+    yield
+    manager.active.clear()
+
+
+# a successful creation broadcasts the leagues once, with the same db session
+def test_create_league_success_broadcasts_leagues(user, db, players, behavior):
+    token = login()
+
+    with patch(
+        "app.api.leagues.session_websocket_service.broadcast_leagues",
+        new_callable=AsyncMock,
+    ) as mock_broadcast:
+        response = post_league(valid_body(players, behavior), token)
+
+    assert response.status_code == 201
+    mock_broadcast.assert_awaited_once()
+    # the broadcast reads the leagues with the session of the request
+    assert isinstance(mock_broadcast.await_args.args[0], Session)
+
+
+# an invalid roster (400) does not broadcast
+def test_create_league_invalid_roster_does_not_broadcast(user, db, players, behavior):
+    token = login()
+    body = valid_body(players, behavior)
+    body["roster"]["players"].pop()
+
+    with patch(
+        "app.api.leagues.session_websocket_service.broadcast_leagues",
+        new_callable=AsyncMock,
+    ) as mock_broadcast:
+        response = post_league(body, token)
+
+    assert response.status_code == 400
+    mock_broadcast.assert_not_awaited()
+
+
+# a user without club (404) does not broadcast
+def test_create_league_without_club_does_not_broadcast(user, db, players, behavior):
+    token = login()
+
+    with (
+        patch(
+            "app.api.leagues.create_league",
+            side_effect=ClubNotFound("Club does not exist"),
+        ),
+        patch(
+            "app.api.leagues.session_websocket_service.broadcast_leagues",
+            new_callable=AsyncMock,
+        ) as mock_broadcast,
+    ):
+        response = post_league(valid_body(players, behavior), token)
+
+    assert response.status_code == 404
+    mock_broadcast.assert_not_awaited()
+
+
+# a body that fails the schema validation never reaches the endpoint, so no broadcast
+def test_create_league_invalid_body_does_not_broadcast(user, db, players, behavior):
+    token = login()
+    body = valid_body(players, behavior)
+    body["nombre"] = ""
+
+    with patch(
+        "app.api.leagues.session_websocket_service.broadcast_leagues",
+        new_callable=AsyncMock,
+    ) as mock_broadcast:
+        response = post_league(body, token)
+
+    assert response.status_code == 400
+    mock_broadcast.assert_not_awaited()
+
+
+# fake websocket that stores the JSON messages it receives
+class FakeWebSocket:
+    def __init__(self):
+        self.sent = []
+
+    async def accept(self):
+        pass
+
+    async def send_json(self, message):
+        self.sent.append(message)
+
+
+# end to end: a client connected to ws/sessions receives the new league from the db
+def test_create_league_connected_client_receives_new_league(
+    user, db, players, behavior, clean_manager
+):
+    connection = FakeWebSocket()
+    asyncio.run(manager.connect(user.id, connection))
+
+    response = post_league(valid_body(players, behavior))
+
+    assert response.status_code == 201
+    league_id = response.json()["id_liga"]
+
+    assert connection.sent == [
+        {
+            "leagues": [
+                {
+                    "league_id": league_id,
+                    "name": "Liga1",
+                    # the creator is already participating
+                    "current_participants": 1,
+                    "capacity": 8,
+                    "privacy": "PUBLICA",
+                    "state": "POR_COMENZAR",
+                }
+            ]
+        }
+    ]
+
+
+# the broadcast reaches every connected client, not only the creator
+def test_create_league_broadcast_reaches_every_connection(
+    user, db, players, behavior, clean_manager
+):
+    creator_connection = FakeWebSocket()
+    other_connection = FakeWebSocket()
+    asyncio.run(manager.connect(user.id, creator_connection))
+    asyncio.run(manager.connect(user.id + 1, other_connection))
+
+    response = post_league(valid_body(players, behavior))
+
+    assert response.status_code == 201
+    assert len(creator_connection.sent) == 1
+    assert other_connection.sent == creator_connection.sent
+
+
+# a failed creation sends nothing to the connected clients
+def test_create_league_failure_sends_nothing_to_connections(
+    user, db, players, behavior, clean_manager
+):
+    connection = FakeWebSocket()
+    asyncio.run(manager.connect(user.id, connection))
+
+    body = valid_body(players, behavior)
+    body["roster"]["players"].pop()
+
+    response = post_league(body)
+
+    assert response.status_code == 400
+    assert connection.sent == []
