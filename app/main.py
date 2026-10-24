@@ -1,6 +1,8 @@
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request, status
+from fastapi.exceptions import RequestValidationError
+from fastapi.exception_handlers import request_validation_exception_handler
 from app.api import auth, users, friendly_games, sessions_websocket
 from app.services.startup_service import recover_interrupted_games
 
@@ -36,6 +38,15 @@ async def lifespan(app: FastAPI):
     engine.dispose()
 
 app = FastAPI(lifespan=lifespan)
+
+
+# POST /leagues must answer 400 on an invalid body; every other endpoint keeps FastAPI's default 422
+@app.exception_handler(RequestValidationError)
+async def validation_exception_handler(request: Request, exc: RequestValidationError):
+    response = await request_validation_exception_handler(request, exc)
+    if request.method == "POST" and request.url.path == "/leagues":
+        response.status_code = status.HTTP_400_BAD_REQUEST
+    return response
 
 app.add_middleware(
     CORSMiddleware,
