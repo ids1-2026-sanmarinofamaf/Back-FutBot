@@ -1,4 +1,4 @@
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 from app.models.league import LeagueState, LeaguePrivacy
 
@@ -12,8 +12,9 @@ class LeagueCreate(BaseModel):
     The aliases are the field names of the contract agreed in the SRS.
     """
     name: str = Field(alias="nombre", min_length=1, max_length=50)
-    match_duration: int = Field(alias="duracion_partido", gt=0)
-    max_clubs: int = Field(alias="max_usuarios", ge=3)
+    # same limits as the frontend: up to 300 seconds and between 3 and 22 clubs
+    match_duration: int = Field(alias="duracion_partido", gt=0, le=300)
+    max_clubs: int = Field(alias="max_usuarios", ge=3, le=22)
     is_private: bool = Field(alias="es_privada")
     # plain password, it gets hashed in the service
     password: str | None = None
@@ -23,13 +24,23 @@ class LeagueCreate(BaseModel):
     def privacy(self) -> LeaguePrivacy:
         return LeaguePrivacy.PRIVADA if self.is_private else LeaguePrivacy.PUBLICA
 
+    # min_length counts spaces, so a name like "   " has to be rejected here
+    @field_validator("name")
+    @classmethod
+    def check_name_not_blank(cls, name: str) -> str:
+        name = name.strip()
+        if not name:
+            raise ValueError("League name cannot be blank")
+        return name
+
     # private leagues must have a password, public ones must not
-    # (an empty string counts as no password, so public leagues may send password: "")
+    # (an empty or blank string counts as no password, so public leagues may send password: "")
     @model_validator(mode="after")
     def check_privacy_password(self):
-        if self.is_private and not self.password:
+        has_password = bool(self.password and self.password.strip())
+        if self.is_private and not has_password:
             raise ValueError("Private leagues must have a password")
-        if not self.is_private and self.password:
+        if not self.is_private and has_password:
             raise ValueError("Public leagues cannot have a password")
         return self
 
