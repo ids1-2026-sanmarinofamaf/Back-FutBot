@@ -285,6 +285,75 @@ def test_create_public_league_with_password_returns_400(user, db, players, behav
     assert_nothing_saved(db)
 
 
+# values outside the limits of the frontend return 400
+@pytest.mark.parametrize(
+    "field, value",
+    [
+        ("duracion_partido", 0),
+        ("duracion_partido", 301),
+        ("max_usuarios", 2),
+        ("max_usuarios", 23),
+    ],
+)
+def test_create_league_out_of_range_returns_400(user, db, players, behavior, field, value):
+    body = valid_body(players, behavior)
+    body[field] = value
+
+    response = post_league(body)
+
+    assert response.status_code == 400
+    assert_nothing_saved(db)
+
+
+# the maximum values are allowed
+def test_create_league_with_max_values_succeeds(user, db, players, behavior):
+    body = valid_body(players, behavior)
+    body["duracion_partido"] = 300
+    body["max_usuarios"] = 22
+
+    response = post_league(body)
+
+    assert response.status_code == 201
+    league = db.get(League, response.json()["id_liga"])
+    assert league.match_duration == 300
+    assert league.max_clubs == 22
+
+
+# a name made only of spaces returns 400
+def test_create_league_blank_name_returns_400(user, db, players, behavior):
+    body = valid_body(players, behavior)
+    body["nombre"] = "   "
+
+    response = post_league(body)
+
+    assert response.status_code == 400
+    assert_nothing_saved(db)
+
+
+# the name is saved without the surrounding spaces
+def test_create_league_name_is_trimmed(user, db, players, behavior):
+    body = valid_body(players, behavior)
+    body["nombre"] = "  Liga1  "
+
+    response = post_league(body)
+
+    assert response.status_code == 201
+    league = db.get(League, response.json()["id_liga"])
+    assert league.name == "Liga1"
+
+
+# a private league with a password made only of spaces returns 400
+def test_create_private_league_blank_password_returns_400(user, db, players, behavior):
+    body = valid_body(players, behavior)
+    body["es_privada"] = True
+    body["password"] = "   "
+
+    response = post_league(body)
+
+    assert response.status_code == 400
+    assert_nothing_saved(db)
+
+
 # a roster with less than 6 players returns 400 and nothing is saved
 def test_create_league_incomplete_roster_returns_400(user, db, players, behavior):
     body = valid_body(players, behavior)
