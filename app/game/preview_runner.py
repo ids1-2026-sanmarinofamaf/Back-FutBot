@@ -1,3 +1,5 @@
+from uuid import UUID
+
 import time, asyncio
 
 from app.game.models.match import (
@@ -8,6 +10,11 @@ from app.game.models.match import (
 from app.game.behavior_coordinator import BehaviorCoordinator
 from app.game.engine import GameEngine
 from app.game.constants import TIC_DURATION
+
+from app.services.behavior_preview_websocket_service import preview_connection_manager
+from app.services.match_websocket_service import build_match_state_message
+
+from app.schemas.behavior_preview import BehaviorPreviewFinishedMessage
 
 
 class PreviewRunner:
@@ -27,6 +34,7 @@ class PreviewRunner:
 
     async def execute_tick(
         self,
+        preview_id: UUID,
         preview: Match,
     ) -> None:
         snapshot = preview.snapshot()
@@ -41,9 +49,15 @@ class PreviewRunner:
 
         preview.current_tick += 1
 
+        await preview_connection_manager.broadcast(
+            preview_id,
+            build_match_state_message(preview.snapshot())
+        )
+
 
     async def run_preview(
         self,
+        preview_id: UUID,
         preview: Match,
     ) -> Match:
         if preview.state != MatchState.NOT_STARTED:
@@ -58,13 +72,18 @@ class PreviewRunner:
 
         preview.state = MatchState.IN_PROGRESS
 
+        await preview_connection_manager.broadcast(
+            preview_id,
+            build_match_state_message(preview.snapshot())
+        )
+
         while (
             preview.current_tick < preview.duration_ticks
             and not self.stop_event.is_set()
         ):
             tick_start = time.monotonic()
 
-            await self.execute_tick(preview)
+            await self.execute_tick(preview_id, preview)
 
             elapsed = time.monotonic() - tick_start
             remaining_time = TIC_DURATION - elapsed
@@ -79,5 +98,20 @@ class PreviewRunner:
                     pass
 
         preview.state = MatchState.FINISHED
+
+        reason = (
+            "stopped"
+            if self.stop_event.is_set()
+            else "completed"
+        )
+
+        await preview_connection_manager.broadcast(
+            preview_id,
+            BehaviorPreviewFinishedMessage(reason=reason),
+        )
+
+        await preview_connection_manager.close_preview_connection(
+            preview_id
+        )
 
         return preview
