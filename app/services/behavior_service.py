@@ -5,7 +5,10 @@ from app.repositories import (
     behavior_repository,
     club_repository
 )
-
+from app.game.behavior_validator import (
+    BehaviorValidationError, # useful for api/behaviors.py
+    validate_behavior_code
+)
 
 def list_behaviors(db: Session, user_id: int) -> list[Behavior]:
     club = club_repository.get_by_user_id(db, user_id)
@@ -41,3 +44,6 @@ def get_behavior_by_name(db: Session, user_id: int, name: str) -> Behavior | Non
         raise ValueError("User does not have a club")
 
     return behavior_repository.get_available_by_name(db, club.id, name)
+
+def validate_behavior(code: str) -> bool:
+    return validate_behavior_code(code)

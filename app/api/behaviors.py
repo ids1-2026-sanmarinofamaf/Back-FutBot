@@ -4,11 +4,18 @@ from sqlalchemy.orm import Session
 
 from app.api.deps import get_current_user
 from app.database import get_db
-from app.schemas.behavior import BehaviorOut, BehaviorCodeOut
+from app.schemas.behavior import (
+    BehaviorOut,
+    BehaviorCodeOut,
+    BehaviorValidateIn,
+    BehaviorValidateOut,
+)
 from app.services.behavior_service import (
     list_behaviors,
     get_behavior,
     get_behavior_by_name,
+    validate_behavior,
+    BehaviorValidationError,
 )
 
 
@@ -17,6 +24,23 @@ router = APIRouter(
     tags=["Behaviors"]
 )
 
+@router.post(
+    "/validate",
+    response_model=BehaviorValidateOut,
+    status_code=status.HTTP_200_OK,
+)
+def validate_behavior_endpoint(
+    data: BehaviorValidateIn,
+    current_user=Depends(get_current_user),
+):
+    try:
+        is_valid = validate_behavior(code=data.code)
+        return BehaviorValidateOut(valid=is_valid)
+    except BehaviorValidationError as error:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(error)
+        )
 
 @router.get("", response_model=list[BehaviorOut] | BehaviorCodeOut)
 def get_behaviors(
