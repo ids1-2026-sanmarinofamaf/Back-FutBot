@@ -2,9 +2,9 @@ from sqlalchemy.orm import Session
 import asyncio
 from collections.abc import Awaitable, Callable
 
-from app.game.models.match import Match
+from app.game.models.match import Match, MatchState
 from app.game.models.behavior_definition import BehaviorDefinition
-from app.repositories import behavior_repository
+from app.repositories import behavior_repository, club_repository
 from app.game.behavior_worker_pool import BehaviorWorkerPool
 from app.game.behavior_coordinator import BehaviorCoordinator
 from app.game.engine import GameEngine
@@ -13,6 +13,7 @@ from app.game.match_runner import MatchRunner
 from app.game.active_matches import (
     register_match,
     remove_match,
+    get_match,
 )
 
 # load behaviors in memory for the match
@@ -111,3 +112,60 @@ def start_match(
     )
 
     return match.match_id
+
+
+def change_player_behavior(
+    db: Session,
+    user_id: int,
+    match_id: int,
+    player_id: int,
+    behavior_id: int,
+) -> None:
+    match = get_match(match_id)
+
+    if match is None:
+        raise LookupError("Match not found")
+
+    if match.state != MatchState.IN_PROGRESS:
+        raise ValueError("Match is not in progress")
+
+    club = club_repository.get_by_user_id(db, user_id)
+
+    participation = next(
+        (
+            p for p in (
+                match.participation_a,
+                match.participation_b,
+            )
+            if p.club_id == club.id
+        ),
+        None,
+    )
+
+    if participation is None:
+        raise PermissionError("User is not participating in this match")
+
+    player = next(
+        (
+            p for p in participation.players
+            if p.player_id == player_id
+        ),
+        None,
+    )
+
+    if player is None:
+        raise LookupError("Player not found in user's team")
+
+    if not player.is_on_field:
+        raise ValueError("Player is not on the field")
+
+    behavior = behavior_repository.get_available_by_id(
+        db=db,
+        club_id=club.id,
+        behavior_id=behavior_id,
+    )
+
+    if behavior is None:
+        raise LookupError("Behavior not available")
+
+    player.current_behavior_id = behavior_id
