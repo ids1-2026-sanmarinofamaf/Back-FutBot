@@ -30,6 +30,38 @@ FORBIDDEN_BUILTINS: frozenset[str] = frozenset(
     }
 )
 
+SAFE_BUILTINS: frozenset[str] = frozenset(
+    {
+        "abs",
+        "all",
+        "any",
+        "bool",
+        "dict",
+        "enumerate",
+        "float",
+        "int",
+        "len",
+        "list",
+        "max",
+        "min",
+        "range",
+        "round",
+        "set",
+        "sorted",
+        "str",
+        "sum",
+        "tuple",
+        "zip",
+        "True",
+        "False",
+        "None",
+    }
+)
+
+ALLOWED_PRIMITIVES: frozenset[str] = frozenset(
+    BehaviorCompiler()._build_namespace().keys()
+)
+
 
 def validate_behavior_code(code: str) -> bool:
     if not isinstance(code, str) or not code.strip():
@@ -38,6 +70,7 @@ def validate_behavior_code(code: str) -> bool:
     tree = _parse_syntax(code)
     _validate_ast(tree)
     _validate_module_structure(tree)
+    _validate_identifiers(tree)
 
     runtime_behavior = _compile_behavior(code)
     _validate_play_signature(runtime_behavior.play)
@@ -105,7 +138,6 @@ def _validate_module_structure(tree: ast.Module) -> None:
                 )
             continue
 
-        # Permitir docstrings (strings sueltos como comentarios)
         if (
             isinstance(stmt, ast.Expr)
             and isinstance(stmt.value, ast.Constant)
@@ -133,6 +165,38 @@ def _validate_module_structure(tree: ast.Module) -> None:
         raise BehaviorValidationError(
             "La función play() debe retornar una acción (move, kick o wait)"
         )
+
+
+def _collect_defined_names(tree: ast.AST) -> set[str]:
+    defined: set[str] = set()
+
+    for node in ast.walk(tree):
+        if isinstance(node, ast.FunctionDef):
+            defined.add(node.name)
+            for arg in node.args.posonlyargs + node.args.args + node.args.kwonlyargs:
+                defined.add(arg.arg)
+            if node.args.vararg:
+                defined.add(node.args.vararg.arg)
+            if node.args.kwarg:
+                defined.add(node.args.kwarg.arg)
+
+        elif isinstance(node, ast.Name) and isinstance(node.ctx, ast.Store):
+            defined.add(node.id)
+
+    return defined
+
+
+def _validate_identifiers(tree: ast.AST) -> None:
+    user_defined = _collect_defined_names(tree)
+    allowed_names = ALLOWED_PRIMITIVES | SAFE_BUILTINS | user_defined
+
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Name) and isinstance(node.ctx, ast.Load):
+            if node.id not in allowed_names:
+                line_info = f" (línea {node.lineno})" if hasattr(node, "lineno") else ""
+                raise BehaviorValidationError(
+                    f"El identificador o función '{node.id}'{line_info} no está definido en el comportamiento ni en la Behavior API"
+                )
 
 
 def _compile_behavior(code: str):
