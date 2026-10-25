@@ -3,18 +3,20 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI, Request, status
 from fastapi.exceptions import RequestValidationError
 from fastapi.exception_handlers import request_validation_exception_handler
-from app.api import auth, users, friendly_games, sessions_websocket
+from fastapi import FastAPI
+from app.api import (
+    auth, users,
+    friendly_games,
+    sessions_websocket,
+    matches, behaviors,
+    leagues, players
+)
 from app.services.startup_service import recover_interrupted_games
 
 
 from sqlalchemy import text
 
 from app.database import engine
-from app.api import friendly_games, players
-from app.api import behaviors
-from app.api import leagues
-
-
 
 from app.api.friendly_game_websocket import router as friendly_game_websocket_router
 from app.api.match_websocket import router as match_websocket_router
@@ -62,7 +64,7 @@ app.include_router(sessions_websocket.router)
 app.include_router(friendly_game_websocket_router)
 app.include_router(behaviors.router)
 app.include_router(leagues.router)
-
+app.include_router(matches.router)
 
 @app.get("/")
 def root():
@@ -72,3 +74,4 @@ def root():
 app.include_router(friendly_games.router)
 app.include_router(players.router)
 app.include_router(match_websocket_router)
+app.include_router(matches.router)

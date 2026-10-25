@@ -1,10 +1,11 @@
+
 from dataclasses import dataclass
 from enum import Enum
 
 from app.game.models.ball import Ball, BallSnapshot
 from app.game.models.match_participation import MatchParticipation
 from app.game.models.player_in_match import PlayerInMatchSnapshot
-from app.game.types import Side
+from app.game.types import Side, Period
 
 class MatchState(str, Enum):
     NOT_STARTED = "not_started"
@@ -42,6 +43,10 @@ class Match:
 
     state: MatchState = MatchState.NOT_STARTED
 
+    current_period: Period = Period.FIRST_QUARTER # actual period
+
+    substitution_requests_open: bool = True # it is set to true as long as substitutions can be planned.
+
     def snapshot(self) -> MatchSnapshot:  # returns a copy of match in the state it was in when made
         return MatchSnapshot(
             # we get the status of the players from each team at a certain tick
@@ -64,3 +69,64 @@ class Match:
 
             last_conceding_side=self.last_conceding_side
         )
+
+    def plan_substitution(
+        self,
+        club_id: int,
+        player_out_id: int,
+        player_in_id: int,
+    ) -> None:
+
+        # validations related to the match
+        if self.state != MatchState.IN_PROGRESS:
+            raise ValueError("Match is not in progress")
+
+        if not self.substitution_requests_open:
+            raise ValueError("Substitution planning is closed")
+
+        if self.participation_a.club_id == club_id:
+            participation = self.participation_a
+        elif self.participation_b.club_id == club_id:
+            participation = self.participation_b
+        else:
+            raise PermissionError("Club is not participating")
+
+        # we call the `plan substitution` method of `match participation` to carry it out
+        participation.plan_substitution(
+            player_out_id=player_out_id,
+            player_in_id=player_in_id,
+            period=self.current_period,
+        )
+
+    # method designed to be called later by the process that sets up the breaks
+    def close_and_execute_substitutions(self) -> None:
+
+        if self.state != MatchState.IN_PROGRESS:
+            raise ValueError("Match is not in progress")
+
+        if not self.substitution_requests_open:
+            return
+
+        # when we are executing a substitution, we close de requests
+        self.substitution_requests_open = False
+
+        period = self.current_period
+        # execute the substitution
+        self.participation_a.execute_pending_substitution(period)
+        self.participation_b.execute_pending_substitution(period)
+
+    # method designed to be called later by the process that sets up the breaks
+    def start_next_period(self, next_period: Period) -> None:
+
+        if self.substitution_requests_open:
+            raise ValueError("Previous window is still open")
+
+        if next_period.value != self.current_period.value + 1:
+            raise ValueError("Invalid period transition")
+
+        self.current_period = next_period
+
+        self.participation_a.pending_substitution = None
+        self.participation_b.pending_substitution = None
+
+        self.substitution_requests_open = (next_period != Period.FOURTH_QUARTER)
