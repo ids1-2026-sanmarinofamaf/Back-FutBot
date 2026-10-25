@@ -34,7 +34,7 @@ async def reject_websocket(
     await websocket.close(code=code, reason=reason)
 
 
-@router.websocket("/ws/leagues/{league_id}")
+@router.websocket("/ws/league/{league_id}")
 async def league_websocket(
     websocket: WebSocket,
     league_id: int,

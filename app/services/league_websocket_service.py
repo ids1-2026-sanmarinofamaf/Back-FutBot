@@ -74,7 +74,7 @@ class LeagueConnectionManager:
         for websocket in connections:
             try:
                 await websocket.close(
-                    code=1008,
+                    code=4403,
                     reason="User left the league",
                 )
             except Exception:

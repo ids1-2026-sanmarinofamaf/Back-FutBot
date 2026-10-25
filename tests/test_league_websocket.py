@@ -89,7 +89,7 @@ def websocket_dependencies():
 # Verify that a league participant can connect and receive the initial lobby state
 def test_participant_connects_and_receives_initial_state(websocket_dependencies):
     with TestClient(app) as client:
-        with client.websocket_connect("/ws/leagues/10?token=valid") as ws:
+        with client.websocket_connect("/ws/league/10?token=valid") as ws:
             message = ws.receive_json()
             assert message == {
                 "type": "lobby_state", "league_id": 10,
@@ -105,8 +105,8 @@ def test_participant_connects_and_receives_initial_state(websocket_dependencies)
 
 # Verify that connections without a token or league participation are rejected
 @pytest.mark.parametrize("url,expected", [
-    ("/ws/leagues/10", 4401),
-    ("/ws/leagues/10?token=valid", 4403),
+    ("/ws/league/10", 4401),
+    ("/ws/league/10?token=valid", 4403),
 ])
 def test_connection_rejected_without_token_or_participation(
     websocket_dependencies, url, expected
@@ -129,7 +129,7 @@ def test_league_not_found_returns_4404(websocket_dependencies):
     ):
         with TestClient(app) as client:
             with pytest.raises(WebSocketDisconnect) as error:
-                with client.websocket_connect("/ws/leagues/999?token=valid") as ws:
+                with client.websocket_connect("/ws/league/999?token=valid") as ws:
                     ws.receive_json()
 
     assert error.value.code == 4404
@@ -184,7 +184,7 @@ async def test_closed_connection_receives_no_further_events():
     assert 101 not in manager.active_connections[10]
 
 
-# Verify that leaving a league closes all of the user's connections with code 1008
+# Verify that leaving a league closes all of the user's connections with code 4403
 @pytest.mark.asyncio
 async def test_formal_leave_closes_all_user_connections():
     manager = LeagueConnectionManager()
@@ -193,8 +193,8 @@ async def test_formal_leave_closes_all_user_connections():
     await manager.connect(10, 101, duplicate)
     await manager.connect(10, 102, b)
     await manager.disconnect_user(10, 101)
-    assert a.closed == [(1008, "User left the league")]
-    assert duplicate.closed == [(1008, "User left the league")]
+    assert a.closed == [(4403, "User left the league")]
+    assert duplicate.closed == [(4403, "User left the league")]
     assert b.closed == []
     event = build_league_user_event(league(), club(3), "user_joined")
     await manager.broadcast(10, event)
