@@ -1,16 +1,27 @@
 import ast
 import inspect
+from multiprocessing import Process, Queue
+from queue import Empty
 
 from app.game.behavior_compiler import (
     BehaviorCompilationError,
     BehaviorCompiler,
 )
+from app.game.context import (
+    BehaviorContext,
+    clear_current_context,
+    set_current_context,
+)
+from app.game.models.actions import KickAction, MoveAction, WaitAction
 from app.game.models.behavior_definition import BehaviorDefinition
+from app.game.types import Period, Side
 
 
 class BehaviorValidationError(Exception):
     """Raised when behavior source code fails validation"""
 
+
+DRY_RUN_TIMEOUT_SECONDS: float = 0.5
 
 FORBIDDEN_BUILTINS: frozenset[str] = frozenset(
     {
@@ -74,6 +85,7 @@ def validate_behavior_code(code: str) -> bool:
 
     runtime_behavior = _compile_behavior(code)
     _validate_play_signature(runtime_behavior.play)
+    _dry_run_behavior(code)
 
     return True
 
@@ -234,3 +246,99 @@ def _validate_play_signature(play_fn) -> None:
         raise BehaviorValidationError(
             "La función play() no debe llevar argumentos"
         )
+
+
+def _build_sample_contexts() -> list[BehaviorContext]:
+    # Escenario 1: Pelota lejos del jugador
+    far_ball_ctx = BehaviorContext(
+        player=(1, (10.0, 10.0)),
+        teammates=[(2, (15.0, 5.0)), (3, (15.0, 15.0))],
+        opponents=[(4, (25.0, 5.0)), (5, (25.0, 10.0)), (6, (25.0, 15.0))],
+        ball=((20.0, 10.0), (0.0, 0.0)),
+        my_team_score=0,
+        opponent_score=0,
+        starting_position=(10.0, 10.0),
+        current_period=Period.FIRST_QUARTER,
+        side=Side.LEFT,
+        match_time_remaining=120.0,
+        period_time_remaining=30.0,
+        control_range=1.0,
+        tics_until_kick=0,
+        max_move_speed=5.0,
+        max_kick_force=15.0,
+    )
+
+    # Escenario 2: Pelota bajo control del jugador (can_kick() == True)
+    near_ball_ctx = BehaviorContext(
+        player=(1, (20.0, 10.0)),
+        teammates=[(2, (25.0, 5.0)), (3, (25.0, 15.0))],
+        opponents=[(4, (30.0, 5.0)), (5, (30.0, 10.0)), (6, (30.0, 15.0))],
+        ball=((20.5, 10.0), (0.0, 0.0)),
+        my_team_score=0,
+        opponent_score=0,
+        starting_position=(20.0, 10.0),
+        current_period=Period.FIRST_QUARTER,
+        side=Side.LEFT,
+        match_time_remaining=120.0,
+        period_time_remaining=30.0,
+        control_range=1.0,
+        tics_until_kick=0,
+        max_move_speed=5.0,
+        max_kick_force=15.0,
+    )
+
+    return [far_ball_ctx, near_ball_ctx]
+
+
+def _dry_run_worker(code: str, output_queue: Queue) -> None:
+    try:
+        runtime_behavior = BehaviorCompiler().compile(
+            BehaviorDefinition(id=0, code=code)
+        )
+
+        for context in _build_sample_contexts():
+            set_current_context(context)
+            try:
+                action = runtime_behavior.play()
+            except Exception as exc:
+                output_queue.put(f"Error de ejecución en play(): {exc}")
+                return
+            finally:
+                clear_current_context()
+
+            if not isinstance(action, (MoveAction, KickAction, WaitAction)):
+                output_queue.put(
+                    "La función play() debe retornar una acción válida: move(), kick() o wait()"
+                )
+                return
+
+        output_queue.put(None)
+    except Exception as exc:
+        output_queue.put(f"Error al validar la ejecución del comportamiento: {exc}")
+
+
+def _dry_run_behavior(code: str) -> None:
+    output_queue: Queue = Queue()
+    process = Process(
+        target=_dry_run_worker,
+        args=(code, output_queue),
+    )
+
+    process.start()
+
+    try:
+        error_message = output_queue.get(timeout=DRY_RUN_TIMEOUT_SECONDS)
+    except Empty as exc:
+        process.terminate()
+        process.join()
+        raise BehaviorValidationError(
+            "El comportamiento excedió el tiempo máximo de ejecución (posible bucle infinito)"
+        ) from exc
+    finally:
+        output_queue.close()
+        output_queue.join_thread()
+
+    process.join()
+
+    if error_message is not None:
+        raise BehaviorValidationError(error_message)
