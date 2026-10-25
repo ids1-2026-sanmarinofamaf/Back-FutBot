@@ -1,4 +1,5 @@
-from sqlalchemy import select
+
+from sqlalchemy import select, func
 from sqlalchemy.orm import Session
 
 from app.models.league_participation import LeagueParticipation
@@ -25,6 +26,19 @@ def delete_participation(
 ) -> None:
     db.delete(participation)
     db.flush()
+
+
+def count_participations(
+    db: Session,
+    league_id: int,
+) -> int:
+    stmt = (
+        select(func.count())
+        .select_from(LeagueParticipation)
+        .where(LeagueParticipation.league_id == league_id)
+    )
+
+    return db.scalar(stmt) or 0
 
 
 # create and persist leagueParticipation
