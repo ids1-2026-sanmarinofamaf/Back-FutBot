@@ -24,6 +24,9 @@ from app.services.league_service import (
 
 from app.schemas.league import LeagueUpdate
 
+from fastapi.concurrency import run_in_threadpool
+from app.services import session_websocket_service
+
 
 router = APIRouter(prefix="/leagues",tags=["Leagues"])
 
@@ -70,19 +73,24 @@ def leave(
     "/{league_id}",
     status_code=status.HTTP_204_NO_CONTENT,
 )
-def start(
+async def start(
     league_id: int,
     data: LeagueUpdate,
     db: Session = Depends(get_db),
     current_user=Depends(get_current_user),
 ):
     try:
-        start_league(
+        # avoid blocking the event loop with synchronous database operations
+        await run_in_threadpool(
+            start_league,
             db=db,
             league_id=league_id,
             user_id=current_user.id,
             requested_state=data.state,
         )
+
+        # send the broadcast start league  in ws session
+        await session_websocket_service.broadcast_leagues(db)
 
     except LeagueNotFound as error:
         raise HTTPException(
@@ -105,4 +113,3 @@ def start(
             status_code=status.HTTP_409_CONFLICT,
             detail=str(error),
         )
-
