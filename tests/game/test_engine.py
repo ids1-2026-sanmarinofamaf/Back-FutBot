@@ -2,7 +2,7 @@ import pytest
 
 from dataclasses import replace
 
-from app.game.constants import(
+from app.game.constants import (
     FIELD_WIDTH,
     FIELD_HEIGHT,
     PLAYER_RADIUS,
@@ -13,7 +13,6 @@ from app.game.constants import(
     WALL_BOUNCE_SPEED_FACTOR,
     GOAL_RESTART_WAIT_TICS,
     FIELD_CENTER,
-    RESTART_BALL_SPEED,
 )
 from app.game.engine import GameEngine, KickResolution, ContestResolution
 from app.game.models.actions import MoveAction, KickAction, WaitAction
@@ -22,13 +21,13 @@ from app.game.models.ball import Ball
 from app.game.models.match_participation import MatchParticipation
 from app.game.models.player_in_match import PlayerInMatch
 from app.game.types import Side, Position
-from app.game.physics import(
+from app.game.physics import (
     max_move_speed,
     collision_time,
     position_at_time,
     calculate_kick_velocity,
     calculate_ball_state_after,
-    direction_to,
+    normalize_vector,
 )
 
 
@@ -244,9 +243,6 @@ def test_validate_actions_rejects_invalid_action(
             match_snapshot,
             actions,
         )
-
-
-from dataclasses import replace
 
 
 def test_validate_actions_rejects_snapshot_without_six_on_field_players(
@@ -563,7 +559,38 @@ def test_resolve_kicks_ignores_player_outside_control_range(
     assert result is None
 
 
-def test_resolve_kicks_contest_prefers_higher_control(
+def test_weighted_pacss_score_applies_expected_weights():
+    score = GameEngine._weighted_pacss_score(
+        100,
+        80,
+        60,
+        40,
+        20,
+    )
+
+    assert score == pytest.approx(
+        100 * 0.4
+        + 80 * 0.2
+        + 60 * 0.2
+        + 40 * 0.1
+        + 20 * 0.1
+    )
+
+
+def test_weighted_pacss_score_handles_extreme_values():
+    minimum_score = GameEngine._weighted_pacss_score(
+        20, 20, 20, 20, 20
+    )
+
+    maximum_score = GameEngine._weighted_pacss_score(
+        100, 100, 100, 100, 100
+    )
+
+    assert minimum_score == pytest.approx(20.0)
+    assert maximum_score == pytest.approx(100.0)
+
+
+def test_resolve_kicks_contest_prefers_higher_weighted_score(
     match_snapshot,
 ):
     engine = GameEngine()
@@ -571,69 +598,11 @@ def test_resolve_kicks_contest_prefers_higher_control(
     player_a = replace(
         match_snapshot.players_a[0],
         position=(20.0, 10.0),
-        control=80,
-        speed=60,
-        strength=60,
-        kick_cooldown_remaining=0,
-        forced_wait_remaining=0,
-    )
-
-    player_b = replace(
-        match_snapshot.players_b[0],
-        position=(20.0, 10.0),
-        control=60,
-        speed=100,
-        strength=100,
-        kick_cooldown_remaining=0,
-        forced_wait_remaining=0,
-    )
-
-    modified_snapshot = replace(
-        match_snapshot,
-        players_a=(
-            player_a,
-            *match_snapshot.players_a[1:],
-        ),
-        players_b=(
-            player_b,
-            *match_snapshot.players_b[1:],
-        ),
-    )
-
-    actions = _wait_actions_for_snapshot(modified_snapshot)
-
-    actions[player_a.player_id] = KickAction(
-        kick_direction=(1.0, 0.0),
-        kick_force_factor=1.0,
-    )
-
-    actions[player_b.player_id] = KickAction(
-        kick_direction=(-1.0, 0.0),
-        kick_force_factor=1.0,
-    )
-
-    result = engine._resolve_kicks(
-        modified_snapshot,
-        actions,
-        match_id=1,
-    )
-
-    assert result is not None
-    assert result.contest.winner_id == player_a.player_id
-    assert result.contest.loser_ids == (player_b.player_id,)
-
-
-def test_resolve_kicks_contest_prefers_higher_speed(
-    match_snapshot,
-):
-    engine = GameEngine()
-
-    player_a = replace(
-        match_snapshot.players_a[0],
-        position=(20.0, 10.0),
-        control=60,
+        control=100,
         speed=80,
-        strength=60,
+        agility=80,
+        power=20,
+        strength=20,
         kick_cooldown_remaining=0,
         forced_wait_remaining=0,
     )
@@ -643,12 +612,14 @@ def test_resolve_kicks_contest_prefers_higher_speed(
         position=(20.0, 10.0),
         control=60,
         speed=60,
+        agility=60,
+        power=100,
         strength=100,
         kick_cooldown_remaining=0,
         forced_wait_remaining=0,
     )
 
-    modified_snapshot = replace(
+    snapshot = replace(
         match_snapshot,
         players_a=(
             player_a,
@@ -660,7 +631,7 @@ def test_resolve_kicks_contest_prefers_higher_speed(
         ),
     )
 
-    actions = _wait_actions_for_snapshot(modified_snapshot)
+    actions = _wait_actions_for_snapshot(snapshot)
 
     actions[player_a.player_id] = KickAction(
         kick_direction=(1.0, 0.0),
@@ -673,7 +644,7 @@ def test_resolve_kicks_contest_prefers_higher_speed(
     )
 
     result = engine._resolve_kicks(
-        modified_snapshot,
+        snapshot,
         actions,
         match_id=1,
     )
@@ -683,7 +654,7 @@ def test_resolve_kicks_contest_prefers_higher_speed(
     assert result.contest.loser_ids == (player_b.player_id,)
 
 
-def test_resolve_kicks_contest_prefers_higher_strength(
+def test_resolve_kicks_contest_uses_tiebreak_within_margin(
     match_snapshot,
 ):
     engine = GameEngine()
@@ -691,68 +662,10 @@ def test_resolve_kicks_contest_prefers_higher_strength(
     player_a = replace(
         match_snapshot.players_a[0],
         position=(20.0, 10.0),
-        control=60,
+        control=70,
         speed=60,
-        strength=80,
-        kick_cooldown_remaining=0,
-        forced_wait_remaining=0,
-    )
-
-    player_b = replace(
-        match_snapshot.players_b[0],
-        position=(20.0, 10.0),
-        control=60,
-        speed=60,
-        strength=60,
-        kick_cooldown_remaining=0,
-        forced_wait_remaining=0,
-    )
-
-    modified_snapshot = replace(
-        match_snapshot,
-        players_a=(
-            player_a,
-            *match_snapshot.players_a[1:],
-        ),
-        players_b=(
-            player_b,
-            *match_snapshot.players_b[1:],
-        ),
-    )
-
-    actions = _wait_actions_for_snapshot(modified_snapshot)
-
-    actions[player_a.player_id] = KickAction(
-        kick_direction=(1.0, 0.0),
-        kick_force_factor=1.0,
-    )
-
-    actions[player_b.player_id] = KickAction(
-        kick_direction=(-1.0, 0.0),
-        kick_force_factor=1.0,
-    )
-
-    result = engine._resolve_kicks(
-        modified_snapshot,
-        actions,
-        match_id=1,
-    )
-
-    assert result is not None
-    assert result.contest.winner_id == player_a.player_id
-    assert result.contest.loser_ids == (player_b.player_id,)
-
-
-def test_resolve_kicks_contest_prefers_last_conceding_side(
-    match_snapshot,
-):
-    engine = GameEngine()
-
-    player_a = replace(
-        match_snapshot.players_a[0],
-        position=(20.0, 10.0),
-        control=60,
-        speed=60,
+        agility=60,
+        power=60,
         strength=60,
         kick_cooldown_remaining=0,
         forced_wait_remaining=0,
@@ -763,12 +676,14 @@ def test_resolve_kicks_contest_prefers_last_conceding_side(
         position=(20.0, 10.0),
         control=60,
         speed=60,
+        agility=60,
+        power=60,
         strength=60,
         kick_cooldown_remaining=0,
         forced_wait_remaining=0,
     )
 
-    modified_snapshot = replace(
+    snapshot = replace(
         match_snapshot,
         players_a=(
             player_a,
@@ -778,10 +693,10 @@ def test_resolve_kicks_contest_prefers_last_conceding_side(
             player_b,
             *match_snapshot.players_b[1:],
         ),
-        last_conceding_side=Side.RIGHT,
+        current_tick=10,
     )
 
-    actions = _wait_actions_for_snapshot(modified_snapshot)
+    actions = _wait_actions_for_snapshot(snapshot)
 
     actions[player_a.player_id] = KickAction(
         kick_direction=(1.0, 0.0),
@@ -793,15 +708,19 @@ def test_resolve_kicks_contest_prefers_last_conceding_side(
         kick_force_factor=1.0,
     )
 
-    result = engine._resolve_kicks(
-        modified_snapshot,
-        actions,
-        match_id=1,
-    )
+    winners = {
+        engine._resolve_kicks(
+            snapshot,
+            actions,
+            match_id=match_id,
+        ).contest.winner_id
+        for match_id in range(1, 20)
+    }
 
-    assert result is not None
-    assert result.contest.winner_id == player_b.player_id
-    assert result.contest.loser_ids == (player_a.player_id,)
+    assert winners == {
+        player_a.player_id,
+        player_b.player_id,
+    }
 
 
 def test_resolve_kicks_tiebreak_is_reproducible(
@@ -1014,7 +933,7 @@ def test_resolve_player_collisions_stops_loser_at_collision_point(
     assert final_positions[player_b.player_id] != (10.0, 10.0)
 
 
-def test_resolve_player_collisions_uses_collision_position(
+def test_resolve_player_collisions_applies_knockback_from_collision_point(
     match_snapshot,
 ):
     engine = GameEngine()
@@ -1059,7 +978,7 @@ def test_resolve_player_collisions_uses_collision_position(
 
     assert collision_t is not None
 
-    expected_loser_position = position_at_time(
+    collision_position = position_at_time(
         player_b.position,
         proposed_positions[player_b.player_id],
         collision_t,
@@ -1071,78 +990,178 @@ def test_resolve_player_collisions_uses_collision_position(
         match_id=1,
     )
 
-    assert final_positions[player_b.player_id] == pytest.approx(
-        expected_loser_position
-    )
+    loser_position = final_positions[player_b.player_id]
+
+    assert loser_position != pytest.approx(collision_position)
+    assert loser_position[0] < collision_position[0]
 
 
-def test_collision_contest_prefers_higher_strength(
+def test_collision_knockback_when_winner_is_stationary_bounces_loser_back(
     match_snapshot,
 ):
     engine = GameEngine()
 
-    player_a = replace(
+    winner = replace(
         match_snapshot.players_a[0],
-        strength=80,
-        power=20,
-        speed=20,
+        position=(10.0, 10.0),
     )
 
-    player_b = replace(
+    loser = replace(
         match_snapshot.players_b[0],
-        strength=60,
-        power=100,
-        speed=100,
+        position=(12.0, 10.0),
     )
 
-    result = engine._resolve_collision_contest(
-        [player_a, player_b],
-        current_tick=0,
-        match_id=1,
+    proposed_positions = {
+        winner.player_id: (10.0, 10.0),
+        loser.player_id: (10.0, 10.0),
+    }
+
+    direction = engine._collision_knockback_direction(
+        winner,
+        loser,
+        proposed_positions,
     )
 
-    assert result.winner_id == player_a.player_id
-    assert result.loser_ids == (player_b.player_id,)
+    assert direction == pytest.approx((1.0, 0.0))
 
 
-def test_collision_contest_prefers_higher_power(
+def test_collision_knockback_when_loser_is_stationary_moves_opposite_winner(
+    match_snapshot,
+):
+    engine = GameEngine()
+
+    winner = replace(
+        match_snapshot.players_a[0],
+        position=(10.0, 10.0),
+    )
+
+    loser = replace(
+        match_snapshot.players_b[0],
+        position=(12.0, 10.0),
+    )
+
+    proposed_positions = {
+        winner.player_id: (12.0, 10.0),
+        loser.player_id: (12.0, 10.0),
+    }
+
+    direction = engine._collision_knockback_direction(
+        winner,
+        loser,
+        proposed_positions,
+    )
+
+    assert direction == pytest.approx((-1.0, 0.0))
+
+
+def test_collision_knockback_position_is_clamped_inside_field(
+    match_snapshot,
+):
+    engine = GameEngine()
+
+    winner = replace(
+        match_snapshot.players_a[0],
+        position=(PLAYER_RADIUS, 10.0),
+    )
+
+    loser = replace(
+        match_snapshot.players_b[0],
+        position=(PLAYER_RADIUS + 0.5, 10.0),
+    )
+
+    proposed_positions = {
+        winner.player_id: (PLAYER_RADIUS, 10.0),
+        loser.player_id: (PLAYER_RADIUS + 1.5, 10.0),
+    }
+
+    position = engine._collision_knockback_position(
+        winner,
+        loser,
+        proposed_positions,
+        collision_time=0.0,
+    )
+
+    assert position[0] == PLAYER_RADIUS
+    assert PLAYER_RADIUS <= position[1] <= FIELD_HEIGHT - PLAYER_RADIUS
+
+
+def test_collision_knockback_uses_relative_direction_when_both_move(
+    match_snapshot,
+):
+    engine = GameEngine()
+
+    winner = replace(
+        match_snapshot.players_a[0],
+        position=(10.0, 10.0),
+    )
+
+    loser = replace(
+        match_snapshot.players_b[0],
+        position=(12.0, 12.0),
+    )
+
+    proposed_positions = {
+        winner.player_id: (12.0, 10.0),
+        loser.player_id: (12.0, 10.0),
+    }
+
+    direction = engine._collision_knockback_direction(
+        winner,
+        loser,
+        proposed_positions,
+    )
+
+    expected = normalize_vector(
+        (
+            0.0 - 1.0,
+            -1.0 - 0.0,
+        )
+    )
+
+    assert direction == pytest.approx(expected)
+
+
+def test_collision_knockback_same_direction_uses_opposite_winner_direction(
+    match_snapshot,
+):
+    engine = GameEngine()
+
+    winner = replace(
+        match_snapshot.players_a[0],
+        position=(10.0, 10.0),
+    )
+
+    loser = replace(
+        match_snapshot.players_b[0],
+        position=(12.0, 10.0),
+    )
+
+    proposed_positions = {
+        winner.player_id: (11.0, 10.0),
+        loser.player_id: (13.0, 10.0),
+    }
+
+    direction = engine._collision_knockback_direction(
+        winner,
+        loser,
+        proposed_positions,
+    )
+
+    assert direction == pytest.approx((-1.0, 0.0))
+
+
+def test_collision_contest_prefers_higher_weighted_score(
     match_snapshot,
 ):
     engine = GameEngine()
 
     player_a = replace(
         match_snapshot.players_a[0],
-        strength=60,
+        strength=100,
         power=80,
-        speed=20,
-    )
-
-    player_b = replace(
-        match_snapshot.players_b[0],
-        strength=60,
-        power=60,
-        speed=100,
-    )
-
-    result = engine._resolve_collision_contest(
-        [player_a, player_b],
-        current_tick=0,
-        match_id=1,
-    )
-
-    assert result.winner_id == player_a.player_id
-
-
-def test_collision_contest_prefers_higher_speed(
-    match_snapshot,
-):
-    engine = GameEngine()
-
-    player_a = replace(
-        match_snapshot.players_a[0],
-        strength=60,
-        power=60,
         speed=80,
+        control=20,
+        agility=20,
     )
 
     player_b = replace(
@@ -1150,15 +1169,165 @@ def test_collision_contest_prefers_higher_speed(
         strength=60,
         power=60,
         speed=60,
+        control=100,
+        agility=100,
     )
 
     result = engine._resolve_collision_contest(
-        [player_a, player_b],
-        current_tick=0,
+        players=[player_a, player_b],
+        current_tick=10,
         match_id=1,
     )
 
     assert result.winner_id == player_a.player_id
+    assert result.loser_ids == (player_b.player_id,)
+
+
+def test_collision_contest_uses_tiebreak_when_scores_are_equal(
+    match_snapshot,
+):
+    engine = GameEngine()
+
+    player_a = replace(
+        match_snapshot.players_a[0],
+        strength=60,
+        power=60,
+        speed=60,
+        control=60,
+        agility=60,
+    )
+
+    player_b = replace(
+        match_snapshot.players_b[0],
+        strength=60,
+        power=60,
+        speed=60,
+        control=60,
+        agility=60,
+    )
+
+    winners = {
+        engine._resolve_collision_contest(
+            players=[player_a, player_b],
+            current_tick=10,
+            match_id=match_id,
+        ).winner_id
+        for match_id in range(1, 20)
+    }
+
+    assert winners == {
+        player_a.player_id,
+        player_b.player_id,
+    }
+
+
+def test_collision_contest_uses_tiebreak_within_margin(
+    match_snapshot,
+):
+    engine = GameEngine()
+
+    player_a = replace(
+        match_snapshot.players_a[0],
+        strength=70,
+        power=60,
+        speed=60,
+        control=60,
+        agility=60,
+    )
+
+    player_b = replace(
+        match_snapshot.players_b[0],
+        strength=60,
+        power=60,
+        speed=60,
+        control=60,
+        agility=60,
+    )
+
+    winners = {
+        engine._resolve_collision_contest(
+            players=[player_a, player_b],
+            current_tick=10,
+            match_id=match_id,
+        ).winner_id
+        for match_id in range(1, 20)
+    }
+
+    assert winners == {
+        player_a.player_id,
+        player_b.player_id,
+    }
+
+
+def test_collision_contest_uses_tiebreak_when_difference_equals_margin(
+    match_snapshot,
+):
+    engine = GameEngine()
+
+    player_a = replace(
+        match_snapshot.players_a[0],
+        strength=60,
+        power=60,
+        speed=60,
+        control=100,
+        agility=60,
+    )
+
+    player_b = replace(
+        match_snapshot.players_b[0],
+        strength=60,
+        power=60,
+        speed=60,
+        control=50,
+        agility=60,
+    )
+
+    winners = {
+        engine._resolve_collision_contest(
+            players=[player_a, player_b],
+            current_tick=10,
+            match_id=match_id,
+        ).winner_id
+        for match_id in range(1, 20)
+    }
+
+    assert winners == {
+        player_a.player_id,
+        player_b.player_id,
+    }
+
+
+def test_collision_contest_prefers_best_score_when_difference_exceeds_margin(
+    match_snapshot,
+):
+    engine = GameEngine()
+
+    player_a = replace(
+        match_snapshot.players_a[0],
+        strength=60,
+        power=60,
+        speed=60,
+        control=100,
+        agility=60,
+    )
+
+    player_b = replace(
+        match_snapshot.players_b[0],
+        strength=60,
+        power=60,
+        speed=60,
+        control=49,
+        agility=60,
+    )
+
+    result = engine._resolve_collision_contest(
+        players=[player_a, player_b],
+        current_tick=10,
+        match_id=1,
+    )
+
+    assert result.winner_id == player_a.player_id
+    assert result.loser_ids == (player_b.player_id,)
 
 
 def test_collision_contest_tiebreak_is_reproducible(
@@ -1260,6 +1429,52 @@ def test_collision_contest_supports_multiple_players(
         player_a.player_id,
         player_c.player_id,
     }
+
+
+def test_collision_contest_excludes_players_outside_margin_from_tiebreak(
+    match_snapshot,
+):
+    engine = GameEngine()
+
+    player_a = replace(
+        match_snapshot.players_a[0],
+        strength=80,
+        power=60,
+        speed=60,
+        control=60,
+        agility=60,
+    )
+
+    player_b = replace(
+        match_snapshot.players_a[1],
+        strength=70,
+        power=60,
+        speed=60,
+        control=60,
+        agility=60,
+    )
+
+    player_c = replace(
+        match_snapshot.players_b[0],
+        strength=50,
+        power=60,
+        speed=60,
+        control=60,
+        agility=60,
+    )
+
+    winners = {
+        engine._resolve_collision_contest(
+            players=[player_a, player_b, player_c],
+            current_tick=10,
+            match_id=match_id,
+        ).winner_id
+        for match_id in range(1, 30)
+    }
+
+    assert player_a.player_id in winners
+    assert player_b.player_id in winners
+    assert player_c.player_id not in winners
 
 
 def test_group_collision_events_merges_connected_collisions():
@@ -1861,10 +2076,11 @@ def test_handle_goal_resets_ball(match):
     assert match.ball.velocity == (0.0, 0.0)
 
 
-def test_handle_goal_resets_on_field_players(match):
+def test_handle_goal_resets_scoring_team_players(match):
     engine = GameEngine()
 
-    player = match.participation_a.players[0]
+    # LEFT concedes, so participation_b scores.
+    player = match.participation_b.players[0]
 
     player.position = (20.0, 10.0)
     player.kick_cooldown_remaining = 5
@@ -1881,10 +2097,49 @@ def test_handle_goal_resets_on_field_players(match):
     assert player.position == expected_position
     assert player.kick_cooldown_remaining == 0
     assert player.collision_penalty_remaining == 0
-
     assert player.forced_wait_remaining == (
         GOAL_RESTART_WAIT_TICS + 1
     )
+
+
+def test_handle_goal_sets_conceding_team_restart_positions(match):
+    engine = GameEngine()
+
+    conceding_players = [
+        player
+        for player in match.participation_a.players
+        if player.is_on_field
+    ]
+
+    conceding_players[0].control = 30
+    conceding_players[1].control = 80
+    conceding_players[2].control = 50
+
+    expected_starting_positions = {
+        player.player_id: player.starting_position
+        for player in conceding_players
+    }
+
+    engine._handle_goal(
+        match,
+        Side.LEFT,
+    )
+
+    restart_player = conceding_players[1]
+
+    assert restart_player.position == (
+        FIELD_CENTER[0] - PLAYER_RADIUS - BALL_RADIUS,
+        FIELD_CENTER[1],
+    )
+
+    for player in conceding_players:
+        if player.player_id == restart_player.player_id:
+            continue
+
+        assert (
+            player.position
+            == expected_starting_positions[player.player_id]
+        )
 
 
 def test_update_timers_decrements_active_timers(match):
@@ -1941,29 +2196,6 @@ def test_step_places_ball_at_center_at_match_start(match):
     assert match.ball.velocity == (0.0, 0.0)
 
 
-def test_restitution_is_independent_of_side(match):
-    engine = GameEngine()
-
-    engine._restitute_ball(
-        match,
-        Side.LEFT,
-    )
-
-    left_position = match.ball.position
-    left_velocity = match.ball.velocity
-
-    match.ball.position = (5.0, 5.0)
-    match.ball.velocity = (10.0, 5.0)
-
-    engine._restitute_ball(
-        match,
-        Side.RIGHT,
-    )
-
-    assert match.ball.position == left_position == FIELD_CENTER
-    assert match.ball.velocity == left_velocity == (0.0, 0.0)
-
-
 def test_players_do_not_move_on_initial_restitution(match):
     engine = GameEngine()
 
@@ -1994,7 +2226,7 @@ def test_players_do_not_move_on_initial_restitution(match):
     assert player.position == initial_position
 
 
-def test_goal_restart_waits_before_restitution(match):
+def test_goal_restart_waits_before_resuming(match):
     engine = GameEngine()
 
     match.current_tick = 10
@@ -2033,7 +2265,7 @@ def test_goal_restart_waits_before_restitution(match):
     assert match.ball.velocity == (0.0, 0.0)
 
 
-def test_goal_restart_leaves_ball_at_center_when_wait_finishes(match):
+def test_goal_restart_resumes_when_wait_finishes(match):
     engine = GameEngine()
 
     match.current_tick = 10
@@ -2303,6 +2535,20 @@ def test_step_goal_updates_score_and_resets_state(match_step):
     assert match.ball.position == FIELD_CENTER
     assert match.ball.velocity == (0.0, 0.0)
 
+    restart_player = max(
+        (
+            player
+            for player in match.participation_b.players
+            if player.is_on_field
+        ),
+        key=lambda player: player.control,
+    )
+
+    expected_restart_position = (
+        FIELD_CENTER[0] + PLAYER_RADIUS + BALL_RADIUS,
+        FIELD_CENTER[1],
+    )
+
     for participation in (
         match.participation_a,
         match.participation_b,
@@ -2311,7 +2557,11 @@ def test_step_goal_updates_score_and_resets_state(match_step):
             if not player.is_on_field:
                 continue
 
-            assert player.position == player.starting_position
+            if player.player_id == restart_player.player_id:
+                assert player.position == expected_restart_position
+            else:
+                assert player.position == player.starting_position
+
             assert (
                 player.forced_wait_remaining
                 == GOAL_RESTART_WAIT_TICS

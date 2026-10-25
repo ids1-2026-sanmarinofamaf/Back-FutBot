@@ -92,7 +92,11 @@ def test_session_websocket_sends_initial_available_friendly_games(
         "app.services.session_websocket_service."
         "friendly_game_repository.get_visible_friendly_games",
         return_value=[available_game],
-    ) as mock_get_visible:
+    ) as mock_get_visible, patch(
+        "app.services.session_websocket_service."
+        "league_repository.get_visible_leagues",
+        return_value=[],
+    ) as mock_get_leagues:
 
         with client.websocket_connect("/ws/sessions?token=test") as ws:
             payload = ws.receive_json()
@@ -107,10 +111,12 @@ def test_session_websocket_sends_initial_available_friendly_games(
                 "state": "POR_COMENZAR",
                 "match_id": None,
             }
-        ]
+        ],
+        "leagues": [],
     }
 
     mock_get_visible.assert_called_once_with(db)
+    mock_get_leagues.assert_called_once_with(db)
 
 
 def test_visible_friendly_games_excludes_finished_games():
