@@ -11,3 +11,9 @@ class BehaviorCodeOut(BaseModel):
     behavior_id: int = Field(validation_alias="id")
     code: str
     model_config = ConfigDict(from_attributes=True)
+
+class BehaviorValidateIn(BaseModel):
+    code: str
+    
+class BehaviorValidateOut(BaseModel):
+    valid: bool

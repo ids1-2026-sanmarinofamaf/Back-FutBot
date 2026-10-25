@@ -41,10 +41,10 @@ def _parse_syntax(code: str) -> ast.Module:
     try:
         tree = ast.parse(code)
     except SyntaxError as exc:
-        line_info = f" at line {exc.lineno}" if exc.lineno else ""
+        line_info = f" en la línea {exc.lineno}" if exc.lineno else ""
         raise BehaviorValidationError(
-            f"Error sintáctico en {line_info}: {exc.msg}"
-        ) from exc
+            f"Error sintáctico{line_info}: {exc.msg}"
+    ) from exc
     if not tree.body:
         raise BehaviorValidationError(
             "El comportamiento debe contener sentencias ejecutables"
@@ -57,7 +57,7 @@ def _validate_ast(tree: ast.AST) -> None:
             raise BehaviorValidationError(
                 "No se permiten importaciones de librerías en el comportamiento"
             )
-         if isinstance(node, ast.Name) and node.id in FORBIDDEN_BUILTINS:
+        if isinstance(node, ast.Name) and node.id in FORBIDDEN_BUILTINS:
             raise BehaviorValidationError(
                 f"No se permite el uso de '{node.id}' en el comportamiento"
             )
@@ -99,5 +99,5 @@ def _validate_play_signature(play_fn) -> None:
 
     if required_params:
         raise BehaviorValidationError(
-            "Function play() must not require any arguments."
+            "La función play() no debe llevar argumentos"
         )
