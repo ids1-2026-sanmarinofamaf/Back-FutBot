@@ -321,3 +321,47 @@ def test_get_behavior_by_name_user_without_club_returns_400(user, db):
     )
 
     assert response.status_code == 400
+
+
+# Tests for POST /clubes/me/behaviors/validate
+
+def test_validate_behavior_without_token_returns_401():
+    response = client.post(
+        "/clubes/me/behaviors/validate",
+        json={"code": "def play():\n    return wait()\n"},
+    )
+
+    assert response.status_code == 401
+
+
+def test_validate_behavior_with_invalid_token_returns_401():
+    response = client.post(
+        "/clubes/me/behaviors/validate",
+        json={"code": "def play():\n    return wait()\n"},
+        headers=auth_header("invalid.token.value"),
+    )
+
+    assert response.status_code == 401
+
+
+def test_validate_behavior_valid_code_returns_200(user):
+    response = client.post(
+        "/clubes/me/behaviors/validate",
+        json={"code": "def play():\n    return wait()\n"},
+        headers=auth_header(login()),
+    )
+
+    assert response.status_code == 200
+    assert response.json() == {"valid": True}
+
+
+def test_validate_behavior_invalid_code_returns_400(user):
+    response = client.post(
+        "/clubes/me/behaviors/validate",
+        json={"code": "def play():\n    return waiit()\n"},
+        headers=auth_header(login()),
+    )
+
+    assert response.status_code == 400
+    assert "waiit" in response.json()["detail"]
+
