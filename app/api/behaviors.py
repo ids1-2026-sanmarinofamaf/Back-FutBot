@@ -33,6 +33,19 @@ def validate_behavior_endpoint(
     data: BehaviorValidateIn,
     current_user=Depends(get_current_user),
 ):
+    """
+    Validate behavior Python source code for the authenticated user.
+
+    Args:
+        data: Request payload containing the behavior source code.
+        current_user: Currently authenticated user injected by dependency.
+
+    Returns:
+        BehaviorValidateOut indicating that the code is valid.
+
+    Raises:
+        HTTPException: 400 Bad Request if the behavior code fails validation.
+    """
     try:
         is_valid = validate_behavior(code=data.code)
         return BehaviorValidateOut(valid=is_valid)

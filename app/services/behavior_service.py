@@ -46,4 +46,16 @@ def get_behavior_by_name(db: Session, user_id: int, name: str) -> Behavior | Non
     return behavior_repository.get_available_by_name(db, club.id, name)
 
 def validate_behavior(code: str) -> bool:
+    """
+    Validate player behavior Python source code.
+
+    Args:
+        code: Raw Python source code defining the behavior.
+
+    Returns:
+        True if the behavior code passes all validation stages.
+
+    Raises:
+        BehaviorValidationError: If the behavior code fails validation.
+    """
     return validate_behavior_code(code)

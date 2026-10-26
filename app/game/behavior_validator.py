@@ -1,3 +1,11 @@
+"""
+Behavior source code validation utilities.
+
+This module provides static AST analysis, compilation checks, and isolated
+subprocess dry-run execution to verify that user-submitted behavior code is
+safe and conforms to the Behavior API contract before execution or storage.
+"""
+
 import ast
 import inspect
 from multiprocessing import Process, Queue
@@ -18,7 +26,7 @@ from app.game.types import Period, Side
 
 
 class BehaviorValidationError(Exception):
-    """Raised when behavior source code fails validation"""
+    """Raised when behavior source code fails any validation stage."""
 
 
 DRY_RUN_TIMEOUT_SECONDS: float = 0.5
@@ -75,6 +83,24 @@ ALLOWED_PRIMITIVES: frozenset[str] = frozenset(
 
 
 def validate_behavior_code(code: str) -> bool:
+    """
+    Validate player behavior Python source code.
+
+    Runs the complete validation pipeline: syntax parsing, AST security
+    checks, module structure rules, identifier whitelisting, compilation,
+    play() signature inspection, and an isolated dry-run execution.
+
+    Args:
+        code: Raw Python source code defining the behavior.
+
+    Returns:
+        True if the behavior code passes all validation stages.
+
+    Raises:
+        BehaviorValidationError: If the code is empty, syntactically invalid,
+            uses forbidden constructs/identifiers, fails to compile, or fails
+            during dry-run execution.
+    """
     if not isinstance(code, str) or not code.strip():
         raise BehaviorValidationError("El comportamiento no puede estar vacío")
 
@@ -91,6 +117,19 @@ def validate_behavior_code(code: str) -> bool:
 
 
 def _parse_syntax(code: str) -> ast.Module:
+    """
+    Parse behavior source code into an AST module and verify it is non-empty.
+
+    Args:
+        code: Raw Python source code string.
+
+    Returns:
+        Parsed AST module node.
+
+    Raises:
+        BehaviorValidationError: If the source code contains syntax errors or
+            has no executable statements (e.g., comments only).
+    """
     try:
         tree = ast.parse(code)
     except SyntaxError as exc:
@@ -107,6 +146,19 @@ def _parse_syntax(code: str) -> ast.Module:
 
 
 def _validate_ast(tree: ast.AST) -> None:
+    """
+    Inspect the AST for forbidden language constructs and unsafe builtins.
+
+    Blocks imports, async/generator constructs, class definitions, forbidden
+    builtins, and dunder attribute access.
+
+    Args:
+        tree: Parsed AST of the behavior code.
+
+    Raises:
+        BehaviorValidationError: If any disallowed AST node or attribute access
+            is detected.
+    """
     for node in ast.walk(tree):
         if isinstance(node, (ast.Import, ast.ImportFrom)):
             raise BehaviorValidationError(
@@ -135,6 +187,20 @@ def _validate_ast(tree: ast.AST) -> None:
 
 
 def _validate_module_structure(tree: ast.Module) -> None:
+    """
+    Validate top-level module statements and the presence of a valid play() function.
+
+    Top-level statements are restricted to function definitions, constant
+    assignments without function calls, and module docstrings. Ensures that
+    play() is defined and contains at least one non-None return statement.
+
+    Args:
+        tree: Parsed AST module node.
+
+    Raises:
+        BehaviorValidationError: If disallowed top-level statements exist,
+            play() is missing, or play() never returns a value.
+    """
     play_node: ast.FunctionDef | None = None
 
     for stmt in tree.body:
@@ -180,6 +246,18 @@ def _validate_module_structure(tree: ast.Module) -> None:
 
 
 def _collect_defined_names(tree: ast.AST) -> set[str]:
+    """
+    Collect all user-defined identifier names declared in the AST.
+
+    Includes function names, function parameters, and variables assigned via
+    store contexts (assignments, loop targets, comprehensions).
+
+    Args:
+        tree: Parsed AST of the behavior code.
+
+    Returns:
+        Set of identifier names defined within the user's code.
+    """
     defined: set[str] = set()
 
     for node in ast.walk(tree):
@@ -199,6 +277,19 @@ def _collect_defined_names(tree: ast.AST) -> set[str]:
 
 
 def _validate_identifiers(tree: ast.AST) -> None:
+    """
+    Verify that all loaded identifiers belong to the allowed whitelist.
+
+    Allowed identifiers consist of Behavior API primitives, safe Python
+    builtins, and names defined within the behavior code itself.
+
+    Args:
+        tree: Parsed AST of the behavior code.
+
+    Raises:
+        BehaviorValidationError: If an unknown or unauthorized identifier is
+            referenced.
+    """
     user_defined = _collect_defined_names(tree)
     allowed_names = ALLOWED_PRIMITIVES | SAFE_BUILTINS | user_defined
 
@@ -212,6 +303,18 @@ def _validate_identifiers(tree: ast.AST) -> None:
 
 
 def _compile_behavior(code: str):
+    """
+    Compile behavior source code using BehaviorCompiler.
+
+    Args:
+        code: Raw Python source code string.
+
+    Returns:
+        Compiled RuntimeBehavior instance.
+
+    Raises:
+        BehaviorValidationError: If compilation fails or play() is not callable.
+    """
     compiler = BehaviorCompiler()
     definition = BehaviorDefinition(id=0, code=code)
 
@@ -229,6 +332,15 @@ def _compile_behavior(code: str):
 
 
 def _validate_play_signature(play_fn) -> None:
+    """
+    Verify that the compiled play() function requires no positional or keyword arguments.
+
+    Args:
+        play_fn: Callable play function extracted from the compiled behavior.
+
+    Raises:
+        BehaviorValidationError: If play() defines any required parameters.
+    """
     signature = inspect.signature(play_fn)
     required_params = [
         param
@@ -249,6 +361,15 @@ def _validate_play_signature(play_fn) -> None:
 
 
 def _build_sample_contexts() -> list[BehaviorContext]:
+    """
+    Build synthetic BehaviorContext scenarios for dry-run validation.
+
+    Provides two representative game states: one where the ball is far from the
+    player and one where the ball is within the player's control range.
+
+    Returns:
+        List of sample BehaviorContext instances.
+    """
     # Escenario 1: Pelota lejos del jugador
     far_ball_ctx = BehaviorContext(
         player=(1, (10.0, 10.0)),
@@ -291,6 +412,17 @@ def _build_sample_contexts() -> list[BehaviorContext]:
 
 
 def _dry_run_worker(code: str, output_queue: Queue) -> None:
+    """
+    Worker target executed in a separate process to test behavior execution.
+
+    Compiles the behavior and executes play() against each sample context,
+    sending None to output_queue on success or an error message string on
+    failure.
+
+    Args:
+        code: Raw Python source code string to compile and execute.
+        output_queue: Multiprocessing queue used to report the validation result.
+    """
     try:
         runtime_behavior = BehaviorCompiler().compile(
             BehaviorDefinition(id=0, code=code)
@@ -318,6 +450,19 @@ def _dry_run_worker(code: str, output_queue: Queue) -> None:
 
 
 def _dry_run_behavior(code: str) -> None:
+    """
+    Execute the behavior in an isolated child process with a strict timeout.
+
+    Terminates the child process if execution exceeds DRY_RUN_TIMEOUT_SECONDS
+    and ensures IPC queue resources are always released.
+
+    Args:
+        code: Raw Python source code string to dry-run.
+
+    Raises:
+        BehaviorValidationError: If execution times out, raises a runtime
+            exception, or returns an object that is not a valid game action.
+    """
     output_queue: Queue = Queue()
     process = Process(
         target=_dry_run_worker,
