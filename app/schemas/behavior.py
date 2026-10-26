@@ -4,7 +4,7 @@ class BehaviorOut(BaseModel):
     behavior_id: int = Field(validation_alias="id")
     name: str
     code: str
-    is_default: str
+    is_default: bool
     # allows building it directly from the SQLAlchemy Behavior
     model_config = ConfigDict(from_attributes=True)
 
