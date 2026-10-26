@@ -25,12 +25,15 @@ def _validate_behavior_name(name: str) -> str:
         Trimmed behavior name.
 
     Raises:
-        ValueError: If the name is empty, whitespace-only, or exceeds 255 characters.
+        ValueError: If the name is empty, whitespace-only, shorter than 3
+            characters, or exceeds 255 characters.
     """
     if not isinstance(name, str) or not name.strip():
         raise ValueError("Behavior name cannot be empty")
 
     clean_name = name.strip()
+    if len(clean_name) < 3:
+        raise ValueError("Behavior name must be at least 3 characters long")
     if len(clean_name) > 255:
         raise ValueError("Behavior name cannot exceed 255 characters")
 
