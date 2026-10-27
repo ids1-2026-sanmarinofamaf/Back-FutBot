@@ -1,3 +1,4 @@
+
 from sqlalchemy import select, func
 from sqlalchemy.orm import Session, selectinload
 
@@ -10,6 +11,15 @@ def get_by_id(
     league_id: int,
 ) -> League | None:
     return db.get(League, league_id)
+
+
+def update_state(
+    db: Session,
+    league: League,
+    state: LeagueState,
+) -> None:
+    league.state = state
+    db.flush()
 
 
 def create(db: Session, league: League):

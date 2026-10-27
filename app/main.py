@@ -66,6 +66,7 @@ app.include_router(behaviors.router)
 app.include_router(leagues.router)
 app.include_router(matches.router)
 
+
 @app.get("/")
 def root():
     return{"message": "FutBot backend running"}

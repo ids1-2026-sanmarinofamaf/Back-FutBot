@@ -1,3 +1,4 @@
+
 from pydantic import BaseModel, Field, field_validator, model_validator
 
 from app.models.league import LeagueState, LeaguePrivacy
@@ -6,6 +7,10 @@ from app.models.match import MatchState
 from typing import Literal
 
 from app.schemas.roster import RosterCreate
+
+
+class LeagueUpdate(BaseModel):
+    state: LeagueState
 
 
 class LeagueCreate(BaseModel):
