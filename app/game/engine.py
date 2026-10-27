@@ -482,15 +482,15 @@ class GameEngine:
         match: Match,
         conceding_side: Side,
     ) -> None:
-        # Score for the opposite side.
-        if conceding_side == Side.LEFT:
-            match.participation_b.goals += 1
-            conceding_participation = match.participation_a
-        else:
-            match.participation_a.goals += 1
-            conceding_participation = match.participation_b
+        conceding_participation = match.participation_defending(conceding_side)
 
-        match.last_conceding_side = conceding_side
+        scoring_participation = (
+            match.participation_b
+            if conceding_participation is match.participation_a
+            else match.participation_a
+        )
+
+        scoring_participation.goals += 1
 
         # Reset ball to the center.
         match.ball.position = FIELD_CENTER
@@ -608,9 +608,13 @@ class GameEngine:
             player.player_id == player_id
             for player in snapshot.players_a
         ):
-            return Side.LEFT
+            return snapshot.side_a
 
-        return Side.RIGHT
+        if any(
+            player.player_id == player_id
+            for player in snapshot.players_b
+        ):
+            return snapshot.side_b
 
 
     def _can_attempt_kick(
@@ -1129,3 +1133,37 @@ class GameEngine:
         )
 
         return self._clamp_player_position(knockback_position)
+
+    # to reset all positions after a break
+    def reset_positions(self, match: Match) -> None:
+        for participation in (
+            match.participation_a,
+            match.participation_b,
+        ):
+            for player in participation.players:
+                if not player.is_on_field:
+                    continue
+
+                if player.starting_position is None:
+                    raise ValueError("On-field player has no starting position")
+
+                player.position = player.starting_position
+                player.velocity = (0.0, 0.0)
+
+        self._restitute_ball(match)
+
+    # switch sides and reflects positions
+    def prepare_second_half(self, match: Match) -> None:
+        match.switch_sides()
+
+        for participation in (
+            match.participation_a,
+            match.participation_b,
+        ):
+            for player in participation.players:
+                if player.starting_position is None:
+                    continue
+
+                x, y = player.starting_position
+
+                player.starting_position = (FIELD_WIDTH - x,y)
