@@ -20,6 +20,7 @@ from app.database import engine
 
 from app.api.friendly_game_websocket import router as friendly_game_websocket_router
 from app.api.match_websocket import router as match_websocket_router
+from app.api.league_websocket import router as league_websocket_router
 
 
 
@@ -64,6 +65,7 @@ app.include_router(sessions_websocket.router)
 app.include_router(friendly_game_websocket_router)
 app.include_router(behaviors.router)
 app.include_router(leagues.router)
+app.include_router(league_websocket_router)
 app.include_router(matches.router)
 
 @app.get("/")

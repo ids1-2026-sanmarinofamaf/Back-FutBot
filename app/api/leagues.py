@@ -4,8 +4,6 @@ from fastapi import (
     HTTPException,
     status,
 )
-from fastapi.concurrency import run_in_threadpool
-
 from sqlalchemy.orm import Session
 
 from app.database import get_db
@@ -72,8 +70,7 @@ async def leave(
     current_user=Depends(get_current_user),
 ):
     try:
-        await run_in_threadpool(
-            leave_league,
+        await leave_league(
             db=db,
             league_id=league_id,
             user_id=current_user.id,
@@ -116,8 +113,7 @@ async def join(
     current_user=Depends(get_current_user),
 ):
     try:
-        participation, roster = await run_in_threadpool(
-            join_league,
+        participation, roster = await join_league(
             db=db,
             league_id=league_id,
             user_id=current_user.id,

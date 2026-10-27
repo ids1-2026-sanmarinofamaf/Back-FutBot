@@ -17,6 +17,11 @@ from app.repositories import (
 )
 from app.schemas.league import LeagueCreate, LeagueJoin
 
+from app.services.league_websocket_service import (
+    league_connection_manager,
+    build_league_user_event,
+)
+
 
 # add this classes in order to distinguish the errors
 class LeagueNotFound(Exception):
@@ -139,7 +144,7 @@ def create_league(db: Session, data: LeagueCreate , current_user_id):
         raise
 
 
-def leave_league(
+async def leave_league(
     db: Session,
     league_id: int,
     user_id: int,
@@ -182,6 +187,12 @@ def leave_league(
         # get the roster associated with the participation
         roster = participation.roster
 
+        event = build_league_user_event(
+            league=league,
+            club=club,
+            event_type="user_left",
+        )
+
         # felete participation
         league_participation_repository.delete_participation(db=db,participation=participation)
 
@@ -195,8 +206,19 @@ def leave_league(
         db.rollback()
         raise
 
+    try:
+        await league_connection_manager.broadcast(
+            league_id=league_id,
+            state=event,
+        )
+    finally:
+        await league_connection_manager.disconnect_user(
+            league_id=league_id,
+            user_id=user_id,
+        )
 
-def join_league(
+
+async def join_league(
     db: Session,
     league_id: int,
     user_id: int,
@@ -225,7 +247,7 @@ def join_league(
                 raise InvalidLeaguePassword(
                     "This league is private"
                 )
-            
+
             if not verify_password(password, password_hash):
                 raise InvalidLeaguePassword(
                     "Incorrect password"
@@ -329,10 +351,21 @@ def join_league(
             )
         )
 
-        db.commit()
+        event = build_league_user_event(
+            league=league,
+            club=club,
+            event_type="user_joined",
+        )
 
-        return participation, roster 
+        db.commit()
 
     except Exception:
         db.rollback()
         raise
+
+    await league_connection_manager.broadcast(
+        league_id=league_id,
+        state=event,
+    )
+
+    return participation, roster
