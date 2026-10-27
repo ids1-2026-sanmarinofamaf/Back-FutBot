@@ -6,6 +6,7 @@ from app.api import (
     friendly_games,
     sessions_websocket,
     matches,
+    behavior_preview,
 )
 from app.services.startup_service import recover_interrupted_games
 
@@ -17,7 +18,6 @@ from app.api import friendly_games, players
 from app.api import behaviors
 from app.api import leagues
 from app.api import matches
-
 
 from app.api.friendly_game_websocket import router as friendly_game_websocket_router
 from app.api.match_websocket import router as match_websocket_router
@@ -54,6 +54,7 @@ app.include_router(auth.router)
 app.include_router(users.router)
 app.include_router(sessions_websocket.router)
 app.include_router(friendly_game_websocket_router)
+app.include_router(behavior_preview.router)
 app.include_router(behaviors.router)
 app.include_router(leagues.router)
 app.include_router(matches.router)
