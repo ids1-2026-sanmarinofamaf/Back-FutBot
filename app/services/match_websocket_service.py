@@ -1,7 +1,14 @@
 from fastapi import WebSocket
 
 from app.game.models.match import MatchSnapshot
-from app.schemas.match_websocket import MatchPlayerState, MatchStateMessage, BallState
+from app.schemas.match_websocket import (
+    MatchPlayerState,
+    MatchStateMessage,
+    BallState,
+    MatchPauseStartedMessage,
+    MatchSubstitutionWindowClosedMessage,
+    MatchPauseFinishedMessage,
+)
 
 
 class MatchConnectionManager:
@@ -39,7 +46,12 @@ class MatchConnectionManager:
     async def broadcast(
         self,
         match_id: int,
-        message: MatchStateMessage
+        message: (
+        MatchStateMessage
+        | MatchPauseStartedMessage
+        | MatchSubstitutionWindowClosedMessage
+        | MatchPauseFinishedMessage
+    ),
     ) -> None:
 
         connections = self.active_connections.get(match_id, [])
@@ -109,6 +121,35 @@ def build_match_state_message(
         ),
         players=players,
     )
+
+
+def build_pause_started_message(
+    pause_type: str,
+    duration: float,
+    planning_duration: float,
+) -> MatchPauseStartedMessage:
+    return MatchPauseStartedMessage(
+        pause_type=pause_type,
+        duration=duration,
+        planning_duration=planning_duration,
+    )
+
+
+def build_substitution_window_closed_message(
+    pause_type: str,
+) -> MatchSubstitutionWindowClosedMessage:
+    return MatchSubstitutionWindowClosedMessage(
+        pause_type=pause_type,
+    )
+
+
+def build_pause_finished_message(
+    pause_type: str,
+) -> MatchPauseFinishedMessage:
+    return MatchPauseFinishedMessage(
+        pause_type=pause_type,
+    )
+
 
 
 match_connection_manager = MatchConnectionManager()
