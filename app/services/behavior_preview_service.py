@@ -58,6 +58,12 @@ async def _run_preview(
 
         await runner.run_preview(preview_id, preview)
 
+    except Exception:
+        await preview_connection_manager.close_preview_connection(
+            preview_id,
+        )
+        raise
+
     finally:
         try: 
             worker_pool.shutdown()
@@ -109,6 +115,12 @@ def create_preview(
     behavior_teammate_1: int,
     behavior_teammate_2: int,
 ) -> UUID:
+    if any(
+        owner_id == user_id
+        for owner_id, _ in _active_previews.values()
+    ):
+        raise ValueError("User already has an active preview")
+
     definitions, default_ids = load_preview_behaviors(
         db,
         behavior_teammate_1,

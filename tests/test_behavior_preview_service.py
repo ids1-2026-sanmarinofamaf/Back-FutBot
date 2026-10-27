@@ -175,6 +175,52 @@ async def test_create_preview_success(db):
 
 
 @pytest.mark.asyncio
+async def test_create_preview_rejects_second_active_preview(db):
+    defaults = (
+        db.query(Behavior)
+        .filter(Behavior.is_default.is_(True))
+        .all()
+    )
+
+    user_id = 1
+
+    preview_id = create_preview(
+        db=db,
+        user_id=user_id,
+        code="def play():\n    return wait()",
+        behavior_teammate_1=defaults[0].id,
+        behavior_teammate_2=defaults[1].id,
+    )
+
+    try:
+        with patch(
+            "app.services.behavior_preview_service.BehaviorWorkerPool"
+        ) as mock_pool_class:
+
+            with pytest.raises(
+                ValueError,
+                match="User already has an active preview",
+            ):
+                create_preview(
+                    db=db,
+                    user_id=user_id,
+                    code="def play():\n    return wait()",
+                    behavior_teammate_1=defaults[0].id,
+                    behavior_teammate_2=defaults[1].id,
+                )
+
+            mock_pool_class.assert_not_called()
+
+        assert preview_id in _active_previews
+
+    finally:
+        stop_preview(preview_id, user_id)
+        await asyncio.gather(*tuple(_running_preview_tasks))
+
+    assert preview_id not in _active_previews
+
+
+@pytest.mark.asyncio
 async def test_create_preview_registers_behaviors(db):
     defaults = (
         db.query(Behavior)
@@ -379,9 +425,16 @@ async def test_run_preview_cleans_up_after_error():
 
     _active_previews[preview_id] = (1, runner)
 
-    with patch(
-        "app.services.behavior_preview_service.PREVIEW_START_DELAY",
-        0.001,
+    with (
+        patch(
+            "app.services.behavior_preview_service.PREVIEW_START_DELAY",
+            0.001,
+        ),
+        patch(
+            "app.services.behavior_preview_service."
+            "preview_connection_manager.close_preview_connection",
+            new_callable=AsyncMock,
+        ) as mock_close,
     ):
         with pytest.raises(
             RuntimeError,
@@ -393,6 +446,13 @@ async def test_run_preview_cleans_up_after_error():
                 runner=runner,
                 worker_pool=worker_pool,
             )
+
+    runner.run_preview.assert_awaited_once_with(
+        preview_id,
+        preview,
+    )
+
+    mock_close.assert_awaited_once_with(preview_id)
 
     worker_pool.shutdown.assert_called_once()
     assert preview_id not in _active_previews
