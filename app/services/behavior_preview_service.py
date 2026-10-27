@@ -17,6 +17,13 @@ from app.game.engine import GameEngine
 from app.game.models.behavior_definition import BehaviorDefinition
 from app.game.models.match import Match
 
+from app.services.behavior_preview_websocket_service import (
+    preview_connection_manager,
+)
+from app.schemas.behavior_preview import BehaviorPreviewFinishedMessage
+
+
+PREVIEW_START_DELAY = 5
 
 _active_previews: dict[UUID, tuple[int, PreviewRunner]] = {}
 _running_preview_tasks: set[asyncio.Task] = set()
@@ -29,7 +36,28 @@ async def _run_preview(
     worker_pool: BehaviorWorkerPool,
 ) -> None:
     try:
+        try:
+            await asyncio.wait_for(
+                runner.stop_event.wait(),
+                timeout=PREVIEW_START_DELAY,
+            )
+        except asyncio.TimeoutError:
+            pass
+
+        if runner.stop_event.is_set():
+            await preview_connection_manager.broadcast(
+                preview_id,
+                BehaviorPreviewFinishedMessage(
+                    reason="stopped",
+                )
+            )
+            await preview_connection_manager.close_preview_connection(
+                preview_id,
+            )
+            return
+
         await runner.run_preview(preview_id, preview)
+
     finally:
         try: 
             worker_pool.shutdown()

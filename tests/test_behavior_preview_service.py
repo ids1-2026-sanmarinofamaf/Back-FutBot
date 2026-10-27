@@ -334,19 +334,25 @@ async def test_run_preview_cleans_up_after_completion():
     preview_id = uuid4()
 
     preview = MagicMock()
+
     runner = MagicMock()
+    runner.stop_event = asyncio.Event()
     runner.run_preview = AsyncMock()
 
     worker_pool = MagicMock()
 
     _active_previews[preview_id] = (1, runner)
 
-    await _run_preview(
-        preview_id=preview_id,
-        preview=preview,
-        runner=runner,
-        worker_pool=worker_pool,
-    )
+    with patch(
+        "app.services.behavior_preview_service.PREVIEW_START_DELAY",
+        0.001,
+    ):
+        await _run_preview(
+            preview_id=preview_id,
+            preview=preview,
+            runner=runner,
+            worker_pool=worker_pool,
+        )
 
     runner.run_preview.assert_awaited_once_with(
         preview_id,
@@ -362,7 +368,9 @@ async def test_run_preview_cleans_up_after_error():
     preview_id = uuid4()
 
     preview = MagicMock()
+
     runner = MagicMock()
+    runner.stop_event = asyncio.Event()
     runner.run_preview = AsyncMock(
         side_effect=RuntimeError("Simulation failed")
     )
@@ -371,13 +379,76 @@ async def test_run_preview_cleans_up_after_error():
 
     _active_previews[preview_id] = (1, runner)
 
-    with pytest.raises(RuntimeError, match="Simulation failed"):
-        await _run_preview(
-            preview_id=preview_id,
-            preview=preview,
-            runner=runner,
-            worker_pool=worker_pool,
+    with patch(
+        "app.services.behavior_preview_service.PREVIEW_START_DELAY",
+        0.001,
+    ):
+        with pytest.raises(
+            RuntimeError,
+            match="Simulation failed",
+        ):
+            await _run_preview(
+                preview_id=preview_id,
+                preview=preview,
+                runner=runner,
+                worker_pool=worker_pool,
+            )
+
+    worker_pool.shutdown.assert_called_once()
+    assert preview_id not in _active_previews
+
+
+@pytest.mark.asyncio
+async def test_run_preview_stopped_before_start():
+    preview_id = uuid4()
+
+    preview = MagicMock()
+
+    runner = MagicMock()
+    runner.stop_event = asyncio.Event()
+    runner.run_preview = AsyncMock()
+
+    worker_pool = MagicMock()
+
+    _active_previews[preview_id] = (1, runner)
+
+    with (
+        patch(
+            "app.services.behavior_preview_service."
+            "preview_connection_manager.broadcast",
+            new_callable=AsyncMock,
+        ) as mock_broadcast,
+        patch(
+            "app.services.behavior_preview_service."
+            "preview_connection_manager.close_preview_connection",
+            new_callable=AsyncMock,
+        ) as mock_close,
+    ):
+        task = asyncio.create_task(
+            _run_preview(
+                preview_id=preview_id,
+                preview=preview,
+                runner=runner,
+                worker_pool=worker_pool,
+            )
         )
+
+        await asyncio.sleep(0)
+
+        runner.stop_event.set()
+
+        await task
+
+    runner.run_preview.assert_not_awaited()
+
+    mock_broadcast.assert_awaited_once()
+
+    message = mock_broadcast.await_args.args[1]
+
+    assert message.event == "preview_finished"
+    assert message.reason == "stopped"
+
+    mock_close.assert_awaited_once_with(preview_id)
 
     worker_pool.shutdown.assert_called_once()
     assert preview_id not in _active_previews
