@@ -1,27 +1,27 @@
 from contextlib import asynccontextmanager
+from sqlalchemy import text
+# Se ejecuta una vez al arrancar la app y una vez al apagar
+from fastapi.middleware.cors import CORSMiddleware
 
 from fastapi import FastAPI
 from app.api import (
-    auth, users,
+    auth,
+    users,
     friendly_games,
+    players,
     sessions_websocket,
     matches,
+    behaviors,
     behavior_preview,
+    leagues,
 )
 from app.services.startup_service import recover_interrupted_games
 
-
-from sqlalchemy import text
-
 from app.database import engine
-from app.api import friendly_games, players
-from app.api import behaviors
-from app.api import leagues
-from app.api import matches
 
 from app.api.friendly_game_websocket import router as friendly_game_websocket_router
 from app.api.match_websocket import router as match_websocket_router
-
+from app.api.behavior_preview_websocket import router as behavior_preview_websocket_router
 
 
 
@@ -67,4 +67,4 @@ def root():
 app.include_router(friendly_games.router)
 app.include_router(players.router)
 app.include_router(match_websocket_router)
-app.include_router(matches.router)
+app.include_router(behavior_preview_websocket_router)

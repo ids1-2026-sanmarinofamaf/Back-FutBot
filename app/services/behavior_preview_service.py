@@ -151,3 +151,12 @@ def stop_preview(
         raise LookupError("Preview not found")
 
     runner.stop()
+
+
+def preview_belongs_to_user(
+    preview_id: UUID,
+    user_id: int,
+) -> bool:
+    session = _active_previews.get(preview_id)
+
+    return session is not None and session[0] == user_id
