@@ -1,6 +1,8 @@
 from sqlalchemy.orm import Session
 
-from app.models.league import LeagueState, LeaguePrivacy
+from app.core.security import get_password_hash, verify_password
+
+from app.models.league import League, LeagueState, LeaguePrivacy
 from app.models.league_participation import LeagueParticipation
 from app.models.roster import Roster
 from app.models.player_on_roster import PlayerOnRoster
@@ -13,8 +15,7 @@ from app.repositories import (
     player_repository,
     behavior_repository,
 )
-from app.schemas.league import LeagueJoin
-from app.core.security import verify_password
+from app.schemas.league import LeagueCreate, LeagueJoin
 
 
 # add this classes in order to distinguish the errors
@@ -51,6 +52,91 @@ class LeagueFull(Exception):
 
 class InvalidLeaguePassword(Exception):
     pass
+
+
+class ClubNotFound(Exception):
+    pass
+
+
+def create_league(db: Session, data: LeagueCreate , current_user_id):
+    try:
+        club = club_repository.get_by_user_id(db, current_user_id)
+        if club is None:
+            raise ClubNotFound("Club does not exist")
+
+        password_hash = None
+        if data.privacy == LeaguePrivacy.PRIVADA:
+            password_hash = get_password_hash(data.password)
+
+        # create roster object with the data
+        roster = Roster(
+            club_id=club.id,
+            formation=data.roster.formation
+        )
+
+        roster.players = [
+                    PlayerOnRoster(
+                        player_id=p.player_id,
+                        is_starter=p.is_starter,
+                        slot=p.slot,
+                        initial_behavior_id=p.initial_behavior_id
+                    )
+                    for p in data.roster.players
+        ]
+        
+        # validate the roster
+        roster.validate_roster()
+
+        # playerOnRoster validations
+        for p in data.roster.players:
+            player = player_repository.get_by_id(db, p.player_id)
+
+            if player is None:
+                raise ValueError("Player does not exist")
+
+            if player.club_id != club.id:
+                raise ValueError("Player does not belong to user's club")
+
+            if p.initial_behavior_id is not None:
+                behavior = behavior_repository.get_by_id(db,p.initial_behavior_id)
+
+                if behavior is None:
+                    raise ValueError("Behavior does not exist")
+
+                if not behavior.is_default and behavior.club_id != club.id:
+                    raise ValueError("Behavior does not belong to user's club")
+
+    
+        # save roster on db
+        roster_repository.save(db,roster)
+
+        league = League(
+            name = data.name,
+            match_duration = data.match_duration,
+            max_clubs = data.max_clubs,
+            privacy = data.privacy,
+            password_hash = password_hash,
+            creator_id = club.id
+        )
+        
+        # flush, league.id is assigned here
+        league_repository.create(db=db, league=league)
+
+        # the creator joins the league with the roster
+        league_participation_repository.create_participation(
+            db=db,
+            league_id=league.id,
+            club_id=club.id,
+            roster_id=roster.id,
+        )
+
+        # commit league, roster and participation together
+        db.commit()
+        return league
+
+    except Exception:
+        db.rollback()
+        raise
 
 
 def leave_league(
