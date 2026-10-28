@@ -74,7 +74,7 @@ def test_me_with_valid_token(user):
     token = login().json()["token"]
     response = client.get("/users/me", headers=auth_header(token))
     assert response.status_code == 200
-    assert response.json() == {"user_name": "juan", "user_email": EMAIL}
+    assert response.json() == {"user_name": "juan", "user_email": EMAIL, "user_id": str(user.id)}
 
 
 def test_me_without_header_is_401():
