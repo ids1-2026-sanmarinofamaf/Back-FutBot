@@ -58,3 +58,18 @@ def create_participation(
     db.flush()
 
     return participation
+
+def list_by_league(
+    db: Session,
+    league_id: int,
+) -> list[LeagueParticipation]:
+    return list(
+        db.scalars(
+            select(LeagueParticipation)
+            .where(LeagueParticipation.league_id == league_id)
+        ).all()
+    )
+
+    
+    
+
