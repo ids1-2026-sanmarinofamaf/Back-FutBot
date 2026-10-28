@@ -5,6 +5,7 @@ from fastapi import (
     HTTPException,
     status,
 )
+from app.services.league_websocket_service import league_connection_manager
 from fastapi.concurrency import run_in_threadpool
 
 from sqlalchemy.orm import Session
@@ -12,6 +13,7 @@ from sqlalchemy.orm import Session
 from app.database import get_db
 from app.api.deps import get_current_user
 from app.services import session_websocket_service
+from app.repositories import league_repository
 from app.services.league_service import (
     leave_league,
     LeagueNotFound,
@@ -30,8 +32,10 @@ from app.services.league_service import (
     LeagueForbidden,
     InvalidLeagueState,
     InsufficientLeagueParticipants,
+    build_league_state,
+    get_league_detail,
 )
-from app.schemas.league import LeagueCreate, LeagueJoin, LeagueJoinResponse, LeagueUpdate
+from app.schemas.league import LeagueCreate, LeagueJoin, LeagueJoinResponse, LeagueUpdate, LeagueStartedEvent, LeagueDetail
 
 router = APIRouter(prefix="/leagues",tags=["Leagues"])
 
@@ -77,8 +81,7 @@ async def leave(
     current_user=Depends(get_current_user),
 ):
     try:
-        await run_in_threadpool(
-            leave_league,
+        await leave_league(
             db=db,
             league_id=league_id,
             user_id=current_user.id,
@@ -121,8 +124,7 @@ async def join(
     current_user=Depends(get_current_user),
 ):
     try:
-        participation, roster = await run_in_threadpool(
-            join_league,
+        participation, roster = await join_league(
             db=db,
             league_id=league_id,
             user_id=current_user.id,
@@ -187,9 +189,23 @@ async def start(
             user_id=current_user.id,
             requested_state=data.state,
         )
+        
 
         # send the broadcast start league  in ws session
         await session_websocket_service.broadcast_leagues(db)
+
+        # league expires after commit so we call back
+        league  = league_repository.get_by_id(db, league_id)
+
+        fixture, standings = build_league_state(db, league)
+        
+        # Event create
+        start_league_event = LeagueStartedEvent(
+            league_id=league_id,
+            fixture=fixture,
+            standings=standings,
+        )
+        await league_connection_manager.broadcast(league_id, start_league_event)
 
     except LeagueNotFound as error:
         raise HTTPException(
@@ -212,3 +228,28 @@ async def start(
             status_code=status.HTTP_409_CONFLICT,
             detail=str(error),
         )
+
+
+@router.get(
+    "/{league_id}",
+    response_model=LeagueDetail,
+    status_code=status.HTTP_200_OK,
+)
+async def get_by_id(
+    league_id: int,
+    db: Session = Depends(get_db),
+    current_user=Depends(get_current_user),
+):
+    try:
+        # fixture and standings come filled when the league is INICIADA
+        return await run_in_threadpool(
+            get_league_detail,
+            db=db,
+            league_id=league_id,
+        )
+
+    except LeagueNotFound as error:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=str(error),
+        ) from error

@@ -24,7 +24,13 @@ from app.schemas.league import (
     FixtureClub,
     FixtureMatchItem,
     StandingRow,
+    LeagueDetail,
 )
+from app.services.league_websocket_service import (
+    league_connection_manager,
+    build_league_user_event,
+)
+
 
 # add this classes in order to distinguish the errors
 
@@ -145,7 +151,7 @@ def create_league(db: Session, data: LeagueCreate , current_user_id):
         raise
 
 
-def leave_league(
+async def leave_league(
     db: Session,
     league_id: int,
     user_id: int,
@@ -178,6 +184,13 @@ def leave_league(
             raise LeagueParticipationNotFound("User is not participating in this league")
         # get the roster associated with the participation
         roster = participation.roster
+
+        event = build_league_user_event(
+            league=league,
+            club=club,
+            event_type="user_left",
+        )
+
         # felete participation
         league_participation_repository.delete_participation(db=db,participation=participation)
         # felete its associated roster
@@ -188,8 +201,19 @@ def leave_league(
         db.rollback()
         raise
 
+    try:
+        await league_connection_manager.broadcast(
+            league_id=league_id,
+            state=event,
+        )
+    finally:
+        await league_connection_manager.disconnect_user(
+            league_id=league_id,
+            user_id=user_id,
+        )
 
-def join_league(
+
+async def join_league(
     db: Session,
     league_id: int,
     user_id: int,
@@ -300,11 +324,25 @@ def join_league(
                 roster_id=roster.id,
             )
         )
+
+        event = build_league_user_event(
+            league=league,
+            club=club,
+            event_type="user_joined",
+        )
+
         db.commit()
-        return participation, roster
+
     except Exception:
         db.rollback()
         raise
+
+    await league_connection_manager.broadcast(
+        league_id=league_id,
+        state=event,
+    )
+
+    return participation, roster
 
 
 def start_league(
@@ -419,3 +457,32 @@ def build_league_state(db: Session, league: League) -> tuple[list[FixtureMatchIt
         )
 
     return fixture, standings
+
+
+# league data for the lobby, with fixture and standings once it started
+def get_league_detail(db: Session, league_id: int) -> LeagueDetail:
+    league = league_repository.get_by_id(
+        db=db,
+        league_id=league_id,
+    )
+
+    if league is None:
+        raise LeagueNotFound("League does not exist")
+
+    fixture = None
+    standings = None
+
+    # the fixture only exists after the league started
+    if league.state == LeagueState.INICIADA:
+        fixture, standings = build_league_state(db, league)
+
+    return LeagueDetail(
+        league_id=league.id,
+        name=league.name,
+        state=league.state,
+        privacy=league.privacy,
+        current_participants=len(league.league_participations),
+        capacity=league.max_clubs,
+        fixture=fixture,
+        standings=standings,
+    )
