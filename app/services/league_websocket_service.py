@@ -4,6 +4,7 @@ from fastapi import WebSocket
 
 from app.models.league import League
 from app.models.club import Club
+from app.schemas.league import LeagueStartedEvent
 from app.schemas.league_websocket import (
     LeagueLobbyState,
     LeagueLobbyUser,
@@ -118,7 +119,7 @@ class LeagueConnectionManager:
     async def broadcast(
         self,
         league_id: int,
-        state: LeagueLobbyState | LeagueUserEvent,
+        state: LeagueLobbyState | LeagueUserEvent | LeagueStartedEvent,
     ) -> None:
         league_connections = self.active_connections.get(
             league_id, {}
