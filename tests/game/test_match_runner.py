@@ -1,3 +1,4 @@
+
 import copy
 
 import pytest
@@ -39,7 +40,7 @@ def match(six_players):
             position=(20.0, 10.0),
             velocity=(0.0, 0.0),
         ),
-        duration_ticks=10,
+        duration_ticks=40,
     )
 
 # we create a magicmock and assign it the attributes/methods of the class in spec
@@ -78,17 +79,20 @@ async def test_execute_tick_advances_one_tick(match,behavior_coordinator,game_en
 
 @pytest.mark.asyncio
 async def test_run_match_executes_behaviors_once_per_tick(match,behavior_coordinator,game_engine):
-    match.duration_ticks = 3
+    match.duration_ticks = 4
 
     runner = MatchRunner(
         behavior_coordinator,
         game_engine,
+        hydration_duration=0,
+        halftime_duration=0,
+        execution_window=0,
     )
 
     # execute the entire match
     await runner.run_match(match)
     # use magicmock functionrs to count
-    assert behavior_coordinator.get_actions.call_count == 3
+    assert behavior_coordinator.get_actions.call_count == 4
 
 @pytest.mark.asyncio
 async def test_behavior_executor_and_engine_use_same_snapshot(
@@ -103,7 +107,7 @@ async def test_behavior_executor_and_engine_use_same_snapshot(
 
     await runner.execute_tick(match)
 
-    # use magic mock functiorns
+    # use magic mock functionrs
     # we get the first argument with which it went inside execute tick
     snapshot_received_by_behavior_executor = (
         behavior_coordinator
@@ -151,7 +155,7 @@ async def test_generated_state_is_used_in_next_tick(
     game_engine,
 ):
     # change the duration only for this test
-    match.duration_ticks = 2
+    match.duration_ticks = 4
 
     initial_ball_position = match.ball.position
 
@@ -168,6 +172,9 @@ async def test_generated_state_is_used_in_next_tick(
     runner = MatchRunner(
         behavior_coordinator,
         game_engine,
+        hydration_duration=0,
+        halftime_duration=0,
+        execution_window=0,
     )
 
     await runner.run_match(match)
@@ -208,13 +215,16 @@ async def test_run_match_stops_at_duration_ticks(
     runner = MatchRunner(
         behavior_coordinator,
         game_engine,
+        hydration_duration=0,
+        halftime_duration=0,
+        execution_window=0,
     )
 
     await runner.run_match(match)
     # wait for the match to end and then verify
-    assert match.current_tick == 10
+    assert match.current_tick == 40
 
-    assert behavior_coordinator.get_actions.call_count == 10
-    assert game_engine.step.call_count == 10
+    assert behavior_coordinator.get_actions.call_count == 40
+    assert game_engine.step.call_count == 40
 
     assert match.state == MatchState.FINISHED

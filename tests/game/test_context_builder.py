@@ -234,9 +234,20 @@ def test_build_behavior_context_calculates_remaining_time(
         expected_time,
     )
 
+    ticks_per_period = match_snapshot.duration_ticks // 4
+
+    period_end_tick = (
+        match_snapshot.current_period.value * ticks_per_period
+    )
+
+    expected_period_time = (
+        max(0, period_end_tick - match_snapshot.current_tick)
+        * TIC_DURATION
+    )
+
     assert isclose(
         context.period_time_remaining,
-        expected_time,
+        expected_period_time,
     )
 
     assert context.current_period == Period.FIRST_QUARTER

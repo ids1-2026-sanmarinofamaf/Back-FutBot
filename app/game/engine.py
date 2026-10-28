@@ -492,6 +492,8 @@ class GameEngine:
 
         scoring_participation.goals += 1
 
+        match.last_conceding_side = conceding_side
+        
         # Reset ball to the center.
         match.ball.position = FIELD_CENTER
         match.ball.velocity = (0.0, 0.0)

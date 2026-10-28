@@ -279,6 +279,10 @@ class MatchSnapshotStub:
 
     last_conceding_side: Side | None
 
+    current_period: Period = Period.FIRST_QUARTER
+    side_a: Side = Side.LEFT
+    side_b: Side = Side.RIGHT
+
 
 @pytest.fixture
 def player_a_snapshot():
