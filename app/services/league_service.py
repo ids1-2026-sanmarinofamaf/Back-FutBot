@@ -390,7 +390,9 @@ def start_league(
         roster_by_club = {p.club_id: p.roster_id for p in participations}
         fixture = generate_fixture(list(roster_by_club), seed) # list(roster_by_club) da las claves del dict, o sea los club_id
         
-        for order, (local_id, visitante_id) in enumerate(fixture, start=1):
+        # the fixture comes grouped by fecha, match_order keeps that order
+        partidos = [partido for fecha in fixture for partido in fecha]
+        for order, (local_id, visitante_id) in enumerate(partidos, start=1):
             match = Match(
                 id=match_repository.get_next_match_id(db),
                 league_id=league_id,

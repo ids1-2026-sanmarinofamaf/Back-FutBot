@@ -206,7 +206,7 @@ def test_persisted_fixture_follows_the_seed(db):
         by_role = {p.role: p.club_id for p in match.participations}
         persisted.append((by_role[MatchRole.LOCAL], by_role[MatchRole.VISITANTE]))
 
-    assert persisted == generate_fixture(club_ids, SEED)
+    assert persisted == [match for fecha in generate_fixture(club_ids, SEED) for match in fecha]
 
 
 def test_standings_have_one_row_per_club_in_zero(db):
