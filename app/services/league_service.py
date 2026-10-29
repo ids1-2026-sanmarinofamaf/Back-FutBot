@@ -422,6 +422,51 @@ def start_league(
         db.rollback()
         raise
 
+# applies one match result to a single row of the standings
+def _apply_result(participation: LeagueParticipation, goals_for: int, goals_against: int) -> None:
+    participation.matches_played += 1
+    participation.goals_for += goals_for
+    participation.goals_against += goals_against
+    if goals_for > goals_against:
+        participation.matches_won += 1
+    elif goals_for == goals_against:
+        participation.matches_drawn += 1
+    else:
+        participation.matches_lost += 1
+    # recalculated instead of added so it always matches the 3/1/0 check constraint
+    participation.points = 3 * participation.matches_won + participation.matches_drawn
+
+
+# updates the standings after a finished match, the caller commits
+def update_standings(
+    db: Session,
+    league_id: int,
+    local_club_id: int,
+    visitante_club_id: int,
+    local_goals: int,
+    visitante_goals: int,
+) -> None:
+    if local_club_id == visitante_club_id:
+        raise ValueError("A club cannot play against itself")
+    if local_goals < 0 or visitante_goals < 0:
+        raise ValueError("Goals cannot be negative")
+    local = league_participation_repository.get_participation_by_club_and_league(
+        db=db,
+        league_id=league_id,
+        club_id=local_club_id,
+    )
+    visitante = league_participation_repository.get_participation_by_club_and_league(
+        db=db,
+        league_id=league_id,
+        club_id=visitante_club_id,
+    )
+    if local is None or visitante is None:
+        raise LeagueParticipationNotFound("Club is not participating in this league")
+    _apply_result(local, local_goals, visitante_goals)
+    _apply_result(visitante, visitante_goals, local_goals)
+    db.flush()
+
+
 # transforms the objects into schemas to send to front
 def build_league_state(db: Session, league: League) -> tuple[list[FixtureMatchItem], list[StandingRow]]:
     fixture = []
