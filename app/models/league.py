@@ -13,6 +13,7 @@ from app.database import Base
 if TYPE_CHECKING:
     from app.models.club import Club
     from app.models.league_participation import LeagueParticipation
+    from app.models.match import Match
 
 class LeagueState(str, Enum):
     POR_COMENZAR = "POR_COMENZAR"
@@ -56,3 +57,4 @@ class League(Base):
     creator_id: Mapped[int] = mapped_column(ForeignKey("clubs.id"), nullable=False)
     creator: Mapped["Club"] = relationship("Club")
     league_participations: Mapped[list["LeagueParticipation"]] = relationship(back_populates="league", cascade="all, delete-orphan", passive_deletes=True,)
+    matches: Mapped[list["Match"]] = relationship(back_populates="league", cascade="all, delete-orphan", passive_deletes=True, order_by="Match.match_order")

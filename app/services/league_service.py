@@ -2,6 +2,8 @@ from sqlalchemy.orm import Session
 from app.core.security import get_password_hash, verify_password
 from app.models.league import League, LeagueState, LeaguePrivacy
 from app.models.league_participation import LeagueParticipation
+from app.models.match_participation import MatchParticipation, MatchRole
+from app.models.match import Match, MatchState
 from app.models.roster import Roster
 from app.models.player_on_roster import PlayerOnRoster
 from app.repositories import (
@@ -11,9 +13,24 @@ from app.repositories import (
     roster_repository,
     player_repository,
     behavior_repository,
+    match_repository,
 )
 
-from app.schemas.league import LeagueCreate, LeagueJoin
+from app.services.fixture_service import generate_fixture
+
+from app.schemas.league import (
+    LeagueCreate,
+    LeagueJoin,
+    FixtureClub,
+    FixtureMatchItem,
+    StandingRow,
+    LeagueDetail,
+)
+from app.services.league_websocket_service import (
+    league_connection_manager,
+    build_league_user_event,
+)
+
 
 # add this classes in order to distinguish the errors
 
@@ -134,7 +151,7 @@ def create_league(db: Session, data: LeagueCreate , current_user_id):
         raise
 
 
-def leave_league(
+async def leave_league(
     db: Session,
     league_id: int,
     user_id: int,
@@ -167,6 +184,13 @@ def leave_league(
             raise LeagueParticipationNotFound("User is not participating in this league")
         # get the roster associated with the participation
         roster = participation.roster
+
+        event = build_league_user_event(
+            league=league,
+            club=club,
+            event_type="user_left",
+        )
+
         # felete participation
         league_participation_repository.delete_participation(db=db,participation=participation)
         # felete its associated roster
@@ -177,8 +201,19 @@ def leave_league(
         db.rollback()
         raise
 
+    try:
+        await league_connection_manager.broadcast(
+            league_id=league_id,
+            state=event,
+        )
+    finally:
+        await league_connection_manager.disconnect_user(
+            league_id=league_id,
+            user_id=user_id,
+        )
 
-def join_league(
+
+async def join_league(
     db: Session,
     league_id: int,
     user_id: int,
@@ -289,11 +324,25 @@ def join_league(
                 roster_id=roster.id,
             )
         )
+
+        event = build_league_user_event(
+            league=league,
+            club=club,
+            event_type="user_joined",
+        )
+
         db.commit()
-        return participation, roster
+
     except Exception:
         db.rollback()
         raise
+
+    await league_connection_manager.broadcast(
+        league_id=league_id,
+        state=event,
+    )
+
+    return participation, roster
 
 
 def start_league(
@@ -301,6 +350,7 @@ def start_league(
     league_id: int,
     user_id: int,
     requested_state: LeagueState,
+    seed: int | None = None,
 ) -> None:
     try:
         league = league_repository.get_by_id(
@@ -334,8 +384,153 @@ def start_league(
             league=league,
             state=LeagueState.INICIADA,
         )
+        
+        # draw the fixture and create one match per pair
+        participations = league_participation_repository.list_by_league(db, league_id)
+        roster_by_club = {p.club_id: p.roster_id for p in participations}
+        fixture = generate_fixture(list(roster_by_club), seed) # list(roster_by_club) da las claves del dict, o sea los club_id
+        
+        # the fixture comes grouped by fecha, match_order keeps counting across fechas
+        order = 1
+        for round_number, fecha in enumerate(fixture, start=1):
+            for local_id, visitante_id in fecha:
+                match = Match(
+                    id=match_repository.get_next_match_id(db),
+                    league_id=league_id,
+                    state=MatchState.POR_COMENZAR,
+                    match_order=order,
+                    round=round_number,
+                )
+                match.participations = [
+                    MatchParticipation(
+                        club_id=local_id,
+                        roster_id=roster_by_club[local_id],
+                        role=MatchRole.LOCAL,
+                    ),
+                    MatchParticipation(
+                        club_id=visitante_id,
+                        roster_id=roster_by_club[visitante_id],
+                        role=MatchRole.VISITANTE,
+                    ),
+                ]
+                db.add(match)
+                order += 1
+
         # persist if no errors
         db.commit()
     except Exception:
         db.rollback()
         raise
+
+# applies one match result to a single row of the standings
+def _apply_result(participation: LeagueParticipation, goals_for: int, goals_against: int) -> None:
+    participation.matches_played += 1
+    participation.goals_for += goals_for
+    participation.goals_against += goals_against
+    if goals_for > goals_against:
+        participation.matches_won += 1
+    elif goals_for == goals_against:
+        participation.matches_drawn += 1
+    else:
+        participation.matches_lost += 1
+    # recalculated instead of added so it always matches the 3/1/0 check constraint
+    participation.points = 3 * participation.matches_won + participation.matches_drawn
+
+
+# updates the standings after a finished match, the caller commits
+def update_standings(
+    db: Session,
+    league_id: int,
+    local_club_id: int,
+    visitante_club_id: int,
+    local_goals: int,
+    visitante_goals: int,
+) -> None:
+    if local_club_id == visitante_club_id:
+        raise ValueError("A club cannot play against itself")
+    if local_goals < 0 or visitante_goals < 0:
+        raise ValueError("Goals cannot be negative")
+    local = league_participation_repository.get_participation_by_club_and_league(
+        db=db,
+        league_id=league_id,
+        club_id=local_club_id,
+    )
+    visitante = league_participation_repository.get_participation_by_club_and_league(
+        db=db,
+        league_id=league_id,
+        club_id=visitante_club_id,
+    )
+    if local is None or visitante is None:
+        raise LeagueParticipationNotFound("Club is not participating in this league")
+    _apply_result(local, local_goals, visitante_goals)
+    _apply_result(visitante, visitante_goals, local_goals)
+    db.flush()
+
+
+# transforms the objects into schemas to send to front
+def build_league_state(db: Session, league: League) -> tuple[list[FixtureMatchItem], list[StandingRow]]:
+    fixture = []
+    for match in league.matches:
+        # each match has exactly one local and one visitante
+        by_role = {p.role: p for p in match.participations}
+        local = by_role[MatchRole.LOCAL]
+        visitante = by_role[MatchRole.VISITANTE]
+        fixture.append(
+            FixtureMatchItem(
+                match_id=match.id,
+                match_order=match.match_order,
+                round=match.round,
+                state=match.state,
+                local=FixtureClub(club_id=local.club_id, name=local.club.name),
+                visitante=FixtureClub(club_id=visitante.club_id, name=visitante.club.name),
+            )
+        )
+
+    standings = []
+    participations = league_participation_repository.list_by_league(db, league.id)
+    for participation in participations:
+        standings.append(
+            StandingRow(
+                club_id=participation.club_id,
+                name=participation.club.name,
+                points=participation.points,
+                matches_played=participation.matches_played,
+                matches_won=participation.matches_won,
+                matches_drawn=participation.matches_drawn,
+                matches_lost=participation.matches_lost,
+                goals_for=participation.goals_for,
+                goals_against=participation.goals_against,
+                goal_difference=participation.goals_for - participation.goals_against,
+            )
+        )
+
+    return fixture, standings
+
+
+# league data for the lobby, with fixture and standings once it started
+def get_league_detail(db: Session, league_id: int) -> LeagueDetail:
+    league = league_repository.get_by_id(
+        db=db,
+        league_id=league_id,
+    )
+
+    if league is None:
+        raise LeagueNotFound("League does not exist")
+
+    fixture = None
+    standings = None
+
+    # the fixture only exists after the league started
+    if league.state == LeagueState.INICIADA:
+        fixture, standings = build_league_state(db, league)
+
+    return LeagueDetail(
+        league_id=league.id,
+        name=league.name,
+        state=league.state,
+        privacy=league.privacy,
+        current_participants=len(league.league_participations),
+        capacity=league.max_clubs,
+        fixture=fixture,
+        standings=standings,
+    )
