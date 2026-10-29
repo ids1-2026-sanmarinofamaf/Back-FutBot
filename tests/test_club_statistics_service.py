@@ -1,7 +1,8 @@
+
 from unittest.mock import MagicMock, patch
-
+from app.models.league import LeaguePrivacy
 import pytest
-
+from types import SimpleNamespace
 from app.services.club_statistics_service import update_statistics
 
 
@@ -12,9 +13,11 @@ from app.services.club_statistics_service import update_statistics
 )
 def test_update_statistics_club_a_wins(mock_update):
     db = MagicMock()
+    league = SimpleNamespace(privacy=LeaguePrivacy.PUBLICA)
 
     update_statistics(
         db=db,
+        league=league,
         club_a_id=1,
         club_b_id=2,
         goals_a=3,
@@ -53,9 +56,11 @@ def test_update_statistics_club_a_wins(mock_update):
 )
 def test_update_statistics_club_b_wins(mock_update):
     db = MagicMock()
+    league = SimpleNamespace(privacy=LeaguePrivacy.PUBLICA)
 
     update_statistics(
         db=db,
+        league=league,
         club_a_id=1,
         club_b_id=2,
         goals_a=0,
@@ -94,9 +99,11 @@ def test_update_statistics_club_b_wins(mock_update):
 )
 def test_update_statistics_draw(mock_update):
     db = MagicMock()
+    league = SimpleNamespace(privacy=LeaguePrivacy.PUBLICA)
 
     update_statistics(
         db=db,
+        league=league,
         club_a_id=1,
         club_b_id=2,
         goals_a=2,
@@ -118,3 +125,23 @@ def test_update_statistics_draw(mock_update):
         )
 
     db.commit.assert_not_called()
+
+@patch(
+    "app.services.club_statistics_service."
+    "club_statistics_repository.increment_match_statistics"
+)
+def test_private_league_does_not_update_statistics(mock_update):
+    db = MagicMock()
+    league = MagicMock()
+    league.privacy = LeaguePrivacy.PRIVADA
+
+    update_statistics(
+        db=db,
+        league=league,
+        club_a_id=1,
+        club_b_id=2,
+        goals_a=3,
+        goals_b=1,
+    )
+
+    mock_update.assert_not_called()

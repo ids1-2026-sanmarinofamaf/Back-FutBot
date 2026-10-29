@@ -1,4 +1,4 @@
-
+from app.models.league import League, LeaguePrivacy
 from sqlalchemy.orm import Session
 
 from app.repositories import club_statistics_repository
@@ -7,11 +7,15 @@ from app.repositories import club_statistics_repository
 # since the "start league" functionality has not yet been implemented, i am leaving this for whoever is tasked with implementing it.
 def update_statistics(
     db: Session,
+    league: League,
     club_a_id: int,
     club_b_id: int,
     goals_a: int,
     goals_b: int,
 ) -> None:
+
+    if league.privacy != LeaguePrivacy.PUBLICA:
+        return
 
     # determine match result
     if goals_a > goals_b:
