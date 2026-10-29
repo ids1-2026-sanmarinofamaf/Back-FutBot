@@ -64,6 +64,7 @@ def test_get_started_league_returns_fixture_and_standings(mock_detail, api_depen
             FixtureMatchItem(
                 match_id=1,
                 match_order=1,
+                round=1,
                 state=MatchState.POR_COMENZAR,
                 local=FixtureClub(club_id=1, name="Club 1"),
                 visitante=FixtureClub(club_id=2, name="Club 2"),

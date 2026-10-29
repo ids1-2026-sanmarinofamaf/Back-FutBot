@@ -30,6 +30,11 @@ class Match(Base):
             "match_order IS NULL OR match_order >= 1",
             name="ck_match_order_positive"
         ),
+        # the fechas start at 1
+        CheckConstraint(
+            "round IS NULL OR round >= 1",
+            name="ck_match_round_positive"
+        ),
     )
 
     # assigned from match_id_seq in the service, shared with friendly games
@@ -39,5 +44,7 @@ class Match(Base):
     state: Mapped[MatchState] = mapped_column(SAEnum(MatchState, name="match_state"), nullable=False, default=MatchState.POR_COMENZAR, server_default="POR_COMENZAR")
     # position in the drawn fixture
     match_order: Mapped[int | None] = mapped_column(nullable=True)
+    # fecha of the fixture the match belongs to
+    round: Mapped[int | None] = mapped_column(nullable=True)
     league: Mapped["League | None"] = relationship(back_populates="matches")
     participations: Mapped[list["MatchParticipation"]] = relationship(back_populates="match", cascade="all, delete-orphan", passive_deletes=True)

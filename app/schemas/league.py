@@ -84,6 +84,7 @@ class FixtureClub(BaseModel):
 class FixtureMatchItem(BaseModel):
     match_id: int
     match_order: int
+    round: int
     state: MatchState
     local: FixtureClub
     visitante: FixtureClub

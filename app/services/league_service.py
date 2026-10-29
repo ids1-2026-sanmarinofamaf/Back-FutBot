@@ -390,32 +390,32 @@ def start_league(
         roster_by_club = {p.club_id: p.roster_id for p in participations}
         fixture = generate_fixture(list(roster_by_club), seed) # list(roster_by_club) da las claves del dict, o sea los club_id
         
-        # the fixture comes grouped by fecha, match_order keeps that order
-        partidos = [partido for fecha in fixture for partido in fecha]
-        for order, (local_id, visitante_id) in enumerate(partidos, start=1):
-            match = Match(
-                id=match_repository.get_next_match_id(db),
-                league_id=league_id,
-                state=MatchState.POR_COMENZAR,
-                match_order=order,
-            )
-            match.participations = [
-                MatchParticipation(
-                    club_id=local_id,
-                    roster_id=roster_by_club[local_id],
-                    role=MatchRole.LOCAL,
-                ),
-                MatchParticipation(
-                    club_id=visitante_id,
-                    roster_id=roster_by_club[visitante_id],
-                    role=MatchRole.VISITANTE,
-                ),
-            ]
-            db.add(match)
+        # the fixture comes grouped by fecha, match_order keeps counting across fechas
+        order = 1
+        for round_number, fecha in enumerate(fixture, start=1):
+            for local_id, visitante_id in fecha:
+                match = Match(
+                    id=match_repository.get_next_match_id(db),
+                    league_id=league_id,
+                    state=MatchState.POR_COMENZAR,
+                    match_order=order,
+                    round=round_number,
+                )
+                match.participations = [
+                    MatchParticipation(
+                        club_id=local_id,
+                        roster_id=roster_by_club[local_id],
+                        role=MatchRole.LOCAL,
+                    ),
+                    MatchParticipation(
+                        club_id=visitante_id,
+                        roster_id=roster_by_club[visitante_id],
+                        role=MatchRole.VISITANTE,
+                    ),
+                ]
+                db.add(match)
+                order += 1
 
-        db.flush()
-
-        
         # persist if no errors
         db.commit()
     except Exception:
@@ -434,6 +434,7 @@ def build_league_state(db: Session, league: League) -> tuple[list[FixtureMatchIt
             FixtureMatchItem(
                 match_id=match.id,
                 match_order=match.match_order,
+                round=match.round,
                 state=match.state,
                 local=FixtureClub(club_id=local.club_id, name=local.club.name),
                 visitante=FixtureClub(club_id=visitante.club_id, name=visitante.club.name),

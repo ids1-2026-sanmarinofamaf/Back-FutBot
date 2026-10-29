@@ -317,4 +317,27 @@ def test_league_detail_returns_fixture_after_start(db):
     assert detail.state == LeagueState.INICIADA
     assert len(detail.fixture) == 6
     assert [item.match_order for item in detail.fixture] == list(range(1, 7))
+    # 4 clubs: 3 fechas of 2 matches each
+    assert [item.round for item in detail.fixture] == [1, 1, 2, 2, 3, 3]
     assert len(detail.standings) == 4
+
+
+@pytest.mark.parametrize("n", [3, 4, 5])
+def test_persisted_rounds_follow_the_drawn_fechas(db, n):
+    league, participations, creator_user_id = create_league(db, n)
+    club_ids = [p.club_id for p in participations]
+
+    start_league(
+        db=db,
+        league_id=league.id,
+        user_id=creator_user_id,
+        requested_state=LeagueState.INICIADA,
+        seed=SEED,
+    )
+
+    expected = [
+        round_number
+        for round_number, fecha in enumerate(generate_fixture(club_ids, SEED), start=1)
+        for _ in fecha
+    ]
+    assert [match.round for match in get_matches(db, league.id)] == expected

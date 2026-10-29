@@ -41,6 +41,7 @@ def make_fixture() -> list[FixtureMatchItem]:
         FixtureMatchItem(
             match_id=1,
             match_order=1,
+            round=1,
             state=MatchState.POR_COMENZAR,
             local=FixtureClub(club_id=1, name="Club 1"),
             visitante=FixtureClub(club_id=2, name="Club 2"),
@@ -48,6 +49,7 @@ def make_fixture() -> list[FixtureMatchItem]:
         FixtureMatchItem(
             match_id=2,
             match_order=2,
+            round=1,
             state=MatchState.POR_COMENZAR,
             local=FixtureClub(club_id=3, name="Club 3"),
             visitante=FixtureClub(club_id=1, name="Club 1"),
