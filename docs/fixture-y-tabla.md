@@ -18,6 +18,7 @@ WebSocket de liga de **SCRUM-163** (`ws/league/{league_id}`).
 | Cada partido trae el campo nuevo **`round`** (número de fecha, empieza en 1), guardado en `Match.round`. | Se puede agrupar y pintar el fixture por fecha usando `round`. |
 | Nueva migración que agrega la columna `round` a `matches`. | Ninguno. En el back hay que correr `alembic upgrade head`. |
 | Se sacó un `db.flush()` que sobraba en `start_league`. | Ninguno. |
+| Nueva función `update_standings` para actualizar la tabla con el resultado de un partido (ver [sección 7.1](#71-actualizar-la-tabla-update_standings)). Todavía nadie la llama: la va a usar el runner de la liga. | Ninguno por ahora. |
 
 ---
 
@@ -48,10 +49,10 @@ WebSocket de liga de **SCRUM-163** (`ws/league/{league_id}`).
 | Migración | [alembic/versions/fe788b9cf5b5_crear_tablas_de_partidos.py](../alembic/versions/fe788b9cf5b5_crear_tablas_de_partidos.py) | Tablas `matches` y `match_participations`. |
 | Schemas | [app/schemas/league.py](../app/schemas/league.py) | `FixtureClub`, `FixtureMatchItem`, `StandingRow`, `LeagueStartedEvent`, `LeagueDetail`. |
 | Sorteo | [app/services/fixture_service.py](../app/services/fixture_service.py) | `generate_fixture(club_ids, seed)`: fechas con el método del círculo. |
-| Service | [app/services/league_service.py](../app/services/league_service.py) | Creación de partidos en `start_league`, `build_league_state` y `get_league_detail`. |
+| Service | [app/services/league_service.py](../app/services/league_service.py) | Creación de partidos en `start_league`, `build_league_state`, `get_league_detail` y `update_standings`. |
 | Endpoint | [app/api/leagues.py](../app/api/leagues.py) | Emisión de `league_started` en el `PATCH` y nuevo `GET /leagues/{league_id}`. |
 | WebSocket | [app/services/league_websocket_service.py](../app/services/league_websocket_service.py) | `broadcast` acepta `LeagueStartedEvent`. |
-| Tests | `tests/test_fixture_service.py`, `tests/test_start_league_integration.py`, `tests/test_get_league_api.py`, `tests/test_league_started_broadcast.py` | Ver sección 9. |
+| Tests | `tests/test_fixture_service.py`, `tests/test_start_league_integration.py`, `tests/test_get_league_api.py`, `tests/test_league_started_broadcast.py`, `tests/test_update_standings_service.py` | Ver sección 10. |
 
 ---
 
@@ -267,6 +268,55 @@ except Exception:
 - Si cualquier paso falla, por ejemplo la secuencia de ids en el tercer partido, el `rollback()`
   deshace el cambio de estado y los partidos ya agregados. La liga queda en `POR_COMENZAR`.
 
+### 7.1 Actualizar la tabla (`update_standings`)
+
+Actualizar la tabla al terminar cada partido no es parte de este ticket, pero se dejó lista la lógica
+para que el runner de la liga solo tenga que llamarla y no conozca las reglas de la tabla.
+
+```python
+update_standings(
+    db,
+    league_id,
+    local_club_id,
+    visitante_club_id,
+    local_goals,
+    visitante_goals,
+)
+```
+
+Recibe solo el resultado, no el `Match`, así se puede testear sin simular un partido.
+
+| Paso | Qué hace |
+|---|---|
+| Validación | Error `ValueError` si el local y el visitante son el mismo club o si hay goles negativos. |
+| Búsqueda | Trae las dos `LeagueParticipation` con `get_participation_by_club_and_league`. Si alguna no existe, `LeagueParticipationNotFound`. |
+| Por cada club | `matches_played += 1`, suma goles a favor y en contra, y suma una victoria, un empate o una derrota según el resultado. |
+| Puntos | Se **recalculan** como `3 * matches_won + matches_drawn` en lugar de sumarse aparte, así siempre cumplen el `CheckConstraint` del modelo. |
+| Persistencia | Hace `db.flush()` pero **no** `commit`. |
+
+Decisiones:
+
+- **No hace commit.** Quien la llama decide la transacción. La idea es que el runner marque el `Match`
+  como terminado y actualice la tabla en la misma transacción: si una de las dos cosas falla, no queda
+  la otra a medias. Es el mismo criterio que `start_league`.
+- **La diferencia de gol no se guarda.** No hay columna para eso; se calcula al armar `StandingRow`
+  en `build_league_state` (`goals_for - goals_against`).
+- **Las restricciones de la base son la red de seguridad.** `LeagueParticipation` exige
+  `points = 3*won + drawn` y `played = won + drawn + lost`. Si algún día se cambia la función y se
+  olvida un campo, la base rechaza el `UPDATE`.
+
+Uso esperado desde el runner:
+
+```python
+try:
+    match.state = MatchState.FINALIZADO
+    update_standings(db, league_id, local_id, visitante_id, score_local, score_visitante)
+    db.commit()
+except Exception:
+    db.rollback()
+    raise
+```
+
 ---
 
 ## 8. Contratos
@@ -340,6 +390,7 @@ vienen en `null`.
 |---|---|---|
 | `tests/test_fixture_service.py` | Unitario, sin base | n·(n−1)/2 partidos, pares sin repetir, nadie contra sí mismo, n−1 partidos por club, misma semilla con el mismo fixture, localía sorteada. Fechas: n−1 fechas si n es par y n si es impar, ningún club juega dos veces en la misma fecha, y con n impar cada club queda libre exactamente una vez. |
 | `tests/test_start_league_integration.py` | Integración contra SQLite | Partidos guardados en `POR_COMENZAR` con una participación `LOCAL` y otra `VISITANTE`, roster de la liga, fixture guardado igual al sorteado (aplanando las fechas), `round` guardado igual a la fecha sorteada, tabla en 0, rollback que deja la liga intacta, `get_league_detail` antes y después de iniciar. |
+| `tests/test_update_standings_service.py` | Integración contra SQLite | `update_standings`: victoria local, empate y victoria visitante revisando todos los campos de los dos clubes, resultados que se acumulan, un tercer club que no cambia, y errores con un club fuera de la liga, un club contra sí mismo y goles negativos. |
 | `tests/test_get_league_api.py` | API con mocks | `GET /leagues/{id}`: 200 con y sin fixture, 404 y 401. |
 | `tests/test_league_started_broadcast.py` | API + manager real | Los clientes de la liga reciben `league_started`, los de otra liga no, un inicio rechazado no emite nada, el evento sale después de iniciar y el payload se serializa a JSON. |
 
@@ -746,7 +797,7 @@ Para probar sin esperar al backend, el front puede usar los JSON de la sección 
 | Tema | Estado |
 |---|---|
 | Fechas | Resuelto: fixture en fechas con el método del círculo, guardadas en `Match.round` y enviadas al front en `FixtureMatchItem.round`. Falta definir si las fechas se juegan en paralelo o en secuencia. |
-| Ejecución de partidos | Correr los partidos, actualizar la tabla al terminar y avanzar de fecha corresponde a otro ticket. Cada partido levanta su propio pool de 6 procesos de comportamiento. |
+| Ejecución de partidos | Correr los partidos y avanzar de fecha corresponde a otro ticket. La lógica para actualizar la tabla ya está en `update_standings` (sección 7.1); el runner solo tiene que llamarla al terminar cada partido. Cada partido levanta su propio pool de 6 procesos de comportamiento. |
 | Ligas privadas en el `GET` | Hoy cualquier usuario autenticado puede consultar cualquier liga. [API.md](API.md) pide contraseña para ver una privada. |
 | Ligas finalizadas | El `GET` devuelve fixture solo con `INICIADA`, como dice el ticket. Probablemente convenga mostrarlo también en `FINALIZADA`. |
 | Diferencia con [API.md](API.md) | API.md lista `GET /leagues/{id}/table` y `GET /leagues/{id}/fixture` por separado. Este ticket los devuelve juntos en `GET /leagues/{id}`. Hay que actualizar API.md o acordar el contrato con el front. |
