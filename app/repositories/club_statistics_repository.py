@@ -35,3 +35,25 @@ def increment_match_statistics(
         )
 
     db.flush()
+
+# update statistics after league
+def increment_league_statistics(
+    db: Session,
+    club_id: int,
+    won: bool,
+) -> None:
+    result = db.execute(
+        update(ClubStatistics)
+        .where(ClubStatistics.club_id == club_id)
+        .values(
+            leagues_played=ClubStatistics.leagues_played + 1,
+            leagues_won=ClubStatistics.leagues_won + int(won),
+        )
+    )
+
+    if result.rowcount != 1:
+        raise LookupError(
+            f"Statistics not found for club {club_id}"
+        )
+
+    db.flush()

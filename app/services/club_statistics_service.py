@@ -55,3 +55,16 @@ def update_statistics(
         goals_for=goals_b,
         goals_against=goals_a,
     )
+
+def update_league_statistics(
+    db: Session,
+    club_ids: list[int],
+    winner_id: int,
+) -> None:
+
+    for club_id in club_ids:
+        club_statistics_repository.increment_league_statistics(
+            db=db,
+            club_id=club_id,
+            won=(club_id == winner_id),
+        )
