@@ -4,6 +4,7 @@ from fastapi import (
     HTTPException,
     status,
 )
+from fastapi.concurrency import run_in_threadpool
 from sqlalchemy.orm import Session
 
 from app.database import get_db
