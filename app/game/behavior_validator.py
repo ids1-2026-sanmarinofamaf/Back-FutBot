@@ -86,9 +86,11 @@ def validate_behavior_code(code: str) -> bool:
     """
     Validate player behavior Python source code.
 
-    Runs the complete validation pipeline: syntax parsing, AST security
-    checks, module structure rules, identifier whitelisting, compilation,
-    play() signature inspection, and an isolated dry-run execution.
+    Verifies that the code is non-empty and runs the complete validation
+    pipeline inside an isolated worker process with a strict timeout: syntax
+    parsing, AST security checks, module structure rules, identifier
+    whitelisting, compilation, play() signature inspection, and dry-run
+    execution.
 
     Args:
         code: Raw Python source code defining the behavior.
@@ -99,19 +101,12 @@ def validate_behavior_code(code: str) -> bool:
     Raises:
         BehaviorValidationError: If the code is empty, syntactically invalid,
             uses forbidden constructs/identifiers, fails to compile, or fails
-            during dry-run execution.
+            or times out during validation in the worker process.
     """
     if not isinstance(code, str) or not code.strip():
         raise BehaviorValidationError("El comportamiento no puede estar vacío")
 
-    tree = _parse_syntax(code)
-    _validate_ast(tree)
-    _validate_module_structure(tree)
-    _validate_identifiers(tree)
-
-    runtime_behavior = _compile_behavior(code)
-    _validate_play_signature(runtime_behavior.play)
-    _dry_run_behavior(code)
+    _run_validation_in_worker(code)
 
     return True
 
@@ -411,61 +406,67 @@ def _build_sample_contexts() -> list[BehaviorContext]:
     return [far_ball_ctx, near_ball_ctx]
 
 
-def _dry_run_worker(code: str, output_queue: Queue) -> None:
+def _validation_worker(code: str, output_queue: Queue) -> None:
     """
-    Worker target executed in a separate process to test behavior execution.
+    Worker target executed in a separate process to validate behavior code.
 
-    Compiles the behavior and executes play() against each sample context,
-    sending None to output_queue on success or an error message string on
-    failure.
+    Runs static AST checks, compiles the behavior once, validates the play()
+    signature, and executes play() against each sample context, sending None
+    to output_queue on success or an error message string on failure.
 
     Args:
-        code: Raw Python source code string to compile and execute.
+        code: Raw Python source code string to validate, compile, and execute.
         output_queue: Multiprocessing queue used to report the validation result.
     """
     try:
-        runtime_behavior = BehaviorCompiler().compile(
-            BehaviorDefinition(id=0, code=code)
-        )
+        tree = _parse_syntax(code)
+        _validate_ast(tree)
+        _validate_module_structure(tree)
+        _validate_identifiers(tree)
+
+        runtime_behavior = _compile_behavior(code)
+        _validate_play_signature(runtime_behavior.play)
 
         for context in _build_sample_contexts():
             set_current_context(context)
             try:
                 action = runtime_behavior.play()
             except Exception as exc:
-                output_queue.put(f"Error de ejecución en play(): {exc}")
-                return
+                raise BehaviorValidationError(
+                    f"Error de ejecución en play(): {exc}"
+                ) from exc
             finally:
                 clear_current_context()
 
             if not isinstance(action, (MoveAction, KickAction, WaitAction)):
-                output_queue.put(
+                raise BehaviorValidationError(
                     "La función play() debe retornar una acción válida: move(), kick() o wait()"
                 )
-                return
 
         output_queue.put(None)
+    except BehaviorValidationError as exc:
+        output_queue.put(str(exc))
     except Exception as exc:
         output_queue.put(f"Error al validar la ejecución del comportamiento: {exc}")
 
 
-def _dry_run_behavior(code: str) -> None:
+def _run_validation_in_worker(code: str) -> None:
     """
-    Execute the behavior in an isolated child process with a strict timeout.
+    Execute the complete validation pipeline in an isolated child process with a strict timeout.
 
-    Terminates the child process if execution exceeds DRY_RUN_TIMEOUT_SECONDS
+    Terminates the child process if validation exceeds DRY_RUN_TIMEOUT_SECONDS
     and ensures IPC queue resources are always released.
 
     Args:
-        code: Raw Python source code string to dry-run.
+        code: Raw Python source code string to validate.
 
     Raises:
-        BehaviorValidationError: If execution times out, raises a runtime
-            exception, or returns an object that is not a valid game action.
+        BehaviorValidationError: If validation times out, fails static/compilation
+            checks, raises a runtime exception, or returns an invalid action.
     """
     output_queue: Queue = Queue()
     process = Process(
-        target=_dry_run_worker,
+        target=_validation_worker,
         args=(code, output_queue),
     )
 
