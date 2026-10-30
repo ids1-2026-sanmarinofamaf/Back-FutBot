@@ -1,32 +1,16 @@
-
-from dataclasses import dataclass
 from multiprocessing import Process, Queue
 from queue import Empty
 from time import monotonic
 
 from app.game.models.behavior_definition import BehaviorDefinition
-from app.game.behavior_compiler import BehaviorCompiler
 from app.game.models.actions import MoveAction, KickAction, WaitAction
-from app.game.context import BehaviorContext
+from app.game.models.behavior_job import BehaviorJob
+
+from app.game.behavior_compiler import BehaviorCompiler
 from app.game.behavior_worker import BehaviorWorker
 
 
 Action = MoveAction | KickAction | WaitAction
-
-
-@dataclass(frozen=True)
-class BehaviorJob:
-    """
-    Represent a behavior execution request for one player.
-
-    Attributes:
-        player_id: Identifier of the player whose behavior must be executed.
-        behavior_id: Identifier of the behavior assigned to the player.
-        context: BehaviorContext visible to the behavior during the current tic.
-    """
-    player_id: int
-    behavior_id: int
-    context: BehaviorContext
 
 
 class BehaviorWorkerPool:
