@@ -486,3 +486,29 @@ def test_release_match_clears_disabled_behaviors(pool, context):
 
     assert isinstance(actions[1], MoveAction)
     assert pool._disabled_behaviors[10] == set()
+
+
+def test_worker_is_ready_before_first_execution(context):
+    pool = BehaviorWorkerPool(
+        size=1,
+        timeout_ms=100,
+    )
+
+    try:
+        pool.register_match(
+            10,
+            [BehaviorDefinition(100, MOVE_CODE)],
+        )
+
+        original_pid = pool._processes[0].pid
+
+        actions = pool.execute(
+            [make_job(1, 100, context)],
+            match_id=10,
+        )
+
+        assert isinstance(actions[1], MoveAction)
+        assert pool._processes[0].pid == original_pid
+
+    finally:
+        pool.shutdown()

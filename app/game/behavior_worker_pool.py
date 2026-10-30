@@ -16,6 +16,8 @@ from app.game.behavior_worker import BehaviorWorker
 
 Action = MoveAction | KickAction | WaitAction
 
+WORKER_STARTUP_TIMEOUT_SECONDS = 5.0
+
 
 class BehaviorWorkerPool:
     """
@@ -87,6 +89,10 @@ class BehaviorWorkerPool:
         worker = BehaviorWorker()
         compiler = BehaviorCompiler()
         definitions: dict[int, dict[int, BehaviorDefinition]] = {}
+
+        output_queue.put({
+            "status": "ready"
+        })
 
         while True:
             message = input_queue.get()
@@ -217,6 +223,29 @@ class BehaviorWorkerPool:
             self._processes[index] = process
             self._input_queues[index] = input_queue
             self._output_queues[index] = output_queue
+
+        try:
+            ready = output_queue.get(
+                timeout=WORKER_STARTUP_TIMEOUT_SECONDS
+            )
+
+            if ready != {"status": "ready"}:
+                raise RuntimeError(
+                    f"Worker {index} returned an invalid ready message"
+                )
+
+        except (
+            Empty,
+            EOFError,
+            OSError,
+            ValueError,
+            RuntimeError,
+        ) as exc:
+            self._stop_worker(index, graceful=False)
+
+            raise RuntimeError(
+                f"Worker {index} failed to initialize"
+            ) from exc
 
 
     def _stop_worker(
