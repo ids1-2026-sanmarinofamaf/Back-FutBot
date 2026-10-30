@@ -1,9 +1,15 @@
 import copy
 
 import pytest
-from unittest.mock import MagicMock
+from types import SimpleNamespace
+from unittest.mock import MagicMock, AsyncMock
 
-from app.game.match_runner import (MatchRunner,BehaviorCoordinatorProtocol,GameEngineProtocol)
+from app.game.match_runner import (
+    MatchRunner,
+    BehaviorCoordinatorProtocol,
+    GameEngineProtocol
+)
+import app.game.match_runner as match_runner_module
 from app.game.models.ball import Ball
 from app.game.models.match import Match, MatchState
 from app.game.models.match_participation import MatchParticipation
@@ -64,12 +70,6 @@ def game_engine():
 
 @pytest.fixture(autouse=True)
 def disable_tick_delay(monkeypatch):
-    """
-    Disable real-time tick delays during runner tests.
-
-    Args:
-        monkeypatch: Pytest fixture for replacing attributes.
-    """
     monkeypatch.setattr(
         "app.game.match_runner.TIC_DURATION",
         0,
@@ -231,4 +231,99 @@ async def test_run_match_stops_at_duration_ticks(
     assert behavior_coordinator.get_actions.call_count == 10
     assert game_engine.step.call_count == 10
 
+    assert match.state == MatchState.FINISHED
+
+
+class FakeClock:
+    """
+    Simulate time progression with a fixed scheduling delay.
+    """
+
+    def __init__(
+        self,
+        tick_duration: float = 0.020,
+        scheduling_delay: float = 0.003,
+    ):
+        self.current_time = 0.0
+        self.tick_duration = tick_duration
+        self.scheduling_delay = scheduling_delay
+        self.tick_starts = []
+
+    def monotonic(self) -> float:
+        return self.current_time
+
+    async def sleep(self, seconds: float) -> None:
+        self.current_time += seconds + self.scheduling_delay
+
+    async def execute_tick(self, match: Match) -> None:
+        self.tick_starts.append(self.current_time)
+        self.current_time += self.tick_duration
+        match.current_tick += 1
+
+
+@pytest.mark.asyncio
+async def test_run_match_does_not_accumulate_tick_drift(
+    match,
+    behavior_coordinator,
+    game_engine,
+    monkeypatch,
+):
+    match.duration_ticks = 5
+
+    clock = FakeClock()
+
+    runner = MatchRunner(
+        behavior_coordinator,
+        game_engine,
+    )
+
+    monkeypatch.setattr(
+        match_runner_module,
+        "TIC_DURATION",
+        0.1,
+    )
+
+    monkeypatch.setattr(
+        match_runner_module,
+        "time",
+        SimpleNamespace(monotonic=clock.monotonic),
+    )
+
+    monkeypatch.setattr(
+        match_runner_module,
+        "asyncio",
+        SimpleNamespace(sleep=clock.sleep),
+    )
+
+    monkeypatch.setattr(
+        runner,
+        "execute_tick",
+        clock.execute_tick,
+    )
+
+    monkeypatch.setattr(
+        match_runner_module.match_connection_manager,
+        "broadcast",
+        AsyncMock(),
+    )
+
+    monkeypatch.setattr(
+        match_runner_module.match_connection_manager,
+        "close_match_connection",
+        AsyncMock(),
+    )
+
+    await runner.run_match(match)
+
+    assert clock.tick_starts == pytest.approx([
+        0.000,
+        0.103,
+        0.203,
+        0.303,
+        0.403,
+    ])
+
+    assert clock.current_time == pytest.approx(0.503)
+
+    assert match.current_tick == 5
     assert match.state == MatchState.FINISHED

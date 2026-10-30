@@ -65,16 +65,15 @@ class MatchRunner:
 
         await match_connection_manager.broadcast(match.match_id,initial_message)
 
+        next_tick_time = time.monotonic()
+
         while match.current_tick < match.duration_ticks:
-            # start the tick
-            tick_start = time.monotonic()
             # execute the tick and all the workers
             await self.execute_tick(match)
 
-            # then we have to check if the tick ends before the TIC_DURATION
-            elapsed = time.monotonic() - tick_start
+            next_tick_time += TIC_DURATION
 
-            remaining_time = TIC_DURATION - elapsed
+            remaining_time = next_tick_time - time.monotonic()
             # if the tick ends before TIC_DURATION, we hae to wait the remaining_time
             if remaining_time > 0:
                 await asyncio.sleep(remaining_time)
@@ -82,7 +81,7 @@ class MatchRunner:
         # when the match ended, change its state to finished and close ws conections
         match.state = MatchState.FINISHED
 
-        await match_connection_manager.close_match_connection(match.match_id)   
+        await match_connection_manager.close_match_connection(match.match_id)
 
         return match
 
