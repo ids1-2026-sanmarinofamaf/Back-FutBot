@@ -29,8 +29,10 @@ class MatchRunner:
     async def execute_tick(self, match: Match) -> None:  # async because we have to wait all the workers
         snapshot = match.snapshot()     # we make a copy of the match at a specific tick
 
-        actions = self.behavior_coordinator.get_actions(snapshot)    # through copying, we run all the behaviors, wait for the workers,
-                                                                        # and save the actions each player needs to take
+        actions = await asyncio.to_thread(
+            self.behavior_coordinator.get_actions,
+            snapshot,
+        )
 
         self.game_engine.step(match,snapshot,actions)   # we update the match state, using the snapshot and actions
 

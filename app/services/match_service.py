@@ -41,6 +41,33 @@ def load_match_behaviors(
     ]
 
 _running_match_tasks: set[asyncio.Task] = set()
+_worker_pool: BehaviorWorkerPool | None = None
+
+
+def initialize_worker_pool() -> None:
+    """
+    Initialize the shared behavior worker pool.
+
+    The pool is created once for the application process.
+    """
+    global _worker_pool
+
+    if _worker_pool is None:
+        _worker_pool = BehaviorWorkerPool(
+            size=6,
+            timeout_ms=100,
+        )
+
+
+def shutdown_worker_pool() -> None:
+    """
+    Shut down the shared pool and release its resources.
+    """
+    global _worker_pool
+
+    if _worker_pool is not None:
+        _worker_pool.shutdown()
+        _worker_pool = None
 
 
 async def _run_match(
@@ -58,11 +85,8 @@ async def _run_match(
 
     finally:
         # delete de worke pool when the match is finished
-        worker_pool.shutdown()
-
-        remove_match(
-            match.match_id
-        )
+        worker_pool.release_match(match.match_id)
+        remove_match(match.match_id)
 
 
 def start_match(
@@ -70,48 +94,62 @@ def start_match(
     behaviors: list[BehaviorDefinition],
     on_finished: Callable[[Match], Awaitable[None]] | None = None,
 ) -> int:
-    #define the worker pool
-    worker_pool = BehaviorWorkerPool(
-        size=6,
-        timeout_ms=100,
-    )
-    # register the behaviors in the worker pool
-    worker_pool.register_behaviors(
-        behaviors
-    )
-    # prepare the coordinator
-    coordinator = BehaviorCoordinator(
-        worker_pool
-    )
-    # prepare the engine
-    engine = GameEngine()
-    # prepare the match runner
-    runner = MatchRunner(
-        behavior_coordinator=coordinator,
-        game_engine=engine,
-    )
-    # register the match in the active matches
-    register_match(match)
-    
-    # create the background task that executes the match asynchronously
-    task = asyncio.create_task(
-        _run_match(
-            match=match,
-            runner=runner,
-            worker_pool=worker_pool,
-            on_finished=on_finished,
-        )
-    )
-    # keep a reference to the task while the match is running
-    _running_match_tasks.add(
-        task
-    )
-    # remove the task from the set automatically when it finishes
-    task.add_done_callback(
-        _running_match_tasks.discard
-    )
+    """
+    Register and start a match using the shared worker pool.
 
-    return match.match_id
+    Args:
+        match: Match to execute.
+        behaviors: Available behavior definitions for the match.
+        on_finished: Optional callback executed after the match finishes.
+
+    Returns:
+        Identifier of the started match.
+
+    Raises:
+        RuntimeError: If the shared worker pool is not initialized.
+        ValueError: If the match is already registered.
+    """
+    worker_pool = _worker_pool
+
+    if worker_pool is None:
+        raise RuntimeError("Behavior worker pool is not initialized")
+
+    register_match(match)
+
+    try:
+        worker_pool.register_match(
+            match.match_id,
+            behaviors,
+        )
+
+        coordinator = BehaviorCoordinator(
+            worker_pool,
+            match_id=match.match_id,
+        )
+
+        runner = MatchRunner(
+            behavior_coordinator=coordinator,
+            game_engine=GameEngine(),
+        )
+
+        task = asyncio.create_task(
+            _run_match(
+                match=match,
+                runner=runner,
+                worker_pool=worker_pool,
+                on_finished=on_finished,
+            )
+        )
+
+    except Exception:
+        worker_pool.register_match(match.match_id)
+        remove_match(match.match_id)
+        raise
+
+    _running_match_tasks.add(task)
+    task.add_done_callback(_running_match_tasks.discard)
+
+    return match.match_id    
 
 
 def change_player_behavior(
@@ -169,3 +207,19 @@ def change_player_behavior(
         raise LookupError("Behavior not available")
 
     player.current_behavior_id = behavior_id
+
+
+async def stop_running_matches() -> None:
+    """
+    Cancel active match tasks during application shutdown.
+    """
+    tasks = tuple(_running_match_tasks)
+
+    for task in tasks:
+        task.cancel()
+
+    if tasks:
+        await asyncio.gather(
+            *task,
+            return_exceptions=True,
+        )

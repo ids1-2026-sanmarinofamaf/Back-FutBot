@@ -62,6 +62,20 @@ def game_engine():
     )
 
 
+@pytest.fixture(autouse=True)
+def disable_tick_delay(monkeypatch):
+    """
+    Disable real-time tick delays during runner tests.
+
+    Args:
+        monkeypatch: Pytest fixture for replacing attributes.
+    """
+    monkeypatch.setattr(
+        "app.game.match_runner.TIC_DURATION",
+        0,
+    )
+
+
 @pytest.mark.asyncio
 async def test_execute_tick_advances_one_tick(match,behavior_coordinator,game_engine):
     initial_tick = match.current_tick
