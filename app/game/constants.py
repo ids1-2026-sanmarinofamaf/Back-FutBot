@@ -56,3 +56,13 @@ MAX_KICK_COOLDOWN_TICS = 70
 
 # Contest
 CONTEST_SCORE_MARGIN = 5.0
+
+# Match periods
+MATCH_PERIOD_COUNT = 4
+
+# Break durations in real seconds
+HYDRATION_BREAK_DURATION = 10.0
+HALFTIME_BREAK_DURATION = 20.0
+
+# Final interval without substitution planning
+SUBSTITUTION_EXECUTION_WINDOW = 5.0

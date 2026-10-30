@@ -77,14 +77,14 @@ def build_behavior_context(
         match_snapshot.ball.velocity
     )
 
-    if player_team == match_snapshot.players_a:
+    if player_team is match_snapshot.players_a:
         context_my_team_score = match_snapshot.score_a
         context_opponent_score = match_snapshot.score_b
-        context_side = Side.LEFT
+        context_side = match_snapshot.side_a
     else:
         context_my_team_score = match_snapshot.score_b
         context_opponent_score = match_snapshot.score_a
-        context_side = Side.RIGHT
+        context_side = match_snapshot.side_b
 
     if player_snapshot.starting_position is None:
         raise ValueError("Player on field has no starting position")
@@ -94,9 +94,17 @@ def build_behavior_context(
         match_snapshot.duration_ticks - match_snapshot.current_tick
     ) * TIC_DURATION
 
-    # For second sprint it's ok
-    context_current_period = Period.FIRST_QUARTER
-    context_period_time_remaining = context_match_time_remaining
+    # usw new info of the periods
+    ticks_per_period = match_snapshot.duration_ticks // 4
+
+    context_current_period = match_snapshot.current_period
+
+    period_end_tick = (context_current_period.value * ticks_per_period)
+
+    # max to solve possible inconsistences
+    remaining_period_ticks = max(0, period_end_tick - match_snapshot.current_tick)
+
+    context_period_time_remaining = (remaining_period_ticks * TIC_DURATION)
 
     context_control_range = effective_physical_value(
         player_snapshot.control,
