@@ -69,3 +69,19 @@ def get_available_by_name(db: Session, club_id: int, name: str) -> Behavior | No
         # si hay uno del club con el mismo nombre que un default, gana el del club
         .order_by(Behavior.is_default.asc())
     ).first()
+
+def save(db: Session, behavior: Behavior) -> Behavior:
+    """
+    Stage a new or updated Behavior instance in the current session.
+
+    Args:
+        db: Active SQLAlchemy database session.
+        behavior: Behavior ORM instance to persist.
+
+    Returns:
+        The staged Behavior instance with its primary key populated.
+    """
+    db.add(behavior)
+    db.flush()
+    return behavior
+
