@@ -3,7 +3,6 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI, Request, status
 from fastapi.exceptions import RequestValidationError
 from fastapi.exception_handlers import request_validation_exception_handler
-from fastapi import FastAPI
 from app.api import (
     auth, users,
     friendly_games,
@@ -21,6 +20,12 @@ from app.services.match_service import (
 from sqlalchemy import text
 
 from app.database import engine
+from app.api import friendly_games, players
+from app.api import behaviors
+from app.api import leagues
+from app.api import ranking
+
+
 
 from app.api.friendly_game_websocket import router as friendly_game_websocket_router
 from app.api.match_websocket import router as match_websocket_router
@@ -77,8 +82,9 @@ app.include_router(sessions_websocket.router)
 app.include_router(friendly_game_websocket_router)
 app.include_router(behaviors.router)
 app.include_router(leagues.router)
+app.include_router(ranking.router)
 app.include_router(league_websocket_router)
-app.include_router(matches.router)
+
 
 @app.get("/")
 def root():
