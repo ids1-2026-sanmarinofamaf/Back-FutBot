@@ -1,7 +1,11 @@
 import pytest
 from unittest.mock import MagicMock, patch
 
-from app.services.behavior_service import get_behavior
+from app.services.behavior_service import (
+    BehaviorValidationError,
+    get_behavior,
+    validate_behavior,
+)
 
 
 @patch("app.services.behavior_service.behavior_repository.get_available_by_id")
@@ -76,3 +80,15 @@ def test_get_behavior_user_without_club(
         )
 
     mock_get_behavior.assert_not_called()
+
+
+def test_validate_behavior_success():
+    code = "def play():\n    return wait()\n"
+    assert validate_behavior(code) is True
+
+
+def test_validate_behavior_invalid_raises_validation_error():
+    code = "def play():\n    return waiit()\n"
+    with pytest.raises(BehaviorValidationError):
+        validate_behavior(code)
+
