@@ -14,94 +14,6 @@ from app.game.models.behavior_job import BehaviorJob
 from app.game.models.behavior_definition import BehaviorDefinition
 
 
-def test_register_and_execute_behavior(context, wait_behavior):
-    worker = BehaviorWorker()
-
-    worker.register_behavior(
-        wait_behavior.id,
-        wait_behavior,
-    )
-
-    action = worker.execute(
-        wait_behavior.id,
-        context,
-    )
-
-    assert isinstance(action, WaitAction)
-
-
-def test_execute_move_behavior(context, move_behavior):
-    worker = BehaviorWorker()
-
-    worker.register_behavior(
-        move_behavior.id,
-        move_behavior,
-    )
-
-    action = worker.execute(
-        move_behavior.id,
-        context,
-    )
-
-    assert action == move_behavior.play()
-
-
-def test_execute_kick_behavior(context, kick_behavior):
-    worker = BehaviorWorker()
-
-    worker.register_behavior(
-        kick_behavior.id,
-        kick_behavior,
-    )
-
-    action = worker.execute(
-        kick_behavior.id,
-        context,
-    )
-
-    assert action == kick_behavior.play()
-
-
-def test_execute_raises_key_error_for_unknown_behavior(context):
-    worker = BehaviorWorker()
-
-    with pytest.raises(KeyError):
-        worker.execute(
-            999,
-            context,
-        )
-
-
-def test_register_behavior_replaces_existing_behavior(
-    context,
-    move_behavior,
-    wait_behavior,
-):
-    worker = BehaviorWorker()
-
-    worker.register_behavior(
-        move_behavior.id,
-        move_behavior,
-    )
-
-    replacement = RuntimeBehavior(
-        id=move_behavior.id,
-        play=wait_behavior.play,
-    )
-
-    worker.register_behavior(
-        replacement.id,
-        replacement,
-    )
-
-    action = worker.execute(
-        replacement.id,
-        context,
-    )
-
-    assert isinstance(action, WaitAction)
-
-
 def test_execute_batch_runs_behaviors_sequentially(
     context,
     other_context,
@@ -114,80 +26,117 @@ def test_execute_batch_runs_behaviors_sequentially(
         execution_order.append(player_id)
         return WaitAction()
 
-    behavior = RuntimeBehavior(id=10, play=play)
-    worker.register_behavior(behavior.id, behavior)
+    behavior = RuntimeBehavior(
+        id=10,
+        play=play,
+    )
+
+    for player_id in (1, 7):
+        worker.register_player_behavior(
+            match_id=10,
+            player_id=player_id,
+            behavior_id=behavior.id,
+            runtime_behavior=behavior,
+        )
 
     jobs = [
         BehaviorJob(1, 10, context),
         BehaviorJob(7, 10, other_context),
     ]
 
-    actions = worker.execute_batch(jobs)
+    actions = worker.execute_batch(
+        jobs,
+        match_id=10,
+    )
 
     assert execution_order == [1, 7]
-    assert set(actions) == {1, 7}
-    assert all(
-        isinstance(action, WaitAction)
-        for action in actions.values()
-    )
+    assert isinstance(actions[1], WaitAction)
+    assert isinstance(actions[7], WaitAction)
 
 
 def test_execute_batch_continues_after_execution_error(
     context,
+    other_context,
     failing_behavior,
     move_behavior,
 ):
     worker = BehaviorWorker()
 
-    worker.register_behavior(
-        failing_behavior.id,
-        failing_behavior,
+    worker.register_player_behavior(
+        match_id=10,
+        player_id=1,
+        behavior_id=failing_behavior.id,
+        runtime_behavior=failing_behavior,
     )
-    worker.register_behavior(
-        move_behavior.id,
-        move_behavior,
+
+    worker.register_player_behavior(
+        match_id=10,
+        player_id=7,
+        behavior_id=move_behavior.id,
+        runtime_behavior=move_behavior,
     )
 
     jobs = [
         BehaviorJob(1, failing_behavior.id, context),
-        BehaviorJob(2, move_behavior.id, context),
+        BehaviorJob(7, move_behavior.id, other_context),
     ]
 
-    actions = worker.execute_batch(jobs)
+    actions = worker.execute_batch(
+        jobs,
+        match_id=10,
+    )
 
     assert isinstance(actions[1], WaitAction)
-    assert actions[2] == move_behavior.play()
+    assert isinstance(actions[7], MoveAction)
+
+    assert worker.get_disabled_behaviors(10) == {
+        failing_behavior.id,
+    }
 
 
 def test_execute_batch_handles_unknown_behavior(
     context,
+    other_context,
     move_behavior,
 ):
     worker = BehaviorWorker()
-    worker.register_behavior(
-        move_behavior.id,
-        move_behavior,
+
+    worker.register_player_behavior(
+        match_id=10,
+        player_id=1,
+        behavior_id=move_behavior.id,
+        runtime_behavior=move_behavior,
     )
 
     jobs = [
-        BehaviorJob(1, 999, context),
-        BehaviorJob(2, move_behavior.id, context),
+        BehaviorJob(1, move_behavior.id, context),
+        BehaviorJob(7, 999, other_context),
     ]
 
-    actions = worker.execute_batch(jobs)
+    actions = worker.execute_batch(
+        jobs,
+        match_id=10,
+    )
 
-    assert isinstance(actions[1], WaitAction)
-    assert actions[2] == move_behavior.play()
+    assert isinstance(actions[1], MoveAction)
+    assert isinstance(actions[7], WaitAction)
+
+    # An unknown behavior must not be disabled.
+    assert worker.get_disabled_behaviors(10) == set()
 
 
 def test_execute_batch_with_no_jobs():
     worker = BehaviorWorker()
 
-    assert worker.execute_batch([]) == {}
+    assert worker.execute_batch(
+        [],
+        match_id=10,
+    ) == {}
 
 
 def test_execute_batch_continues_after_timeout(
     context,
+    other_context,
     move_behavior,
 ):
     worker = BehaviorWorker()
@@ -201,28 +150,35 @@ def test_execute_batch_continues_after_timeout(
         play=infinite_play,
     )
 
-    worker.register_behavior(
-        infinite_behavior.id,
-        infinite_behavior,
+    worker.register_player_behavior(
+        match_id=10,
+        player_id=1,
+        behavior_id=99,
+        runtime_behavior=infinite_behavior,
     )
 
-    worker.register_behavior(
-        move_behavior.id,
-        move_behavior,
+    worker.register_player_behavior(
+        match_id=10,
+        player_id=7,
+        behavior_id=move_behavior.id,
+        runtime_behavior=move_behavior,
     )
 
     jobs = [
         BehaviorJob(1, 99, context),
-        BehaviorJob(2, move_behavior.id, context),
+        BehaviorJob(7, move_behavior.id, other_context),
     ]
 
     actions = worker.execute_batch(
         jobs,
-        timeout_ms=50,
+        match_id=10,
+        timeout_ms=2,
     )
 
     assert isinstance(actions[1], WaitAction)
-    assert actions[2] == move_behavior.play()
+    assert isinstance(actions[7], MoveAction)
+
+    assert worker.get_disabled_behaviors(10) == {99}
 
 
 def test_execute_batch_restores_signal_after_timeout(context):
@@ -232,26 +188,33 @@ def test_execute_batch_restores_signal_after_timeout(context):
         while True:
             pass
 
-    worker.register_behavior(
-        99,
-        RuntimeBehavior(
-            id=99,
-            play=infinite_play,
-        ),
+    infinite_behavior = RuntimeBehavior(
+        id=99,
+        play=infinite_play,
     )
 
-    previous_handler = signal.getsignal(signal.SIGALRM)
+    worker.register_player_behavior(
+        match_id=10,
+        player_id=1,
+        behavior_id=99,
+        runtime_behavior=infinite_behavior,
+    )
+
+    original_handler = signal.getsignal(signal.SIGALRM)
+    original_timer = signal.getitimer(signal.ITIMER_REAL)
 
     actions = worker.execute_batch(
         [BehaviorJob(1, 99, context)],
-        timeout_ms=50,
+        match_id=10,
+        timeout_ms=2,
     )
 
     assert isinstance(actions[1], WaitAction)
 
-    assert signal.getsignal(signal.SIGALRM) == previous_handler
-
+    assert signal.getsignal(signal.SIGALRM) == original_handler
     assert signal.getitimer(signal.ITIMER_REAL) == (0.0, 0.0)
+
+    assert worker.get_disabled_behaviors(10) == {99}
 
 
 @pytest.mark.parametrize("timeout_ms", [0, -1])
@@ -264,6 +227,7 @@ def test_execute_batch_rejects_invalid_timeout(
     with pytest.raises(ValueError):
         worker.execute_batch(
             [BehaviorJob(1, 99, context)],
+            match_id=10,
             timeout_ms=timeout_ms,
         )
 

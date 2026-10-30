@@ -56,35 +56,3 @@ def execute_behavior_strict(
 
     finally:
         clear_current_context()
-
-
-def execute_behavior(
-        context: BehaviorContext,
-        behavior: RuntimeBehavior,
-) -> Action:
-    """
-    Execute a runtime behavior within the given BehaviorContext.
-
-    Args:
-        context: Execution context available to Behavior API primitives.
-        behavior: Runtime behavior whose play() function will be executed.
-
-    Returns:
-        Action returned by play(), or WaitAction if execution fails or
-        returns an invalid action.
-    """
-    set_current_context(context)
-
-    try:
-        action = behavior.play()
-
-        if not isinstance(action, (MoveAction, KickAction, WaitAction)):
-            return WaitAction()
-
-        return action
-    except Exception:
-        return WaitAction()
-    
-    finally:
-        clear_current_context()
-    
