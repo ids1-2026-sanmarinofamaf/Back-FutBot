@@ -332,3 +332,20 @@ def test_validate_fails_when_play_has_infinite_loop():
     ):
         validate_behavior_code(code)
 
+
+def test_validate_fails_when_top_level_constant_exceeds_timeout():
+    code = dedent(
+        """
+        HUGE = 9 ** (9 ** 9)
+
+        def play():
+            return wait()
+        """
+    )
+    with pytest.raises(
+        BehaviorValidationError,
+        match="El comportamiento excedió el tiempo máximo de ejecución",
+    ):
+        validate_behavior_code(code)
+
+
