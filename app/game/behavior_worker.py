@@ -28,6 +28,12 @@ class BehaviorWorker:
         """
         self._behaviors: dict[int, RuntimeBehavior] = {}
 
+        self._runtime_cache: dict[
+            tuple[int, int, int],
+            RuntimeBehavior,
+        ] = {}
+
+
     def register_behavior(
         self,
         behavior_id: int,
@@ -41,6 +47,53 @@ class BehaviorWorker:
             runtime_behavior: Executable runtime representation of the behavior.
         """
         self._behaviors[behavior_id] = runtime_behavior
+
+
+    def register_player_behavior(
+        self,
+        match_id: int,
+        player_id: int,
+        behavior_id: int,
+        runtime_behavior: RuntimeBehavior,
+    ) -> None:
+        """
+        Register a compiled behavior instance for a specific player.
+
+        Each instance is isolated by match, player and behavior.
+        Replacing an existing instance resets its global state.
+
+        Args:
+            match_id: Identifier of the match.
+            player_id: Identifier of the player.
+            behavior_id: Identifier of the behavior.
+            runtime_behavior: Compiled behavior instance.
+        """
+        key = (match_id, player_id, behavior_id)
+
+        self._runtime_cache[key] = runtime_behavior
+
+
+    def has_player_behavior(
+        self,
+        match_id: int,
+        player_id: int,
+        behavior_id: int,
+    ) -> bool:
+        """
+        Check whether a player has a registered behavior instance.
+
+        Args:
+            match_id: Identifier of the match.
+            player_id: Identifier of the player.
+            behavior_id: Identifier of the behavior.
+
+        Returns:
+            True if the behavior instance exists, False otherwise.
+        """
+        key = (match_id, player_id, behavior_id)
+
+        return key in self._runtime_cache
+
 
     def execute(
         self,
@@ -72,6 +125,8 @@ class BehaviorWorker:
         self,
         jobs: list[BehaviorJob],
         timeout_ms: int = BEHAVIOR_EXECUTION_TIMEOUT_MS,
+        *,
+        match_id: int | None = None,
     ) -> dict[int, Action]:
         """
         Execute behaviors sequentially with an individual timeout.
@@ -83,6 +138,7 @@ class BehaviorWorker:
         Args:
             jobs: List of behaviors executions requests for the current tic.
             timeout_ms: Maximum execution time allowed per behavior in ms.
+            match_id: Identifier of the match.
 
         Returns:
             A dictionary mapping each player ID to its resulting action.
@@ -98,10 +154,24 @@ class BehaviorWorker:
         for job in jobs:
             try:
                 with behavior_time_limit(timeout_ms):
-                    action = self.execute(
-                        job.behavior_id,
-                        job.context,
-                    )
+                    if match_id is None:
+                        action = self.execute(
+                            job.behavior_id,
+                            job.context,
+                        )
+                    else:
+                        key = (
+                            match_id,
+                            job.player_id,
+                            job.behavior_id,
+                        )
+
+                        runtime_behavior = self._runtime_cache[key]
+
+                        action = execute_behavior(
+                            job.context,
+                            runtime_behavior,
+                        )
 
             except(
                 BehaviorTimeout,
@@ -112,4 +182,23 @@ class BehaviorWorker:
             actions[job.player_id] = action
 
         return actions
-    
+
+
+    def release_match(
+        self,
+        match_id: int,
+    ) -> None:
+        """
+        Remove all cached behavior instances belonging to a match.
+
+        Args:
+            match_id: Identifier of the match to release.
+        """
+        keys_to_remove = [
+            key
+            for key in self._runtime_cache
+            if key[0] == match_id
+        ]
+
+        for key in keys_to_remove:
+            del self._runtime_cache[key]

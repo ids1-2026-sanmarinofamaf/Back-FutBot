@@ -5,10 +5,12 @@ import pytest
 from app.game.behavior_worker import BehaviorWorker
 from app.game.primitives import self as current_player
 from app.game.behavior_timeout import BehaviorTimeout
+from app.game.behavior_compiler import BehaviorCompiler
 
 from app.game.models.runtime_behavior import RuntimeBehavior
 from app.game.models.actions import WaitAction
 from app.game.models.behavior_job import BehaviorJob
+from app.game.models.behavior_definition import BehaviorDefinition
 
 
 def test_register_and_execute_behavior(context, wait_behavior):
@@ -263,3 +265,129 @@ def test_execute_batch_rejects_invalid_timeout(
             [BehaviorJob(1, 99, context)],
             timeout_ms=timeout_ms,
         )
+
+
+def compile_counter_behavior():
+    definition = BehaviorDefinition(
+        id=100,
+        code="""
+COUNTER = 0
+
+def play():
+    global COUNTER
+    COUNTER += 1
+    return wait()
+""",
+    )
+
+    return BehaviorCompiler().compile(definition)
+
+
+def test_register_player_behavior():
+    worker = BehaviorWorker()
+    behavior = compile_counter_behavior()
+
+    assert not worker.has_player_behavior(10, 1, 100)
+
+    worker.register_player_behavior(
+        match_id=10,
+        player_id=1,
+        behavior_id=100,
+        runtime_behavior=behavior,
+    )
+
+    assert worker.has_player_behavior(10, 1, 100)
+    assert not worker.has_player_behavior(10, 2, 100)
+    assert not worker.has_player_behavior(11, 1, 100)
+
+
+def test_player_behaviors_have_independent_state(context):
+    worker = BehaviorWorker()
+
+    behavior_a = compile_counter_behavior()
+    behavior_b = compile_counter_behavior()
+
+    worker.register_player_behavior(10, 1, 100, behavior_a)
+    worker.register_player_behavior(10, 2, 100, behavior_b)
+
+    worker.execute_batch(
+        [BehaviorJob(1, 100, context)],
+        match_id=10,
+    )
+
+    worker.execute_batch(
+        [BehaviorJob(1, 100, context)],
+        match_id=10,
+    )
+
+    worker.execute_batch(
+        [BehaviorJob(2, 100, context)],
+        match_id=10,
+    )
+
+    assert behavior_a.play.__globals__["COUNTER"] == 2
+    assert behavior_b.play.__globals__["COUNTER"] == 1
+
+
+def test_matches_have_independent_behavior_state(context):
+    worker = BehaviorWorker()
+
+    behavior_match_10 = compile_counter_behavior()
+    behavior_match_11 = compile_counter_behavior()
+
+    worker.register_player_behavior(10, 1, 100, behavior_match_10)
+    worker.register_player_behavior(11, 1, 100, behavior_match_11)
+
+    job = BehaviorJob(1, 100, context)
+
+    worker.execute_batch([job], match_id=10)
+    worker.execute_batch([job], match_id=10)
+    worker.execute_batch([job], match_id=11)
+
+    assert behavior_match_10.play.__globals__["COUNTER"] == 2
+    assert behavior_match_11.play.__globals__["COUNTER"] == 1
+
+
+def test_switching_behaviors_preserves_previous_state(context):
+    worker = BehaviorWorker()
+
+    behavior_a = compile_counter_behavior()
+    behavior_b = compile_counter_behavior()
+
+    worker.register_player_behavior(10, 1, 100, behavior_a)
+    worker.register_player_behavior(10, 1, 200, behavior_b)
+
+    worker.execute_batch(
+        [BehaviorJob(1, 100, context)],
+        match_id=10,
+    )
+
+    worker.execute_batch(
+        [BehaviorJob(1, 200, context)],
+        match_id=10,
+    )
+
+    worker.execute_batch(
+        [BehaviorJob(1, 100, context)],
+        match_id=10,
+    )
+
+    assert behavior_a.play.__globals__["COUNTER"] == 2
+    assert behavior_b.play.__globals__["COUNTER"] == 1
+
+
+def test_release_match_only_removes_its_behaviors():
+    worker = BehaviorWorker()
+
+    worker.register_player_behavior(
+        10, 1, 100, compile_counter_behavior()
+    )
+
+    worker.register_player_behavior(
+        11, 1, 100, compile_counter_behavior()
+    )
+
+    worker.release_match(10)
+
+    assert not worker.has_player_behavior(10, 1, 100)
+    assert worker.has_player_behavior(11, 1, 100)
