@@ -5,7 +5,6 @@ from fastapi import (
     status,
 )
 from fastapi.concurrency import run_in_threadpool
-
 from sqlalchemy.orm import Session
 
 from app.database import get_db
@@ -23,10 +22,43 @@ from app.services.league_service import (
     InvalidRoster,
     LeagueNotAvailable,
     AlreadyParticipating,
+    ClubNotFound,
+    create_league,
 )
-from app.schemas.league import LeagueJoin, LeagueJoinResponse
+from app.schemas.league import LeagueCreate, LeagueJoin, LeagueJoinResponse
 
 router = APIRouter(prefix="/leagues",tags=["Leagues"])
+
+
+@router.post("", status_code=status.HTTP_201_CREATED)
+async def create(
+    data: LeagueCreate,
+    db: Session = Depends(get_db),
+    current_user= Depends(get_current_user), 
+):
+    try: 
+        league = await run_in_threadpool(
+            create_league,
+            db,
+            data,
+            current_user.id
+        )
+        await session_websocket_service.broadcast_leagues(db)
+        return {"id_liga": league.id}
+    
+    # here we use the exception classes
+    except ClubNotFound as error:
+        raise HTTPException(
+            status_code= status.HTTP_404_NOT_FOUND,
+            detail=str(error),
+        )
+    
+    # invalid roster (players or behaviors)
+    except ValueError as error:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(error),
+        )
 
 
 @router.delete(
@@ -39,8 +71,7 @@ async def leave(
     current_user=Depends(get_current_user),
 ):
     try:
-        await run_in_threadpool(
-            leave_league,
+        await leave_league(
             db=db,
             league_id=league_id,
             user_id=current_user.id,
@@ -83,8 +114,7 @@ async def join(
     current_user=Depends(get_current_user),
 ):
     try:
-        participation, roster = await run_in_threadpool(
-            join_league,
+        participation, roster = await join_league(
             db=db,
             league_id=league_id,
             user_id=current_user.id,
