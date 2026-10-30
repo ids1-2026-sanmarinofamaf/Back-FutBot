@@ -5,38 +5,53 @@ import multiprocessing as mp
 
 import pytest
 
+from textwrap import dedent
+
 from app.game.behavior_worker_pool import BehaviorWorkerPool
 from app.game.models.actions import MoveAction, WaitAction
 from app.game.models.behavior_definition import BehaviorDefinition
 from app.game.models.behavior_job import BehaviorJob
 
 
-MOVE_CODE = """
-def play():
-    return move((1.0, 0.0), 1.0)
-"""
-
-COUNTER_CODE = """
-COUNTER = 0
-
-def play():
-    global COUNTER
-    COUNTER += 1
-    if COUNTER == 1:
+MOVE_CODE = dedent("""
+    def play():
         return move((1.0, 0.0), 1.0)
-    return wait()
-"""
+    """)
 
-WAIT_CODE = """
-def play():
-    return wait()
-"""
+COUNTER_CODE = dedent("""
+    COUNTER = 0
 
-LOOP_CODE = """
-def play():
-    while True:
-        pass
-"""
+    def play():
+        global COUNTER
+        COUNTER += 1
+        if COUNTER == 1:
+            return move((1.0, 0.0), 1.0)
+        return wait()
+    """)
+
+WAIT_CODE = dedent("""
+    def play():
+        return wait()
+    """)
+
+LOOP_CODE = dedent("""
+    def play():
+        while True:
+            pass
+    """)
+
+FAIL_ON_PLAYER_ONE_CODE = dedent("""
+    def play():
+        if self()[0] == 1:
+            raise RuntimeError("Behavior failed")
+
+        return move((1.0, 0.0), 1.0)
+""")
+
+INVALID_SYNTAX_CODE = dedent("""
+    def play(:
+        return wait()
+""")
 
 
 def make_job(player_id, behavior_id, context):
@@ -268,3 +283,206 @@ def test_shutdown_terminates_workers():
     }
     assert worker_pids.isdisjoint(active_pids)
     worker_pool.shutdown()  # Idempotent.
+
+
+def test_runtime_failure_disables_behavior_for_match(
+    pool,
+    context,
+    other_context,
+):
+    pool.register_match(
+        10,
+        [
+            BehaviorDefinition(100, FAIL_ON_PLAYER_ONE_CODE),
+            BehaviorDefinition(101, MOVE_CODE),
+        ],
+    )
+
+    actions = pool.execute(
+        [
+            make_job(1, 100, context),
+            make_job(7, 100, other_context),
+            make_job(2, 101, context),
+        ],
+        match_id=10,
+    )
+
+    assert isinstance(actions[1], WaitAction)
+    assert isinstance(actions[7], WaitAction)
+    assert isinstance(actions[2], MoveAction)
+    assert pool._disabled_behaviors[10] == {100}
+
+    next_tick = pool.execute(
+        [make_job(7, 100, other_context)],
+        match_id=10,
+    )
+
+    assert isinstance(next_tick[7], WaitAction)
+
+
+def test_disabled_behavior_does_not_affect_other_matches(
+    pool,
+    context,
+    other_context,
+):
+    definition = BehaviorDefinition(
+        100,
+        FAIL_ON_PLAYER_ONE_CODE,
+    )
+
+    pool.register_match(10, [definition])
+    pool.register_match(11, [definition])
+
+    failed = pool.execute(
+        [make_job(1, 100, context)],
+        match_id=10,
+    )
+
+    other_match = pool.execute(
+        [make_job(7, 100, other_context)],
+        match_id=11,
+    )
+
+    assert isinstance(failed[1], WaitAction)
+    assert isinstance(other_match[7], MoveAction)
+
+    assert pool._disabled_behaviors[10] == {100}
+    assert pool._disabled_behaviors[11] == set()
+
+
+def test_voluntary_wait_does_not_disable_behavior(
+    pool,
+    context,
+):
+    pool.register_match(
+        10,
+        [BehaviorDefinition(100, WAIT_CODE)],
+    )
+
+    first = pool.execute(
+        [make_job(1, 100, context)],
+        match_id=10,
+    )
+
+    second = pool.execute(
+        [make_job(1, 100, context)],
+        match_id=10,
+    )
+
+    assert isinstance(first[1], WaitAction)
+    assert isinstance(second[1], WaitAction)
+    assert pool._disabled_behaviors[10] == set()
+
+
+def test_compilation_failure_disables_behavior(
+    pool,
+    context,
+):
+    pool.register_match(
+        10,
+        [
+            BehaviorDefinition(100, INVALID_SYNTAX_CODE),
+            BehaviorDefinition(101, MOVE_CODE),
+        ],
+    )
+
+    actions = pool.execute(
+        [
+            make_job(1, 100, context),
+            make_job(2, 101, context),
+        ],
+        match_id=10,
+    )
+
+    assert isinstance(actions[1], WaitAction)
+    assert isinstance(actions[2], MoveAction)
+    assert pool._disabled_behaviors[10] == {100}
+
+    next_tick = pool.execute(
+        [make_job(1, 100, context)],
+        match_id=10,
+    )
+
+    assert isinstance(next_tick[1], WaitAction)
+
+
+def test_worker_restart_preserves_disabled_behaviors(
+    context,
+    other_context,
+):
+    worker_pool = BehaviorWorkerPool(
+        size=1,
+        timeout_ms=2000,
+    )
+
+    try:
+        worker_pool.register_match(
+            10,
+            [
+                BehaviorDefinition(
+                    100,
+                    FAIL_ON_PLAYER_ONE_CODE,
+                ),
+            ],
+        )
+
+        first = worker_pool.execute(
+            [make_job(1, 100, context)],
+            match_id=10,
+        )
+
+        assert isinstance(first[1], WaitAction)
+        assert worker_pool._disabled_behaviors[10] == {100}
+
+        original_process = worker_pool._processes[0]
+        original_pid = original_process.pid
+
+        original_process.terminate()
+        original_process.join(timeout=2)
+
+        assert not original_process.is_alive()
+
+        restored = worker_pool.execute(
+            [make_job(7, 100, other_context)],
+            match_id=10,
+        )
+
+        assert worker_pool._processes[0].pid != original_pid
+        assert worker_pool._processes[0].is_alive()
+
+        assert isinstance(restored[7], WaitAction)
+        assert worker_pool._disabled_behaviors[10] == {100}
+
+    finally:
+        worker_pool.shutdown()
+
+
+def test_release_match_clears_disabled_behaviors(pool, context):
+    pool.register_match(
+        10,
+        [BehaviorDefinition(100, FAIL_ON_PLAYER_ONE_CODE)],
+    )
+
+    pool.execute(
+        [make_job(1, 100, context)],
+        match_id=10,
+    )
+
+    assert pool._disabled_behaviors[10] == {100}
+
+    pool.release_match(10)
+
+    assert 10 not in pool._disabled_behaviors
+
+    pool.register_match(
+        10,
+        [BehaviorDefinition(100, MOVE_CODE)],
+    )
+
+    actions = pool.execute(
+        [make_job(1, 100, context)],
+        match_id=10,
+    )
+
+    assert isinstance(actions[1], MoveAction)
+    assert pool._disabled_behaviors[10] == set()

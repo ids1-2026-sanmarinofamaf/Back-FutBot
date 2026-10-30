@@ -51,6 +51,7 @@ class BehaviorWorkerPool:
 
         self._match_workers: dict[int, int] = {}
         self._match_definitions: dict[int, list[BehaviorDefinition]] = {}
+        self._disabled_behaviors: dict[int, set[int]] = {}
         self._closed = False
 
         self._processes = []
@@ -97,10 +98,14 @@ class BehaviorWorkerPool:
 
             if command == "register_match":
                 worker.release_match(match_id)
+
                 definitions[match_id] = {
                     behavior.id: behavior
                     for behavior in message["behaviors"]
                 }
+
+                for behavior_id in message.get("disabled_behavior_ids", []):
+                    worker.disable_behavior(match_id, behavior_id)
 
             elif command == "release_match":
                 worker.release_match(match_id)
@@ -125,6 +130,9 @@ class BehaviorWorkerPool:
                     "request_id": message["request_id"],
                     "match_id": match_id,
                     "actions": actions,
+                    "disabled_behavior_ids": sorted(
+                        worker.get_disabled_behaviors(match_id)
+                    ),
                 })
 
 
@@ -146,7 +154,12 @@ class BehaviorWorkerPool:
             jobs: Behavior requests for the current tic.
             definitions: Source definitions available to the match.
         """
+        disabled = worker.get_disabled_behaviors(match_id)
+
         for job in jobs:
+            if job.behavior_id in disabled:
+                continue
+
             if worker.has_player_behavior(
                 match_id,
                 job.player_id,
@@ -162,6 +175,11 @@ class BehaviorWorkerPool:
                 runtime = compiler.compile(definition)
 
             except BehaviorCompilationError:
+                worker.disable_behavior(
+                    match_id,
+                    job.behavior_id,
+                )
+                disabled.add(job.behavior_id)
                 continue
 
             worker.register_player_behavior(
@@ -258,16 +276,23 @@ class BehaviorWorkerPool:
                 (
                     match_id,
                     self._match_definitions[match_id],
+                    sorted(
+                        self._disabled_behaviors.get(
+                            match_id,
+                            set(),
+                        )
+                    ),
                 )
                 for match_id, worker_index in self._match_workers.items()
                 if worker_index == index
             ]
 
-        for match_id, behaviors in registrations:
+        for match_id, behaviors, disabled_ids in registrations:
             self._input_queues[index].put({
                 "command": "register_match",
                 "match_id": match_id,
                 "behaviors": behaviors,
+                "disabled_behavior_ids": disabled_ids,
             })
 
 
@@ -346,6 +371,7 @@ class BehaviorWorkerPool:
                     })
                     self._match_workers[match_id] = index
                     self._match_definitions[match_id] = list(behaviors)
+                    self._disabled_behaviors[match_id] = set()
 
 
     def _request_batch(
@@ -378,7 +404,7 @@ class BehaviorWorkerPool:
             })
 
             remaining = deadline - monotonic()
-            if remaining<=0:
+            if remaining <= 0:
                 return None
             result = self._output_queues[index].get(timeout=remaining)
 
@@ -397,6 +423,11 @@ class BehaviorWorkerPool:
             or not isinstance(result.get("actions"), dict)
         ):
             return None
+
+        with self._state_lock:
+            self._disabled_behaviors[match_id].update(
+                result["disabled_behavior_ids"]
+            )
 
         return {
             job.player_id: result["actions"].get(
@@ -505,6 +536,7 @@ class BehaviorWorkerPool:
 
                 self._match_workers.pop(match_id)
                 self._match_definitions.pop(match_id, None)
+                self._disabled_behaviors.pop(match_id, None)
                 closed = self._closed
 
             if not closed and self._processes[index].is_alive():
@@ -525,6 +557,7 @@ class BehaviorWorkerPool:
             self._closed = True
             self._match_workers.clear()
             self._match_definitions.clear()
+            self._disabled_behaviors.clear()
 
         for index in range(self._size):
             with self._worker_locks[index]:

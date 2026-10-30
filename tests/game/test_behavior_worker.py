@@ -2,13 +2,14 @@ import signal
 
 import pytest
 
+from textwrap import dedent
+
 from app.game.behavior_worker import BehaviorWorker
 from app.game.primitives import self as current_player
-from app.game.behavior_timeout import BehaviorTimeout
 from app.game.behavior_compiler import BehaviorCompiler
 
 from app.game.models.runtime_behavior import RuntimeBehavior
-from app.game.models.actions import WaitAction
+from app.game.models.actions import WaitAction, MoveAction
 from app.game.models.behavior_job import BehaviorJob
 from app.game.models.behavior_definition import BehaviorDefinition
 
@@ -270,14 +271,14 @@ def test_execute_batch_rejects_invalid_timeout(
 def compile_counter_behavior():
     definition = BehaviorDefinition(
         id=100,
-        code="""
-COUNTER = 0
+        code=dedent("""
+            COUNTER = 0
 
-def play():
-    global COUNTER
-    COUNTER += 1
-    return wait()
-""",
+            def play():
+                global COUNTER
+                COUNTER += 1
+                return wait()
+            """),
     )
 
     return BehaviorCompiler().compile(definition)
@@ -391,3 +392,151 @@ def test_release_match_only_removes_its_behaviors():
 
     assert not worker.has_player_behavior(10, 1, 100)
     assert worker.has_player_behavior(11, 1, 100)
+
+
+def test_behavior_failure_disables_it_for_match(
+    context,
+    other_context,
+):
+    worker = BehaviorWorker()
+
+    definition = BehaviorDefinition(
+        id=100,
+        code=dedent("""
+            def play():
+                if self()[0] == 1:
+                    raise RuntimeError("Behavior failed")
+
+                return move((1.0, 0.0), 1.0)
+            """),
+    )
+
+    compiler = BehaviorCompiler()
+
+    worker.register_player_behavior(
+        10, 1, 100, compiler.compile(definition)
+    )
+
+    worker.register_player_behavior(
+        10, 7, 100, compiler.compile(definition)
+    )
+
+    actions = worker.execute_batch(
+        [
+            BehaviorJob(1, 100, context),
+            BehaviorJob(7, 100, other_context),
+        ],
+        match_id=10,
+    )
+
+    assert isinstance(actions[1], WaitAction)
+    assert isinstance(actions[7], WaitAction)
+
+    assert worker.get_disabled_behaviors(10) == {100}
+
+
+def test_disabled_behavior_does_not_affect_other_matches(
+    context,
+    other_context,
+):
+    worker = BehaviorWorker()
+
+    definition = BehaviorDefinition(
+        id=100,
+        code=dedent("""
+            def play():
+                if self()[0] == 1:
+                    raise RuntimeError("Behavior failed")
+
+                return move((1.0, 0.0), 1.0)
+            """),
+    )
+
+    compiler = BehaviorCompiler()
+
+    worker.register_player_behavior(
+        10, 1, 100, compiler.compile(definition)
+    )
+
+    worker.register_player_behavior(
+        11, 7, 100, compiler.compile(definition)
+    )
+
+    worker.execute_batch(
+        [BehaviorJob(1, 100, context)],
+        match_id=10,
+    )
+
+    actions = worker.execute_batch(
+        [BehaviorJob(7, 100, other_context)],
+        match_id=11,
+    )
+
+    assert worker.get_disabled_behaviors(10) == {100}
+    assert worker.get_disabled_behaviors(11) == set()
+
+    assert isinstance(actions[7], MoveAction)
+
+
+def test_voluntary_wait_does_not_disable_behavior(context):
+    worker = BehaviorWorker()
+
+    definition = BehaviorDefinition(
+        id=100,
+        code=dedent("""
+            def play():
+                return wait()
+            """),
+    )
+
+    runtime = BehaviorCompiler().compile(definition)
+
+    worker.register_player_behavior(
+        10, 1, 100, runtime
+    )
+
+    actions = worker.execute_batch(
+        [BehaviorJob(1, 100, context)],
+        match_id=10,
+    )
+
+    assert isinstance(actions[1], WaitAction)
+    assert worker.get_disabled_behaviors(10) == set()
+
+
+def test_invalid_action_disables_behavior(context):
+    worker = BehaviorWorker()
+
+    definition = BehaviorDefinition(
+        id=100,
+        code=dedent("""
+            def play():
+                return 123
+            """),
+    )
+
+    runtime = BehaviorCompiler().compile(definition)
+
+    worker.register_player_behavior(
+        10, 1, 100, runtime
+    )
+
+    actions = worker.execute_batch(
+        [BehaviorJob(1, 100, context)],
+        match_id=10,
+    )
+
+    assert isinstance(actions[1], WaitAction)
+    assert worker.get_disabled_behaviors(10) == {100}
+
+
+def test_release_match_clears_disabled_behaviors():
+    worker = BehaviorWorker()
+
+    worker.disable_behavior(10, 100)
+    worker.disable_behavior(11, 200)
+
+    worker.release_match(10)
+
+    assert worker.get_disabled_behaviors(10) == set()
+    assert worker.get_disabled_behaviors(11) == {200}

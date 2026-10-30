@@ -3,7 +3,10 @@ from app.game.models.actions import MoveAction, KickAction, WaitAction
 from app.game.models.behavior_job import BehaviorJob
 
 from app.game.context import BehaviorContext
-from app.game.behavior_executor import execute_behavior
+from app.game.behavior_executor import (
+    execute_behavior,
+    execute_behavior_strict,
+)
 from app.game.behavior_timeout import (
     BehaviorTimeout,
     behavior_time_limit,
@@ -32,6 +35,8 @@ class BehaviorWorker:
             tuple[int, int, int],
             RuntimeBehavior,
         ] = {}
+
+        self._disabled_behaviors: dict[int, set[int]] = {}
 
 
     def register_behavior(
@@ -129,19 +134,18 @@ class BehaviorWorker:
         match_id: int | None = None,
     ) -> dict[int, Action]:
         """
-        Execute behaviors sequentially with an individual timeout.
+        Execute player behaviors sequentially with individual timeouts.
 
-        Each behavior runs with its own context and execution time limit.
-        If a behavior exceeds the timeout or is not registered, the player
-        receives a WaitAction without interrupting the remaining jobs.
+        Each behavior is executed independently. Failed or disabled
+        behaviors produce WaitAction without interrupting the batch.
 
         Args:
-            jobs: List of behaviors executions requests for the current tic.
-            timeout_ms: Maximum execution time allowed per behavior in ms.
-            match_id: Identifier of the match.
+            jobs: Behavior execution requests for the current tick.
+            timeout_ms: Maximum execution time per behavior, in milliseconds.
+            match_id: Identifier of the match. If None, uses the legacy registry.
 
         Returns:
-            A dictionary mapping each player ID to its resulting action.
+            A dictionary mapping player IDs to their resulting actions.
 
         Raises:
             ValueError: If timeout_ms is less than or equal to zero.
@@ -152,37 +156,69 @@ class BehaviorWorker:
         actions: dict[int, Action] = {}
 
         for job in jobs:
-            try:
-                with behavior_time_limit(timeout_ms):
-                    if match_id is None:
-                        action = self.execute(
-                            job.behavior_id,
-                            job.context,
-                        )
-                    else:
-                        key = (
-                            match_id,
-                            job.player_id,
-                            job.behavior_id,
-                        )
-
-                        runtime_behavior = self._runtime_cache[key]
-
-                        action = execute_behavior(
-                            job.context,
-                            runtime_behavior,
-                        )
-
-            except(
-                BehaviorTimeout,
-                KeyError,
-            ):
-                action = WaitAction()
-
-            actions[job.player_id] = action
+            actions[job.player_id] = self._execute_job(
+                job,
+                timeout_ms,
+                match_id,
+            )
 
         return actions
 
+
+    def _execute_job(
+        self,
+        job: BehaviorJob,
+        timeout_ms: int,
+        match_id: int | None
+    ) -> Action:
+        """
+        """
+        if (
+            match_id is not None
+            and job.behavior_id in self._disabled_behaviors.get(
+                match_id,
+                set(),
+            )
+        ):
+            return WaitAction()
+
+        try:
+            if match_id is None:
+                runtime = self._behaviors[job.behavior_id]
+
+            else:
+                key = (
+                    match_id,
+                    job.player_id,
+                    job.behavior_id,
+                )
+                runtime = self._runtime_cache[key]
+
+        except KeyError:
+            return WaitAction()
+
+        try:
+            with behavior_time_limit(timeout_ms):
+                if match_id is None:
+                    return execute_behavior(
+                        job.context,
+                        runtime
+                    )
+                
+                return execute_behavior_strict(job.context, runtime)
+
+        except (
+            BehaviorTimeout,
+            Exception,
+        ):
+            if match_id is not None:
+                self.disable_behavior(
+                    match_id,
+                    job.behavior_id,
+                )
+
+            return WaitAction()
+            
 
     def release_match(
         self,
@@ -202,3 +238,42 @@ class BehaviorWorker:
 
         for key in keys_to_remove:
             del self._runtime_cache[key]
+
+        self._disabled_behaviors.pop(match_id, None)
+
+
+    def disable_behavior(
+        self,
+        match_id: int,
+        behavior_id: int,
+    ) -> None:
+        """
+        Disable a behavior for the remainder of a match.
+
+        Args:
+            match_id: Identifier of the match.
+            behavior_id: Identifier of the behavior to disable.
+        """
+        self._disabled_behaviors.setdefault(
+            match_id,
+            set(),
+        ).add(behavior_id)
+
+
+    def get_disabled_behaviors(
+        self,
+        match_id: int,
+    ) -> set[int]:
+        """
+        Return the disabled behavior identifiers fot a match.
+
+        Args:
+            match_id: Identifier of the match.
+
+        Returns:
+            A copy of the disabled behavior identifiers.
+        """
+        return self._disabled_behaviors.get(
+            match_id,
+            set(),
+        ).copy()
