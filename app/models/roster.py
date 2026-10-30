@@ -25,6 +25,11 @@ class Roster(Base):
         nullable=False
     )
 
+    coach_behavior_id: Mapped[int | None] = mapped_column(  # optional coach (DT) behavior for this roster
+        ForeignKey("coach_behaviors.id", ondelete="SET NULL"),
+        nullable=True
+    )
+
     formation: Mapped[Formation] = mapped_column(  # column for the chosen roster
         SAEnum(Formation),          
         nullable=False
@@ -34,6 +39,11 @@ class Roster(Base):
         "PlayerOnRoster",
         back_populates="roster",
         cascade="all, delete-orphan"  # delete associations when removed from the roster
+    )
+
+    coach_behavior: Mapped["CoachBehavior | None"] = relationship(  # relationship with the chosen coach behavior
+        "CoachBehavior",
+        back_populates="rosters"
     )
 
     # validations
