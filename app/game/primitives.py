@@ -7,7 +7,7 @@ from math import hypot
 from .constants import LEFT_GOAL, RIGHT_GOAL
 from .models.actions import MoveAction, KickAction, WaitAction
 from .context import get_current_context
-from .types import Direction, Position, PlayerState, BallState, Period, Side
+from .types import Direction, Position, PlayerState, BallState, Period, Side, CoachTrigger, Assignment
 from .physics import(
     calculate_max_move_distance,
     calculate_speed_factor,
@@ -405,3 +405,19 @@ def next_ball_position() -> Position:
     ball_state = context.ball
 
     return calculate_ball_next_position(ball_state)
+
+# Coach (DT) primitives: stubs until the coach context exists (block D)
+def assign(player_id: int, behavior_name: str) -> Assignment:
+    raise NotImplementedError
+
+
+def trigger() -> CoachTrigger:
+    raise NotImplementedError
+
+
+def current_behavior(player_id: int) -> str | None:
+    raise NotImplementedError
+
+
+def available_behaviors() -> list[str]:
+    raise NotImplementedError
