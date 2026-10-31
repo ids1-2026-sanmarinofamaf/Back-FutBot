@@ -8,7 +8,7 @@ from app.api import (
     auth, users,
     friendly_games,
     sessions_websocket,
-    matches, behaviors,
+    matches, behaviors, coach_behaviors,
     leagues, players
 )
 from app.services.startup_service import recover_interrupted_games
@@ -43,11 +43,14 @@ async def lifespan(app: FastAPI):
 app = FastAPI(lifespan=lifespan)
 
 
-# POST /leagues must answer 400 on an invalid body; every other endpoint keeps FastAPI's default 422
+# these POST endpoints must answer 400 on an invalid body; every other endpoint keeps FastAPI's default 422
+BAD_REQUEST_ON_INVALID_BODY = {"/leagues", "/clubes/me/coach_behaviors"}
+
+
 @app.exception_handler(RequestValidationError)
 async def validation_exception_handler(request: Request, exc: RequestValidationError):
     response = await request_validation_exception_handler(request, exc)
-    if request.method == "POST" and request.url.path == "/leagues":
+    if request.method == "POST" and request.url.path in BAD_REQUEST_ON_INVALID_BODY:
         response.status_code = status.HTTP_400_BAD_REQUEST
     return response
 
@@ -64,6 +67,7 @@ app.include_router(users.router)
 app.include_router(sessions_websocket.router)
 app.include_router(friendly_game_websocket_router)
 app.include_router(behaviors.router)
+app.include_router(coach_behaviors.router)
 app.include_router(leagues.router)
 app.include_router(league_websocket_router)
 app.include_router(matches.router)
