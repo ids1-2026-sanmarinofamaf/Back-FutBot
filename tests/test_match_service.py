@@ -3,6 +3,9 @@ Tests for the lifecycle of the shared behavior worker pool.
 """
 
 import asyncio
+import threading
+import time
+
 from importlib import import_module
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, Mock, call
@@ -65,13 +68,6 @@ async def test_finishing_one_match_does_not_stop_the_other(
 
     second_match_started = asyncio.Event()
     finish_second_match = asyncio.Event()
-    first_match_released = asyncio.Event()
-
-    def record_release(match_id):
-        if match_id == 10:
-            first_match_released.set()
-
-    pool.release_match.side_effect = record_release
 
     async def run_match(match):
         if match.match_id == 11:
@@ -80,27 +76,59 @@ async def test_finishing_one_match_does_not_stop_the_other(
         return match
 
     runner = SimpleNamespace(run_match=run_match)
-    monkeypatch.setattr(match_service, "MatchRunner", Mock(return_value=runner))
 
+    monkeypatch.setattr(
+        match_service,
+        "MatchRunner",
+        Mock(return_value=runner),
+    )
+
+    # Start the match that will remain running.
     match_service.start_match(make_match(11), [])
+
+    second_task = next(
+        iter(match_service._running_match_tasks)
+    )
+
+    # Start the match that finishes immediately.
     match_service.start_match(make_match(10), [])
 
+    first_task = next(
+        task
+        for task in match_service._running_match_tasks
+        if task is not second_task
+    )
+
     try:
-        await asyncio.wait_for(second_match_started.wait(), timeout=2)
-        await asyncio.wait_for(first_match_released.wait(), timeout=2)
+        await asyncio.wait_for(
+            second_match_started.wait(),
+            timeout=2,
+        )
+
+        # Wait until the first match finishes its cleanup.
+        await asyncio.wait_for(first_task, timeout=2)
 
         pool.release_match.assert_called_once_with(10)
         match_service.remove_match.assert_called_once_with(10)
+
+        # The other match must still be running.
+        assert not second_task.done()
         pool.shutdown.assert_not_called()
 
     finally:
         finish_second_match.set()
+
         await asyncio.gather(
-            *tuple(match_service._running_match_tasks),
+            first_task,
+            second_task,
             return_exceptions=True,
         )
 
-    assert pool.release_match.call_args_list == [call(10), call(11)]
+    assert pool.release_match.call_args_list == [
+        call(10),
+        call(11),
+    ]
+
     pool.shutdown.assert_not_called()
 
 
@@ -253,3 +281,82 @@ async def test_stop_running_matches_cancels_all_tasks(
             *tasks,
             return_exceptions=True,
         )
+
+
+@pytest.mark.asyncio
+async def test_cancelling_match_does_not_block_event_loop(
+    isolated_match_service,
+):
+    worker_lock = threading.Lock()
+    actions_started = threading.Event()
+    finish_actions = threading.Event()
+    release_started = threading.Event()
+
+    def get_actions():
+        with worker_lock:
+            actions_started.set()
+            finish_actions.wait(timeout=2)
+
+    async def run_match(match):
+        await asyncio.to_thread(get_actions)
+
+    def release_match(match_id):
+        release_started.set()
+        with worker_lock:
+            pass
+
+    pool = Mock()
+    pool.release_match.side_effect = release_match
+
+    runner = SimpleNamespace(run_match=run_match)
+    match = make_match(10)
+
+    task = asyncio.create_task(
+        match_service._run_match(
+            match=match,
+            runner=runner,
+            worker_pool=pool,
+        )
+    )
+
+    try:
+        assert await asyncio.to_thread(
+            actions_started.wait, 1
+        )
+
+        # The asyncio task is cancelled, but get_actions
+        # continues running in another thread.
+        task.cancel()
+
+        # Safety net to avoid a permanent deadlock
+        # if release_match blocks the event loop.
+        timer = threading.Timer(0.5, finish_actions.set)
+        timer.start()
+
+        try:
+            start = time.monotonic()
+
+            await asyncio.sleep(0.02)
+
+            elapsed = time.monotonic() - start
+
+            # The event loop must remain responsive.
+            assert elapsed < 0.25
+            assert not task.done()
+
+        finally:
+            finish_actions.set()
+            timer.cancel()
+
+        await asyncio.wait_for(
+            asyncio.gather(task, return_exceptions=True),
+            timeout=3,
+        )
+
+        pool.release_match.assert_called_once_with(10)
+        match_service.remove_match.assert_called_once_with(10)
+
+    finally:
+        finish_actions.set()
+        task.cancel()
+        await asyncio.gather(task, return_exceptions=True)

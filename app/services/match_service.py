@@ -84,10 +84,15 @@ async def _run_match(
             await on_finished(match)
 
     finally:
-        # delete de worke pool when the match is finished
-        worker_pool.release_match(match.match_id)
-        remove_match(match.match_id)
+        try:
+            await asyncio.to_thread(
+                worker_pool.release_match,
+                match.match_id,
+            )
 
+        finally:
+            remove_match(match.match_id)
+            
 
 def start_match(
     match: Match,
