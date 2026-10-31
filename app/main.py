@@ -11,7 +11,11 @@ from app.api import (
     leagues, players
 )
 from app.services.startup_service import recover_interrupted_games
-
+from app.services.match_service import (
+    initialize_worker_pool,
+    shutdown_worker_pool,
+    stop_running_matches,
+)
 
 from sqlalchemy import text
 
@@ -41,9 +45,17 @@ async def lifespan(app: FastAPI):
         connection.execute(text("SELECT 1"))
 
     recover_interrupted_games()
-    yield
-    # 2. SHUTDOWN: runs while the server is shutting down (Ctrl+C, deploy, etc.)
-    engine.dispose()
+
+    initialize_worker_pool()
+    try:
+        yield
+
+    finally:
+        await stop_running_matches()
+        shutdown_worker_pool()
+        # 2. SHUTDOWN: runs while the server is shutting down (Ctrl+C, deploy, etc.)
+        engine.dispose()
+        
 
 app = FastAPI(lifespan=lifespan)
 
