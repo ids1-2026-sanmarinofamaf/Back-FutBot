@@ -62,8 +62,10 @@ class MatchRunner:
     async def execute_tick(self, match: Match) -> None:  # async because we have to wait all the workers
         snapshot = match.snapshot()     # we make a copy of the match at a specific tick
 
-        actions = self.behavior_coordinator.get_actions(snapshot)    # through copying, we run all the behaviors, wait for the workers,
-                                                                      # and save the actions each player needs to take
+        actions = await asyncio.to_thread(
+            self.behavior_coordinator.get_actions,
+            snapshot,
+        )
 
         self.game_engine.step(match,snapshot,actions)   # we update the match state, using the snapshot and actions
 
@@ -195,22 +197,23 @@ class MatchRunner:
 
         await match_connection_manager.broadcast(match.match_id,initial_message)
 
+        next_tick_time = time.monotonic()
+
         while match.current_tick < match.duration_ticks:
-            # start the tick
-            tick_start = time.monotonic()
             # execute the tick and all the workers
             await self.execute_tick(match)
 
-            # then we have to check if the tick ends before the TIC_DURATION
-            elapsed = time.monotonic() - tick_start
+            next_tick_time += TIC_DURATION
 
-            remaining_time = TIC_DURATION - elapsed
+            remaining_time = next_tick_time - time.monotonic()
             # if the tick ends before TIC_DURATION, we hae to wait the remaining_time
             if remaining_time > 0:
                 await asyncio.sleep(remaining_time)
 
             if self.is_period_end(match):
                 await self.handle_period_break(match)
+                # eeset the tick clock after a scheduled break
+                next_tick_time = time.monotonic()
 
         # when the match ended, change its state to finished and close ws conections
         match.substitution_requests_open = False

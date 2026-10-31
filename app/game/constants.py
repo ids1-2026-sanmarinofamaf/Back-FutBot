@@ -66,3 +66,5 @@ HALFTIME_BREAK_DURATION = 20.0
 
 # Final interval without substitution planning
 SUBSTITUTION_EXECUTION_WINDOW = 5.0
+# Maximum execution time for each player's behavior
+BEHAVIOR_EXECUTION_TIMEOUT_MS = 2

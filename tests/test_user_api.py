@@ -30,14 +30,21 @@ def valid_body(**overrides):
     return body
 
 
+
+from app.models.club_statistics import ClubStatistics
+
 @pytest.fixture(autouse=True)
 def clean_users():
     yield
+
     db = SessionLocal()
-    db.query(Club).delete()
-    db.query(User).delete()
-    db.commit()
-    db.close()
+    try:
+        db.query(ClubStatistics).delete()
+        db.query(Club).delete()
+        db.query(User).delete()
+        db.commit()
+    finally:
+        db.close()
 
 
 def count_users():
@@ -51,7 +58,12 @@ def count_users():
 def test_register_ok_returns_201():
     response = client.post("/users", json=valid_body())
     assert response.status_code == 201
-    assert response.json() == {"user_name": "Los Robots", "user_email": EMAIL}
+
+    data = response.json()
+    assert data["user_name"] == "Los Robots"
+    assert data["user_email"] == EMAIL
+    assert isinstance(data["user_id"], str)
+    assert int(data["user_id"]) > 0
 
 
 def test_registered_user_can_be_retrieved_by_email():

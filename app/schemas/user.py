@@ -30,6 +30,7 @@ class UserCreate(BaseModel):
 class UserOut(BaseModel):
     user_name: str
     user_email: str
+    user_id: str
 
 
 class PasswordChange(BaseModel):

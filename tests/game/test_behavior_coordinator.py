@@ -8,18 +8,22 @@ from app.game.models.actions import MoveAction, WaitAction
 
 class FakeWorkerPool:
     """
-    Test double for BehaviorWorkerPool.
-
-    It stores the jobs received from the coordinator and returns a predefined
-    mapping of player actions without creating worker processes.
+    Test double for the shared behavior worker pool.
     """
 
     def __init__(self, actions):
         self.actions = actions
         self.received_jobs = []
+        self.received_match_id = None
 
-    def execute(self, jobs):
+    def execute(
+        self,
+        jobs,
+        *,
+        match_id,
+    ):
         self.received_jobs = jobs
+        self.received_match_id = match_id
         return self.actions
 
 
@@ -37,7 +41,7 @@ def test_coordinator_returns_action_for_each_on_field_player(
         }
     )
 
-    coordinator = BehaviorCoordinator(pool)
+    coordinator = BehaviorCoordinator(pool, match_id=10)
 
     actions = coordinator.get_actions(match_snapshot)
 
@@ -58,7 +62,7 @@ def test_coordinator_creates_jobs_for_on_field_players(
         }
     )
 
-    coordinator = BehaviorCoordinator(pool)
+    coordinator = BehaviorCoordinator(pool, match_id=10)
 
     coordinator.get_actions(match_snapshot)
 
@@ -88,7 +92,7 @@ def test_coordinator_does_not_create_jobs_for_substitutes(
         }
     )
 
-    coordinator = BehaviorCoordinator(pool)
+    coordinator = BehaviorCoordinator(pool, match_id=10)
 
     coordinator.get_actions(match_snapshot)
 
@@ -133,7 +137,7 @@ def test_coordinator_assigns_wait_without_job_for_forced_wait(
         }
     )
 
-    coordinator = BehaviorCoordinator(pool)
+    coordinator = BehaviorCoordinator(pool, match_id=10)
 
     actions = coordinator.get_actions(modified_match)
 
@@ -172,7 +176,7 @@ def test_coordinator_assigns_wait_without_job_if_behavior_is_missing(
         }
     )
 
-    coordinator = BehaviorCoordinator(pool)
+    coordinator = BehaviorCoordinator(pool, match_id=10)
 
     actions = coordinator.get_actions(modified_match)
 
@@ -198,7 +202,7 @@ def test_coordinator_raises_if_action_is_missing(
         }
     )
 
-    coordinator = BehaviorCoordinator(pool)
+    coordinator = BehaviorCoordinator(pool, match_id=10)
 
     with pytest.raises(RuntimeError):
         coordinator.get_actions(match_snapshot)
@@ -221,7 +225,23 @@ def test_coordinator_raises_if_action_exists_for_off_field_player(
         }
     )
 
-    coordinator = BehaviorCoordinator(pool)
+    coordinator = BehaviorCoordinator(pool, match_id=10)
 
     with pytest.raises(RuntimeError):
         coordinator.get_actions(match_snapshot)
+
+
+def test_coordinator_passes_match_id_to_pool(match_snapshot):
+    pool = FakeWorkerPool({
+        player_id: WaitAction()
+        for player_id in (1, 2, 3, 7, 8, 9)
+    })
+
+    coordinator = BehaviorCoordinator(
+        pool,
+        match_id=10,
+    )
+
+    coordinator.get_actions(match_snapshot)
+
+    assert pool.received_match_id == 10
