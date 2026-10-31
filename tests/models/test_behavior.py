@@ -9,6 +9,7 @@ from app.models.user import User
 from app.models.club import Club
 from app.models.behavior import Behavior
 from app.models.roster import Roster, Formation
+from app.models.coach_behavior import CoachBehavior
 from app.models.player_on_roster import PlayerOnRoster, RosterSlot
 
 
@@ -38,6 +39,7 @@ def session():
             Club.__table__,
             Behavior.__table__,
             Base.metadata.tables["players"],
+            CoachBehavior.__table__,
             Roster.__table__,
             PlayerOnRoster.__table__,
         ],

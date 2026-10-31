@@ -10,6 +10,7 @@ from app.models.club import Club
 from app.models.league import League, LeaguePrivacy
 from app.models.league_participation import LeagueParticipation
 from app.models.roster import Roster, Formation
+from app.models.coach_behavior import CoachBehavior
 
 
 @pytest.fixture
@@ -26,6 +27,7 @@ def session():
     tables = [
         User.__table__,
         Club.__table__,
+        CoachBehavior.__table__,
         Roster.__table__,
         League.__table__,
         LeagueParticipation.__table__,
