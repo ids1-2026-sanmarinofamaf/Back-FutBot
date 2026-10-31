@@ -142,7 +142,7 @@ def start_match(
         )
 
     except Exception:
-        worker_pool.register_match(match.match_id)
+        worker_pool.release_match(match.match_id)
         remove_match(match.match_id)
         raise
 
@@ -220,6 +220,6 @@ async def stop_running_matches() -> None:
 
     if tasks:
         await asyncio.gather(
-            *task,
+            *tasks,
             return_exceptions=True,
         )
