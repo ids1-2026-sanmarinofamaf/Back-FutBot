@@ -119,3 +119,19 @@ def delete_coach_behavior(db: Session, user_id: int, coach_behavior_id: int) -> 
     except Exception:
         db.rollback()
         raise
+
+
+# used by every flow that creates a roster; each service wraps the ValueError in its own error
+def validate_coach_behavior(db: Session, club_id: int, coach_behavior_id: int | None) -> None:
+    if coach_behavior_id is None:
+        return
+
+    coach_behavior = coach_behavior_repository.get_by_id_for_club(
+        db=db,
+        club_id=club_id,
+        coach_behavior_id=coach_behavior_id,
+    )
+
+    # same message for a nonexistent id and another club's id
+    if coach_behavior is None:
+        raise ValueError("Coach behavior doesn't exist.")

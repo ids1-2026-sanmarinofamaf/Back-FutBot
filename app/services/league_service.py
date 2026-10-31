@@ -16,6 +16,7 @@ from app.repositories import (
     behavior_repository,
 )
 from app.schemas.league import LeagueCreate, LeagueJoin
+from app.services.coach_behavior_service import validate_coach_behavior
 
 from app.services.league_websocket_service import (
     league_connection_manager,
@@ -76,7 +77,8 @@ def create_league(db: Session, data: LeagueCreate , current_user_id):
         # create roster object with the data
         roster = Roster(
             club_id=club.id,
-            formation=data.roster.formation
+            formation=data.roster.formation,
+            coach_behavior_id=data.roster.coach_behavior_id,
         )
 
         roster.players = [
@@ -111,6 +113,7 @@ def create_league(db: Session, data: LeagueCreate , current_user_id):
                 if not behavior.is_default and behavior.club_id != club.id:
                     raise ValueError("Behavior does not belong to user's club")
 
+        validate_coach_behavior(db, club.id, data.roster.coach_behavior_id)
     
         # save roster on db
         roster_repository.save(db,roster)
@@ -288,6 +291,7 @@ async def join_league(
         roster = Roster(
             club_id=club.id,
             formation=data.roster.formation,
+            coach_behavior_id=data.roster.coach_behavior_id,
         )
 
         roster.players = [
@@ -336,6 +340,11 @@ async def join_league(
                     raise InvalidRoster(
                         "Behavior does not belong to user's club"
                     )
+
+        try:
+            validate_coach_behavior(db, club.id, data.roster.coach_behavior_id)
+        except ValueError as error:
+            raise InvalidRoster(str(error))
 
         roster_repository.save(
             db=db,

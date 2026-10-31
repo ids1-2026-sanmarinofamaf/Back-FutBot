@@ -23,6 +23,7 @@ from app.services.match_service import (
 )
 
 from app.services import session_websocket_service
+from app.services.coach_behavior_service import validate_coach_behavior
 
 from app.repositories import (
     friendly_game_repository,
@@ -153,7 +154,8 @@ def create_friendly_game(db: Session, user_id: int, data: FriendlyGameCreate):
         # create roster object with the data
         roster = Roster(
             club_id=club.id,
-            formation=data.roster.formation
+            formation=data.roster.formation,
+            coach_behavior_id=data.roster.coach_behavior_id,
         )
 
         roster.players = [
@@ -188,6 +190,7 @@ def create_friendly_game(db: Session, user_id: int, data: FriendlyGameCreate):
                 if not behavior.is_default and behavior.club_id != club.id:
                     raise ValueError("Behavior does not belong to user's club")
 
+        validate_coach_behavior(db, club.id, data.roster.coach_behavior_id)
 
         # save roster on db
         roster_repository.save(db,roster)
@@ -473,6 +476,7 @@ async def join_friendly_game(
         roster = Roster(
             club_id=club.id,
             formation=data.roster.formation,
+            coach_behavior_id=data.roster.coach_behavior_id,
         )
 
         roster.players = [
@@ -521,6 +525,11 @@ async def join_friendly_game(
                     raise InvalidRoster(
                         "Behavior does not belong to user's club"
                     )
+
+        try:
+            validate_coach_behavior(db, club.id, data.roster.coach_behavior_id)
+        except ValueError as error:
+            raise InvalidRoster(str(error))
 
         roster_repository.save(
             db=db,

@@ -8,6 +8,7 @@ from app.models.user import User
 from app.models.club import Club
 from app.models.coach_behavior import CoachBehavior
 from app.repositories import coach_behavior_repository
+from app.services.coach_behavior_service import validate_coach_behavior
 
 
 COACH_CODE = "def coach():\n    return []\n"
@@ -125,3 +126,27 @@ def test_delete_removes_coach_behavior(db, clubs):
     assert coach_behavior_repository.get_by_id_for_club(
         db, clubs[0].id, coach_behavior_id
     ) is None
+
+
+# validate_coach_behavior is the helper every roster flow uses
+
+def test_validate_coach_behavior_without_coach_behavior_is_valid(db, clubs):
+    validate_coach_behavior(db, clubs[0].id, None)
+
+
+def test_validate_coach_behavior_of_own_club_is_valid(db, clubs):
+    coach_behavior = create_coach_behavior(db, clubs[0], "Offensive")
+
+    validate_coach_behavior(db, clubs[0].id, coach_behavior.id)
+
+
+def test_validate_coach_behavior_of_other_club_raises_value_error(db, clubs):
+    coach_behavior = create_coach_behavior(db, clubs[1], "Offensive")
+
+    with pytest.raises(ValueError, match="Coach behavior doesn't exist."):
+        validate_coach_behavior(db, clubs[0].id, coach_behavior.id)
+
+
+def test_validate_nonexistent_coach_behavior_raises_value_error(db, clubs):
+    with pytest.raises(ValueError, match="Coach behavior doesn't exist."):
+        validate_coach_behavior(db, clubs[0].id, 999999)
