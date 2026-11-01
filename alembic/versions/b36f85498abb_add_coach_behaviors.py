@@ -1,7 +1,7 @@
 """add coach behaviors
 
 Revision ID: b36f85498abb
-Revises: a1f3856ba12c
+Revises: fd7fd4c36d3b
 Create Date: 2026-10-30 17:16:25.583433
 
 """
@@ -13,7 +13,7 @@ import sqlalchemy as sa
 
 # revision identifiers, used by Alembic.
 revision: str = 'b36f85498abb'
-down_revision: Union[str, Sequence[str], None] = 'a1f3856ba12c'
+down_revision: Union[str, Sequence[str], None] = 'fd7fd4c36d3b'
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 

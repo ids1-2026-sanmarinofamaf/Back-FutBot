@@ -1,8 +1,12 @@
-from app.game.behavior_worker_pool import BehaviorWorkerPool, BehaviorJob, CoachJob
+from app.game.behavior_worker_pool import BehaviorWorkerPool
+from app.game.context_builder import build_behavior_context, build_coach_context
+
 from app.game.models.match import Match, MatchSnapshot
 from app.game.models.actions import MoveAction, KickAction, WaitAction
-from app.game.context_builder import build_behavior_context, build_coach_context
+from app.game.models.behavior_job import BehaviorJob
+from app.game.models.coach_job import CoachJob
 from app.game.types import Assignment, CoachTrigger
+
 
 Action = MoveAction | KickAction | WaitAction
 
@@ -13,8 +17,20 @@ class BehaviorCoordinator:
     The coordinator translates a match snapshot into behavior execution jobs,
     delegates those jobs to the worker pool, and returns one action per player.
     """
-    def __init__(self, worker_pool: BehaviorWorkerPool) -> None:
+    def __init__(
+        self,
+        worker_pool: BehaviorWorkerPool,
+        match_id: int,
+    ) -> None:
+        """
+        Initialize the coordinator fot a specific match.
+
+        Args:
+            worker_pool: Shared pool used to execute behaviors.
+            match_id: Identifier of the match.
+        """
         self._worker_pool = worker_pool
+        self._match_id = match_id
 
 
     def get_actions(
@@ -65,7 +81,10 @@ class BehaviorCoordinator:
                 )
             )
 
-        worker_actions = self._worker_pool.execute(jobs)
+        worker_actions = self._worker_pool.execute(
+            jobs,
+            match_id=self._match_id,
+        )
         actions.update(worker_actions)
 
         # Check all players in field have an action for next tic
@@ -81,6 +100,10 @@ class BehaviorCoordinator:
             )
 
         return actions
+
+
+
+        
 
 
     def get_coach_assignments(
@@ -130,7 +153,10 @@ class BehaviorCoordinator:
         if not jobs:
             return {}
 
-        results = self._worker_pool.execute_coach(jobs)
+        results = self._worker_pool.execute_coach(
+            jobs,
+            match_id=self._match_id,
+        )
 
         assignments: dict[int, list[Assignment]] = {}
 

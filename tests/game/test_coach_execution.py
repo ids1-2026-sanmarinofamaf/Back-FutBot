@@ -11,13 +11,16 @@ import pytest
 
 from app.game.behavior_coordinator import BehaviorCoordinator
 from app.game.behavior_executor import execute_coach_behavior
-from app.game.behavior_worker_pool import BehaviorWorkerPool, CoachJob
+from app.game.behavior_worker_pool import BehaviorWorkerPool
 from app.game.context import set_current_context, clear_current_context
 from app.game.context_builder import build_coach_context
 from app.game.engine import GameEngine
 from app.game.match_runner import MatchRunner
 from app.game.models.ball import Ball
 from app.game.models.behavior_definition import BehaviorDefinition
+from app.game.models.actions import WaitAction
+from app.game.models.behavior_job import BehaviorJob
+from app.game.models.coach_job import CoachJob
 from app.game.models.match import Match, MatchState
 from app.game.models.match_participation import MatchParticipation
 from app.game.models.runtime_behavior import RuntimeCoachBehavior
@@ -190,72 +193,175 @@ COACH_CODE = dedent(
 )
 
 
-def test_pool_executes_registered_coach(coach_context):
-    pool = BehaviorWorkerPool(size=1)
-
+@pytest.fixture
+def pool():
+    # Larger than production's 100ms: these tests exercise IPC, not its latency budget.
+    worker_pool = BehaviorWorkerPool(size=1, timeout_ms=2000)
     try:
-        pool.register_coach_behaviors([
-            BehaviorDefinition(id=50, code=COACH_CODE),
-        ])
-
-        results = pool.execute_coach([
-            CoachJob(club_id=1, coach_behavior_id=50, context=coach_context),
-        ])
-
-        assert results == [[(1, "Defender"), (2, "Defender"), (3, "Defender")]]
+        yield worker_pool
     finally:
-        pool.shutdown()
+        worker_pool.shutdown()
 
 
-def test_pool_returns_empty_list_for_unknown_coach(coach_context):
-    pool = BehaviorWorkerPool(size=1)
+def test_pool_executes_registered_coach(pool, coach_context):
+    pool.register_match(
+        1,
+        [],
+        [BehaviorDefinition(id=50, code=COACH_CODE)],
+    )
 
-    try:
-        results = pool.execute_coach([
-            CoachJob(club_id=1, coach_behavior_id=999, context=coach_context),
-        ])
+    results = pool.execute_coach(
+        [CoachJob(club_id=1, coach_behavior_id=50, context=coach_context)],
+        match_id=1,
+    )
 
-        assert results == [[]]
-    finally:
-        pool.shutdown()
+    assert results == [[(1, "Defender"), (2, "Defender"), (3, "Defender")]]
 
 
-def test_pool_returns_empty_list_on_coach_timeout(coach_context):
-    pool = BehaviorWorkerPool(size=1, timeout_ms=100)
+def test_pool_returns_empty_list_for_unknown_coach(pool, coach_context):
+    pool.register_match(1, [])
 
-    try:
-        pool.register_coach_behaviors([
+    results = pool.execute_coach(
+        [CoachJob(club_id=1, coach_behavior_id=999, context=coach_context)],
+        match_id=1,
+    )
+
+    assert results == [[]]
+
+
+def test_pool_returns_empty_list_for_coach_that_does_not_compile(
+    pool,
+    coach_context,
+):
+    pool.register_match(
+        1,
+        [],
+        [BehaviorDefinition(id=50, code="def play():\n    return wait()\n")],
+    )
+
+    results = pool.execute_coach(
+        [CoachJob(club_id=1, coach_behavior_id=50, context=coach_context)],
+        match_id=1,
+    )
+
+    assert results == [[]]
+
+
+def test_pool_returns_empty_list_on_coach_timeout(pool, coach_context):
+    pool.register_match(
+        1,
+        [],
+        [
             BehaviorDefinition(
                 id=50,
                 code="def coach():\n    while True:\n        pass\n",
             ),
-        ])
+        ],
+    )
 
-        results = pool.execute_coach([
-            CoachJob(club_id=1, coach_behavior_id=50, context=coach_context),
-        ])
+    results = pool.execute_coach(
+        [CoachJob(club_id=1, coach_behavior_id=50, context=coach_context)],
+        match_id=1,
+    )
 
-        assert results == [[]]
-        assert pool._processes[0].is_alive()
-    finally:
-        pool.shutdown()
+    # the coach is cut by its own time limit, so the worker survives
+    assert results == [[]]
+    assert pool._processes[0].is_alive()
 
 
-def test_pool_coach_registry_does_not_overwrite_player_behaviors(coach_context):
-    pool = BehaviorWorkerPool(size=1)
+def test_pool_coach_timeout_is_not_disabled(pool, coach_context):
+    code = dedent(
+        """
+        calls = 0
 
-    try:
-        pool.register_behaviors([
-            BehaviorDefinition(id=50, code="def play():\n    return wait()\n"),
-        ])
-        pool.register_coach_behaviors([
-            BehaviorDefinition(id=50, code=COACH_CODE),
-        ])
+        def coach():
+            global calls
+            calls += 1
+            if calls == 1:
+                while True:
+                    pass
+            return [assign(1, "Defender")]
+        """
+    )
+    pool.register_match(1, [], [BehaviorDefinition(id=50, code=code)])
+    job = CoachJob(club_id=1, coach_behavior_id=50, context=coach_context)
 
-        assert pool._registered_behaviors[50].code != COACH_CODE
-        assert pool._registered_coach_behaviors[50].code == COACH_CODE
-    finally:
-        pool.shutdown()
+    assert pool.execute_coach([job], match_id=1) == [[]]
+    assert pool.execute_coach([job], match_id=1) == [[(1, "Defender")]]
+
+
+def test_pool_runs_one_job_per_trigger_in_order(pool, coach_context):
+    pool.register_match(
+        1,
+        [],
+        [BehaviorDefinition(id=50, code=COACH_CODE)],
+    )
+    job = CoachJob(club_id=1, coach_behavior_id=50, context=coach_context)
+
+    results = pool.execute_coach([job, job], match_id=1)
+
+    assert len(results) == 2
+    assert results[0] == results[1]
+
+
+def test_pool_coach_and_player_behavior_with_same_id_do_not_collide(
+    pool,
+    coach_context,
+    context,
+):
+    pool.register_match(
+        1,
+        [BehaviorDefinition(id=50, code="def play():\n    return wait()\n")],
+        [BehaviorDefinition(id=50, code=COACH_CODE)],
+    )
+
+    actions = pool.execute(
+        [BehaviorJob(player_id=1, behavior_id=50, context=context)],
+        match_id=1,
+    )
+    results = pool.execute_coach(
+        [CoachJob(club_id=1, coach_behavior_id=50, context=coach_context)],
+        match_id=1,
+    )
+
+    assert actions == {1: WaitAction()}
+    assert results == [[(1, "Defender"), (2, "Defender"), (3, "Defender")]]
+
+
+def test_pool_restores_coaches_after_worker_restart(pool, coach_context):
+    pool.register_match(
+        1,
+        [],
+        [BehaviorDefinition(id=50, code=COACH_CODE)],
+    )
+
+    with pool._worker_locks[0]:
+        pool._replace_worker(0)
+
+    results = pool.execute_coach(
+        [CoachJob(club_id=1, coach_behavior_id=50, context=coach_context)],
+        match_id=1,
+    )
+
+    assert results == [[(1, "Defender"), (2, "Defender"), (3, "Defender")]]
+
+
+def test_pool_release_match_clears_coaches(pool, coach_context):
+    pool.register_match(
+        1,
+        [],
+        [BehaviorDefinition(id=50, code=COACH_CODE)],
+    )
+
+    pool.release_match(1)
+
+    assert 1 not in pool._match_coach_definitions
+
+    with pytest.raises(KeyError):
+        pool.execute_coach(
+            [CoachJob(club_id=1, coach_behavior_id=50, context=coach_context)],
+            match_id=1,
+        )
 
 
 # coordinator
@@ -264,7 +370,7 @@ def test_coordinator_skips_clubs_without_coach(match):
     worker_pool = MagicMock()
     worker_pool.execute_coach.return_value = [[(1, "Defender")]]
 
-    coordinator = BehaviorCoordinator(worker_pool)
+    coordinator = BehaviorCoordinator(worker_pool, match_id=match.match_id)
 
     assignments = coordinator.get_coach_assignments(
         match,
@@ -274,13 +380,14 @@ def test_coordinator_skips_clubs_without_coach(match):
     jobs = worker_pool.execute_coach.call_args.args[0]
 
     assert [job.club_id for job in jobs] == [1]
+    assert worker_pool.execute_coach.call_args.kwargs == {"match_id": match.match_id}
     assert assignments == {1: [(1, "Defender")]}
 
 
 def test_coordinator_does_not_call_pool_without_jobs(match):
     worker_pool = MagicMock()
 
-    coordinator = BehaviorCoordinator(worker_pool)
+    coordinator = BehaviorCoordinator(worker_pool, match_id=match.match_id)
 
     assignments = coordinator.get_coach_assignments(
         match,

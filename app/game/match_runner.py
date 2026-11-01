@@ -51,15 +51,17 @@ class MatchRunner:
 
         snapshot = match.snapshot()     # we make a copy of the match at a specific tick
 
-        actions = self.behavior_coordinator.get_actions(snapshot)    # through copying, we run all the behaviors, wait for the workers,
-                                                                        # and save the actions each player needs to take
+        actions = await asyncio.to_thread(
+            self.behavior_coordinator.get_actions,
+            snapshot,
+        )
 
         self.game_engine.step(match,snapshot,actions)   # we update the match state, using the snapshot and actions
 
         match.current_tick += 1 # update the tick
 
         # run the coaches triggered during this tick (goals, period start)
-        self._execute_coaches(match)
+        await self._execute_coaches(match)
 
         # new state after the tick
         new_snapshot = match.snapshot()
@@ -70,7 +72,7 @@ class MatchRunner:
         # we sent that new status to everyone connected
         await match_connection_manager.broadcast(match.match_id, message)
 
-    def _execute_coaches(self, match: Match) -> None:
+    async def _execute_coaches(self, match: Match) -> None:
         # take the triggers and empty the list, so each event runs the coach only once
         triggers = match.pending_coach_triggers
         match.pending_coach_triggers = []
@@ -78,7 +80,10 @@ class MatchRunner:
         if not triggers:
             return
 
-        assignments = self.behavior_coordinator.get_coach_assignments(
+        # in a thread, like get_actions, so waiting for the worker does not
+        # block the event loop
+        assignments = await asyncio.to_thread(
+            self.behavior_coordinator.get_coach_assignments,
             match,
             triggers,
         )
@@ -103,7 +108,7 @@ class MatchRunner:
         # the first period starts with the match, so the coaches run before
         # the first tick and their assignments apply from that tick
         match.register_period_start_triggers()
-        self._execute_coaches(match)
+        await self._execute_coaches(match)
 
         # send the initial state of the match before executing the first tick
         initial_snapshot = match.snapshot()
@@ -112,16 +117,15 @@ class MatchRunner:
 
         await match_connection_manager.broadcast(match.match_id,initial_message)
 
+        next_tick_time = time.monotonic()
+
         while match.current_tick < match.duration_ticks:
-            # start the tick
-            tick_start = time.monotonic()
             # execute the tick and all the workers
             await self.execute_tick(match)
 
-            # then we have to check if the tick ends before the TIC_DURATION
-            elapsed = time.monotonic() - tick_start
+            next_tick_time += TIC_DURATION
 
-            remaining_time = TIC_DURATION - elapsed
+            remaining_time = next_tick_time - time.monotonic()
             # if the tick ends before TIC_DURATION, we hae to wait the remaining_time
             if remaining_time > 0:
                 await asyncio.sleep(remaining_time)
@@ -129,7 +133,7 @@ class MatchRunner:
         # when the match ended, change its state to finished and close ws conections
         match.state = MatchState.FINISHED
 
-        await match_connection_manager.close_match_connection(match.match_id)   
+        await match_connection_manager.close_match_connection(match.match_id)
 
         return match
 

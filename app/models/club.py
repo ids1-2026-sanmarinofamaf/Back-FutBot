@@ -11,6 +11,7 @@ if TYPE_CHECKING:
     from app.models.coach_behavior import CoachBehavior
     from app.models.player import Player
     from app.models.league_participation import LeagueParticipation
+    from app.models.club_statistics import ClubStatistics
 
 # Placeholder que se guarda cuando el usuario no elige avatar; el frontend muestra su imagen por defecto
 DEFAULT_AVATAR = "default"
@@ -30,3 +31,4 @@ class Club(Base):
     coach_behaviors: Mapped[list["CoachBehavior"]] = relationship(back_populates="club", cascade="all, delete-orphan")
     players: Mapped[list["Player"]] = relationship(back_populates="club", cascade="all, delete-orphan")
     league_participations: Mapped[list["LeagueParticipation"]] = relationship(back_populates="club")
+    statistics: Mapped["ClubStatistics"] = relationship(back_populates="club", uselist=False, cascade="all, delete-orphan")
