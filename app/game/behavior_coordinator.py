@@ -1,7 +1,8 @@
-from app.game.behavior_worker_pool import BehaviorWorkerPool, BehaviorJob
-from app.game.models.match import MatchSnapshot
+from app.game.behavior_worker_pool import BehaviorWorkerPool, BehaviorJob, CoachJob
+from app.game.models.match import Match, MatchSnapshot
 from app.game.models.actions import MoveAction, KickAction, WaitAction
-from app.game.context_builder import build_behavior_context
+from app.game.context_builder import build_behavior_context, build_coach_context
+from app.game.types import Assignment, CoachTrigger
 
 Action = MoveAction | KickAction | WaitAction
 
@@ -82,5 +83,58 @@ class BehaviorCoordinator:
         return actions
 
 
+    def get_coach_assignments(
+        self,
+        match: Match,
+        triggers: list[tuple[int, CoachTrigger]],
+    ) -> dict[int, list[Assignment]]:
+        """
+        Execute the coach of each triggered club and return its assignments.
 
-        
+        Clubs without a coach behavior are skipped. If the same club is
+        triggered more than once in the tic, its coach runs once per trigger
+        and the assignments are concatenated in trigger order.
+
+        Args:
+            match: Current match state.
+            triggers: Coach triggers generated during the tic, as
+            (club_id, trigger).
+
+        Returns:
+            A mapping from club identifiers to the assignments returned by
+            their coach.
+        """
+        jobs: list[CoachJob] = []
+
+        for club_id, trigger in triggers:
+            participation = match.get_participation(club_id)
+
+            if participation is None:
+                continue
+
+            if participation.coach_behavior_id is None:  # club plays without coach
+                continue
+
+            jobs.append(
+                CoachJob(
+                    club_id=club_id,
+                    coach_behavior_id=participation.coach_behavior_id,
+                    context=build_coach_context(
+                        match,
+                        participation,
+                        trigger,
+                    ),
+                )
+            )
+
+        if not jobs:
+            return {}
+
+        results = self._worker_pool.execute_coach(jobs)
+
+        assignments: dict[int, list[Assignment]] = {}
+
+        for job, job_assignments in zip(jobs, results):
+            assignments.setdefault(job.club_id, []).extend(job_assignments)
+
+        return assignments
