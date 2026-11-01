@@ -1,11 +1,11 @@
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import Enum
 
 from app.game.models.ball import Ball, BallSnapshot
 from app.game.models.match_participation import MatchParticipation
 from app.game.models.player_in_match import PlayerInMatchSnapshot
-from app.game.types import Side, Period
+from app.game.types import Side, Period, CoachTrigger, Assignment
 
 class MatchState(str, Enum):
     NOT_STARTED = "not_started"
@@ -36,6 +36,9 @@ class Match:
     ball: Ball
 
     duration_ticks: int  # total duration of the match expressed in simulation ticks
+
+    # coach triggers generated during the current tick, as (club_id, trigger)
+    pending_coach_triggers: list[tuple[int, CoachTrigger]] = field(default_factory=list)
 
     current_tick: int = 0
 
@@ -69,6 +72,23 @@ class Match:
 
             last_conceding_side=self.last_conceding_side
         )
+
+    def get_participation(self, club_id: int) -> MatchParticipation | None:
+        if self.participation_a.club_id == club_id:
+            return self.participation_a
+
+        if self.participation_b.club_id == club_id:
+            return self.participation_b
+
+        return None
+
+    # applies the pending manual changes and coach assignments of both clubs;
+    # returns the applied coach assignments, as club_id -> assignments
+    def apply_pending_behavior_changes(self) -> dict[int, list[Assignment]]:
+        return {
+            participation.club_id: participation.apply_pending_behavior_changes()
+            for participation in (self.participation_a, self.participation_b)
+        }
 
     def plan_substitution(
         self,
@@ -130,3 +150,11 @@ class Match:
         self.participation_b.pending_substitution = None
 
         self.substitution_requests_open = (next_period != Period.FOURTH_QUARTER)
+
+        # both coaches are triggered when a new period starts
+        self.pending_coach_triggers.append(
+            (self.participation_a.club_id, CoachTrigger.PERIOD_START)
+        )
+        self.pending_coach_triggers.append(
+            (self.participation_b.club_id, CoachTrigger.PERIOD_START)
+        )

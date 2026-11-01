@@ -5,7 +5,7 @@ import random
 from app.game.models.match import Match, MatchSnapshot
 from app.game.models.player_in_match import PlayerInMatchSnapshot
 from app.game.models.actions import MoveAction, KickAction, WaitAction
-from app.game.types import Position, Side, BallState, Direction
+from app.game.types import Position, Side, BallState, Direction, CoachTrigger
 from app.game.constants import (
     TIC_DURATION,
     FIELD_HEIGHT,
@@ -484,11 +484,21 @@ class GameEngine:
     ) -> None:
         # Score for the opposite side.
         if conceding_side == Side.LEFT:
-            match.participation_b.goals += 1
+            scoring_participation = match.participation_b
             conceding_participation = match.participation_a
         else:
-            match.participation_a.goals += 1
+            scoring_participation = match.participation_a
             conceding_participation = match.participation_b
+
+        scoring_participation.goals += 1
+
+        # Register the coach triggers for this tick.
+        match.pending_coach_triggers.append(
+            (scoring_participation.club_id, CoachTrigger.GOAL_FOR)
+        )
+        match.pending_coach_triggers.append(
+            (conceding_participation.club_id, CoachTrigger.GOAL_AGAINST)
+        )
 
         match.last_conceding_side = conceding_side
 

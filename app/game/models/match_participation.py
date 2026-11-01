@@ -1,8 +1,8 @@
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from app.game.models.player_in_match import PlayerInMatch
 from app.game.models.pending_substitution import PendingSubstitution
-from app.game.types import Period
+from app.game.types import Period, Assignment
 
 
 @dataclass  # non-persistent class
@@ -11,6 +11,16 @@ class MatchParticipation:
     roster_id: int  # ID of the roster to which that participation belongs
 
     players: list[PlayerInMatch]  # starting players and substitutes selected for this match
+
+    coach_behavior_id: int | None = None  # coach (DT) behavior chosen in the roster, if any
+
+    # behaviors the club can assign during the match, as name -> behavior id
+    available_behaviors: dict[str, int] = field(default_factory=dict)
+
+    # behavior changes waiting to be applied at the beginning of the next tick:
+    # manual ones (player_id -> behavior_id) and the ones returned by the coach
+    pending_behavior_changes: dict[int, int] = field(default_factory=dict)
+    pending_coach_assignments: list[Assignment] = field(default_factory=list)
 
     goals: int = 0
 
@@ -100,6 +110,52 @@ class MatchParticipation:
             player_in_id=player_in_id,
             period=period,
         )
+
+    # the manual change is not applied right away, so it can win over
+    # the coach assignments of the same tick
+    def plan_behavior_change(self, player_id: int, behavior_id: int) -> None:
+        self.pending_behavior_changes[player_id] = behavior_id
+
+    # called at the beginning of each tick; returns the coach assignments applied
+    def apply_pending_behavior_changes(self) -> list[Assignment]:
+
+        changes: dict[int, int] = {}
+        applied_coach_assignments: dict[int, str] = {}
+
+        # coach assignments: discard rivals, substitutes and unknown names
+        for player_id, behavior_name in self.pending_coach_assignments:
+            player = self.get_player(player_id)
+
+            if player is None or not player.is_on_field:
+                continue
+
+            behavior_id = self.available_behaviors.get(behavior_name)
+
+            if behavior_id is None:
+                continue
+
+            # if the coach assigns the same player twice, the last one wins
+            changes[player_id] = behavior_id
+            applied_coach_assignments[player_id] = behavior_name
+
+        # manual changes go after, so they overwrite the coach
+        for player_id, behavior_id in self.pending_behavior_changes.items():
+            player = self.get_player(player_id)
+
+            # the player may have been substituted since the request
+            if player is None or not player.is_on_field:
+                continue
+
+            changes[player_id] = behavior_id
+            applied_coach_assignments.pop(player_id, None)
+
+        for player_id, behavior_id in changes.items():
+            self.get_player(player_id).current_behavior_id = behavior_id
+
+        self.pending_behavior_changes = {}
+        self.pending_coach_assignments = []
+
+        return list(applied_coach_assignments.items())
 
     # it should only be done once per period
     def execute_pending_substitution(self, period: Period) -> bool:
