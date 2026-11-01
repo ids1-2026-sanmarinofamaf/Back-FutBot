@@ -1,4 +1,5 @@
 from pydantic import BaseModel
+from typing import Literal
 
 
 class MatchPlayerState(BaseModel):
@@ -27,3 +28,15 @@ class MatchStateMessage(BaseModel):
 
     ball: BallState
     players: list[MatchPlayerState]
+
+
+class MatchCoachChange(BaseModel):
+    club_id: int
+    player_id: int
+    behavior: str
+
+
+# behavior changes made by the coaches (DT) and applied in this tic
+class MatchCoachChangesMessage(BaseModel):
+    event: Literal["coach_changes"] = "coach_changes"
+    changes: list[MatchCoachChange]

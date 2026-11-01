@@ -1,7 +1,14 @@
 from fastapi import WebSocket
 
 from app.game.models.match import MatchSnapshot
-from app.schemas.match_websocket import MatchPlayerState, MatchStateMessage, BallState
+from app.game.types import Assignment
+from app.schemas.match_websocket import (
+    MatchPlayerState,
+    MatchStateMessage,
+    BallState,
+    MatchCoachChange,
+    MatchCoachChangesMessage,
+)
 
 
 class MatchConnectionManager:
@@ -39,7 +46,7 @@ class MatchConnectionManager:
     async def broadcast(
         self,
         match_id: int,
-        message: MatchStateMessage
+        message: MatchStateMessage | MatchCoachChangesMessage
     ) -> None:
 
         connections = self.active_connections.get(match_id, [])
@@ -108,6 +115,25 @@ def build_match_state_message(
             speed_y=snapshot.ball.velocity[1],
         ),
         players=players,
+    )
+
+
+# prepare the message with the coach assignments applied in a tick,
+# from the result of match.apply_pending_behavior_changes()
+def build_coach_changes_message(
+    applied_assignments: dict[int, list[Assignment]],
+) -> MatchCoachChangesMessage:
+
+    return MatchCoachChangesMessage(
+        changes=[
+            MatchCoachChange(
+                club_id=club_id,
+                player_id=player_id,
+                behavior=behavior_name,
+            )
+            for club_id, assignments in applied_assignments.items()
+            for player_id, behavior_name in assignments
+        ],
     )
 
 
