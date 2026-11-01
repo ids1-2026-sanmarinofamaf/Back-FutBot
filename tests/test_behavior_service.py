@@ -1,5 +1,6 @@
 import pytest
 from unittest.mock import MagicMock, patch
+from sqlalchemy.exc import IntegrityError
 
 from app.schemas.behavior import BehaviorIn
 from app.services.behavior_service import (
@@ -401,3 +402,50 @@ def test_update_behavior_invalid_code_rolls_back(
     mock_save.assert_not_called()
     db.commit.assert_not_called()
     db.rollback.assert_called_once()
+
+
+@patch("app.services.behavior_service.behavior_repository.save")
+@patch("app.services.behavior_service.club_repository.get_by_user_id")
+def test_create_behavior_duplicate_name_integrity_error_rolls_back(
+    mock_get_club, mock_save
+):
+    db = MagicMock()
+    club = MagicMock()
+    club.id = 5
+    mock_get_club.return_value = club
+    mock_save.side_effect = IntegrityError("INSERT", {}, Exception("uq_behavior_club_name"))
+
+    data = BehaviorIn(name="Presión Alta", code=VALID_CODE)
+
+    with pytest.raises(ValueError, match="Behavior name already exists"):
+        create_behavior(db=db, user_id=1, data=data)
+
+    db.commit.assert_not_called()
+    db.rollback.assert_called_once()
+
+
+@patch("app.services.behavior_service.behavior_repository.save")
+@patch("app.services.behavior_service.behavior_repository.get_available_by_id")
+@patch("app.services.behavior_service.club_repository.get_by_user_id")
+def test_update_behavior_duplicate_name_integrity_error_rolls_back(
+    mock_get_club, mock_get_behavior, mock_save
+):
+    db = MagicMock()
+    club = MagicMock()
+    club.id = 5
+    mock_get_club.return_value = club
+
+    behavior = MagicMock()
+    behavior.id = 10
+    behavior.is_default = False
+    mock_get_behavior.return_value = behavior
+    mock_save.side_effect = IntegrityError("UPDATE", {}, Exception("uq_behavior_club_name"))
+
+    data = BehaviorIn(name="Nombre Repetido", code=UPDATED_CODE)
+
+    with pytest.raises(ValueError, match="Behavior name already exists"):
+        update_behavior(db=db, user_id=1, behavior_id=10, data=data)
+
+    db.commit.assert_not_called()
+    db.rollback.assert_called_once()
+

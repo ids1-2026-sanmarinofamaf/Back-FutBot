@@ -76,9 +76,15 @@ SAFE_BUILTINS: frozenset[str] = frozenset(
         "None",
     }
 )
-
+# En otras ramas se modifica build_namespace() para distinguir entre player y coach. Aquí se mantiene 
+# retrocompatibilidad para evitar conflictos. Debería ajustarse en la versión final.
+_compiler = BehaviorCompiler()
 ALLOWED_PRIMITIVES: frozenset[str] = frozenset(
-    BehaviorCompiler()._build_namespace().keys()
+    (
+        _compiler._build_player_namespace()
+        if hasattr(_compiler, "_build_player_namespace")
+        else _compiler._build_namespace()
+    ).keys()
 )
 
 

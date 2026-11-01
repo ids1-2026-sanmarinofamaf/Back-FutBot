@@ -1,3 +1,4 @@
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.models.behavior import Behavior
@@ -123,6 +124,9 @@ def create_behavior(db: Session, user_id: int, data: BehaviorIn) -> Behavior:
         behavior_repository.save(db, behavior)
         db.commit()
         return behavior
+    except IntegrityError as exc:
+        db.rollback()
+        raise ValueError("Behavior name already exists") from exc
     except Exception:
         db.rollback()
         raise
@@ -179,6 +183,9 @@ def update_behavior(
         behavior_repository.save(db, behavior)
         db.commit()
         return behavior
+    except IntegrityError as exc:
+        db.rollback()
+        raise ValueError("Behavior name already exists") from exc
     except Exception:
         db.rollback()
         raise
