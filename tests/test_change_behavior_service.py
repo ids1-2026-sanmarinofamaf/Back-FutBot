@@ -63,8 +63,9 @@ def test_change_behavior_success(
         behavior_id=7,
     )
 
-    assert player.current_behavior_id == 7
-    assert opponent.current_behavior_id == 6
+    # the change is queued and applied at the beginning of the next tick
+    match.participation_a.plan_behavior_change.assert_called_once_with(10, 7)
+    match.participation_b.plan_behavior_change.assert_not_called()
 
     mock_get_behavior.assert_called_once_with(
         db=db,
@@ -242,7 +243,8 @@ def test_change_behavior_multiple_changes(
             behavior_id=behavior_id,
         )
 
-    assert player.current_behavior_id == 9
+    assert match.participation_a.plan_behavior_change.call_count == 3
+    match.participation_a.plan_behavior_change.assert_called_with(10, 9)
     assert mock_get_behavior.call_count == 3
 
 
@@ -271,8 +273,8 @@ def test_change_behavior_team_b(
         behavior_id=7,
     )
 
-    assert opponent.current_behavior_id == 7
-    assert player.current_behavior_id == 5
+    match.participation_b.plan_behavior_change.assert_called_once_with(20, 7)
+    match.participation_a.plan_behavior_change.assert_not_called()
 
     mock_get_behavior.assert_called_once_with(
         db=db,
@@ -407,6 +409,11 @@ def test_change_behavior_reflected_in_next_snapshot(
         player_id=player.player_id,
         behavior_id=7,
     )
+
+    # the change is not visible until the pending changes are applied
+    assert match.snapshot().players_a[0].current_behavior_id == 5
+
+    match.apply_pending_behavior_changes()
 
     next_snapshot = match.snapshot()
 

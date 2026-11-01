@@ -19,6 +19,8 @@ from app.game.constants import FIELD_WIDTH, FIELD_HEIGHT, TICS_PER_SECOND
 
 from app.services.match_service import (
     load_match_behaviors,
+    load_match_coach_behaviors,
+    load_match_available_behaviors,
     start_match,
 )
 
@@ -122,6 +124,7 @@ def _create_match_participation(
         club_id=friendly_participation.club_id,
         roster_id=friendly_participation.roster_id,
         players=players,
+        coach_behavior_id=roster.coach_behavior_id
     )
 class FriendlyGameNotFound(Exception):
     pass
@@ -320,6 +323,18 @@ async def start_friendly_game(
             match=match,
         )
 
+        # load in memory the DT of each club, if any
+        coach_behaviors = load_match_coach_behaviors(
+            db=db,
+            match=match,
+        )
+
+        # load in memory the behaviors each DT can assign
+        load_match_available_behaviors(
+            db=db,
+            match=match,
+        )
+
         friendly_game_repository.update_state(
             db=db,
             friendly_game=friendly_game,
@@ -345,6 +360,7 @@ async def start_friendly_game(
                 match=match,
                 behaviors=behaviors,
                 on_finished=on_finished,
+                coach_behaviors=coach_behaviors,
             )
 
         except Exception:
