@@ -406,18 +406,34 @@ def next_ball_position() -> Position:
 
     return calculate_ball_next_position(ball_state)
 
-# Coach (DT) primitives: stubs until the coach context exists (block D)
+# Coach (DT) primitives
 def assign(player_id: int, behavior_name: str) -> Assignment:
-    raise NotImplementedError
+    """
+    Build an assignment of a behavior to a player.
+
+    The assignment is only a request: it is validated by the match before
+    being applied at the beginning of the next tic.
+    """
+    return (player_id, behavior_name)
 
 
 def trigger() -> CoachTrigger:
-    raise NotImplementedError
+    """
+    Return the event that triggered the current coach() execution.
+    """
+    return get_current_context().trigger
 
 
 def current_behavior(player_id: int) -> str | None:
-    raise NotImplementedError
+    """
+    Return the name of the behavior assigned to an on-field teammate,
+    or None if the player is not an on-field teammate or has no behavior.
+    """
+    return get_current_context().current_behaviors.get(player_id)
 
 
 def available_behaviors() -> list[str]:
-    raise NotImplementedError
+    """
+    Return the names of the behaviors the club can assign.
+    """
+    return list(get_current_context().available_behaviors)
