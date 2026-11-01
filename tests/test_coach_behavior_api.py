@@ -138,6 +138,22 @@ def test_create_without_callable_coach_returns_400(user, code):
     assert response.json()["detail"] == "Code must define a callable coach()."
 
 
+@pytest.mark.parametrize("code", [
+    "import os\ndef coach():\n    return []\n",
+    "from os import system\ndef coach():\n    return []\n",
+    "def coach():\n    open('x')\n    return []\n",
+    "def coach():\n    return ().__class__.__bases__\n",
+    "while True:\n    pass\ndef coach():\n    return []\n",
+    "print('x')\ndef coach():\n    return []\n",
+    "x = len([])\ndef coach():\n    return []\n",
+])
+def test_create_with_forbidden_code_returns_400(user, code):
+    response = create(code=code)
+
+    assert response.status_code == 400
+    assert response.json()["detail"] == "Code uses a forbidden construction."
+
+
 def test_create_with_default_behavior_name_returns_409(user):
     response = create(name="Attacker")
 

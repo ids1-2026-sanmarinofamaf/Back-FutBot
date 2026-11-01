@@ -3,9 +3,8 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.game.active_matches import is_club_in_active_match
-from app.game.behavior_compiler import BehaviorCompiler, BehaviorCompilationError
+from app.game.coach_validator import CoachCodeError, validate_coach_code
 from app.game.default_behaviors import ATTACKER_NAME, DEFENDER_NAME, MIDFIELDER_NAME
-from app.game.models.behavior_definition import BehaviorDefinition
 from app.models.coach_behavior import CoachBehavior
 from app.repositories import club_repository, coach_behavior_repository
 
@@ -47,20 +46,11 @@ def create_coach_behavior(db: Session, user_id: int, name: str, code: str) -> Co
     if name in DEFAULTS:
         raise CoachBehaviorNameTaken("Coach behavior name matches a default behavior.")
 
-    # 4. compilar con entrypoint="coach"; si falla → InvalidCoachCode
-    # todavía no hay id en la base, el compilador solo lo usa para los mensajes de error
-    # NOTE: compiling runs exec() on user code inside the API process.
-    # Top-level code (e.g. an infinite loop) would block this request.
-    compiler = BehaviorCompiler()
-    definition = BehaviorDefinition(
-        id=0,
-        code=code,
-    )
-
+    # static check only: user code is never executed inside the API process
     try:
-        compiler.compile(definition, entrypoint="coach")
-    except BehaviorCompilationError as error:
-        raise InvalidCoachCode("Code must define a callable coach().") from error
+        validate_coach_code(code)
+    except CoachCodeError as error:
+        raise InvalidCoachCode(str(error)) from error
 
     #CoachBehavior (id lo genera la base, club y rosters son relaciones)
     coach_behavior = CoachBehavior(
