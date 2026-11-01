@@ -5,9 +5,10 @@ from queue import Empty
 from time import monotonic
 
 from app.game.models.behavior_definition import BehaviorDefinition
-from app.game.behavior_compiler import BehaviorCompiler
+from app.game.behavior_compiler import BehaviorCompiler, BehaviorCompilationError
 from app.game.models.actions import MoveAction, KickAction, WaitAction
-from app.game.context import BehaviorContext
+from app.game.context import BehaviorContext, CoachContext
+from app.game.types import Assignment
 from app.game.behavior_worker import BehaviorWorker
 
 
@@ -27,6 +28,21 @@ class BehaviorJob:
     player_id: int
     behavior_id: int
     context: BehaviorContext
+
+
+@dataclass(frozen=True)
+class CoachJob:
+    """
+    Represent a coach (DT) execution request for one club.
+
+    Attributes:
+        club_id: Identifier of the club whose coach must be executed.
+        coach_behavior_id: Identifier of the coach behavior chosen by the club.
+        context: CoachContext visible to the coach during the current tic.
+    """
+    club_id: int
+    coach_behavior_id: int
+    context: CoachContext
 
 
 class BehaviorWorkerPool:
@@ -58,6 +74,7 @@ class BehaviorWorkerPool:
         self._output_queues = []
 
         self._registered_behaviors: dict[int, BehaviorDefinition] = {}
+        self._registered_coach_behaviors: dict[int, BehaviorDefinition] = {}
 
         self._start_workers()
 
@@ -107,6 +124,8 @@ class BehaviorWorkerPool:
         Supported commands:
             "register": Register or replace a RuntimeBehavior.
             "execute": Execute a registered behavior with a BehaviorContext.
+            "register_coach": Register or replace a RuntimeCoachBehavior.
+            "execute_coach": Execute a registered coach with a CoachContext.
             "shutdown": Stop the worker process.
 
         Args:
@@ -147,6 +166,40 @@ class BehaviorWorkerPool:
                     }
                 )
 
+            elif command == "register_coach":
+                definition = BehaviorDefinition(
+                    message["coach_behavior_id"],
+                    message["code"],
+                )
+
+                # an invalid coach is skipped instead of killing the worker;
+                # executing it later returns no assignments
+                try:
+                    runtime_coach_behavior = compiler.compile(
+                        definition,
+                        entrypoint="coach",
+                    )
+                except BehaviorCompilationError:
+                    continue
+
+                worker.register_coach_behavior(
+                    definition.id,
+                    runtime_coach_behavior,
+                )
+
+            elif command == "execute_coach":
+                assignments = worker.execute_coach(
+                    message["coach_behavior_id"],
+                    message["context"],
+                )
+
+                output_queue.put(
+                    {
+                        "club_id": message["club_id"],
+                        "assignments": assignments,
+                    }
+                )
+
             elif command == "shutdown":
                 break
             
@@ -178,6 +231,34 @@ class BehaviorWorkerPool:
                         "command": "register",
                         "behavior_id": behavior.id,
                         "code": behavior.code,
+                    }
+                )
+
+
+    def register_coach_behaviors(
+        self,
+        coach_behaviors: list[BehaviorDefinition],
+    ) -> None:
+        """
+        Register the coach behaviors of the match in every worker process.
+
+        Coach behaviors are kept in a separate registry from player
+        behaviors, since their identifiers come from another table.
+
+        Args:
+            coach_behaviors: Serializable coach behavior definitions that
+            must be available to all workers.
+        """
+        for coach_behavior in coach_behaviors:
+            self._registered_coach_behaviors[coach_behavior.id] = coach_behavior
+
+        for input_queue in self._input_queues:
+            for coach_behavior in coach_behaviors:
+                input_queue.put(
+                    {
+                        "command": "register_coach",
+                        "coach_behavior_id": coach_behavior.id,
+                        "code": coach_behavior.code,
                     }
                 )
 
@@ -247,15 +328,81 @@ class BehaviorWorkerPool:
                 self._replace_worker(index)
 
         return actions
-    
+
+
+    def execute_coach(
+        self,
+        jobs: list[CoachJob],
+    ) -> list[list[Assignment]]:
+        """
+        Execute coach jobs concurrently using the worker pool.
+
+        Works like execute(): each job is assigned to one worker and all
+        jobs share the same deadline. If a worker does not return before
+        the deadline, its coach produces no assignments and the worker is
+        replaced.
+
+        Args:
+            jobs: Coach execution requests for the current tic.
+
+        Returns:
+            The assignments of each job, in the same order as the jobs.
+
+        Raises:
+            ValueError: If more jobs are submitted than available workers.
+        """
+        if len(jobs) > self._size:
+            raise ValueError("More jobs than available workers")
+
+        for job, input_queue in zip(jobs, self._input_queues):
+            input_queue.put(
+                {
+                    "command": "execute_coach",
+                    "club_id": job.club_id,
+                    "coach_behavior_id": job.coach_behavior_id,
+                    "context": job.context,
+                }
+            )
+
+        deadline = monotonic() + self._timeout_seconds
+
+        results: list[list[Assignment]] = []
+
+        for index, output_queue in enumerate(
+            self._output_queues[:len(jobs)]
+        ):
+            remaining_time = max(
+                0.0,
+                deadline - monotonic(),
+            )
+
+            try:
+                message = output_queue.get(
+                    timeout = remaining_time,
+                )
+
+                results.append(message["assignments"])
+
+            except Empty:
+                results.append([])
+
+                process = self._processes[index]
+
+                process.terminate()
+                process.join()
+
+                self._replace_worker(index)
+
+        return results
+
 
     def _replace_worker(self, index: int) -> None:
         """
         Replace a worker process and restore its registered behaviors.
 
         A new input queue, output queue, and process are created for the given
-        worker slot. All behaviors currently known by the pool are then registered
-        in the new worker.
+        worker slot. All behaviors and coach behaviors currently known by the
+        pool are then registered in the new worker.
 
         Args:
             index: Position of the worker to replace.
@@ -280,6 +427,15 @@ class BehaviorWorkerPool:
                     "command": "register",
                     "behavior_id": behavior.id,
                     "code": behavior.code,
+                }
+            )
+
+        for coach_behavior in self._registered_coach_behaviors.values():
+            input_queue.put(
+                {
+                    "command": "register_coach",
+                    "coach_behavior_id": coach_behavior.id,
+                    "code": coach_behavior.code,
                 }
             )
 
