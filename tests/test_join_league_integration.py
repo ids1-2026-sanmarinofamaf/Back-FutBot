@@ -184,14 +184,15 @@ def valid_join_data(test_players, test_behavior):
     )
 
 
-def test_join_league_persists_participation(
+@pytest.mark.asyncio
+async def test_join_league_persists_participation(
     db,
     test_user,
     test_club,
     test_league,
     valid_join_data,
 ):
-    participation, roster = join_league(
+    participation, roster = await join_league(
         db=db,
         league_id=test_league.id,
         user_id=test_user.id,
@@ -234,14 +235,15 @@ def test_join_league_persists_participation(
     assert saved_player_ids == expected_player_ids
 
 
-def test_join_league_already_participating(
+@pytest.mark.asyncio
+async def test_join_league_already_participating(
     db,
     test_user,
     test_club,
     test_league,
     valid_join_data,
 ):
-    join_league(
+    await join_league(
         db=db,
         league_id=test_league.id,
         user_id=test_user.id,
@@ -249,7 +251,7 @@ def test_join_league_already_participating(
     )
 
     with pytest.raises(AlreadyParticipating):
-        join_league(
+        await join_league(
             db=db,
             league_id=test_league.id,
             user_id=test_user.id,
@@ -291,7 +293,8 @@ def foreign_player(db, test_league_creator):
     return player
 
 
-def test_join_league_rejects_foreign_player(
+@pytest.mark.asyncio
+async def test_join_league_rejects_foreign_player(
     db,
     test_user,
     test_club,
@@ -302,7 +305,7 @@ def test_join_league_rejects_foreign_player(
     valid_join_data.roster.players[0].player_id = foreign_player.id
 
     with pytest.raises(InvalidRoster):
-        join_league(
+        await join_league(
             db=db,
             league_id=test_league.id,
             user_id=test_user.id,
@@ -336,7 +339,8 @@ def test_private_league(db, test_league):
     return test_league
 
 
-def test_join_private_league_without_password(
+@pytest.mark.asyncio
+async def test_join_private_league_without_password(
     db,
     test_user,
     test_club,
@@ -346,7 +350,7 @@ def test_join_private_league_without_password(
     valid_join_data.password = None
 
     with pytest.raises(InvalidLeaguePassword):
-        join_league(
+        await join_league(
             db=db,
             league_id=test_private_league.id,
             user_id=test_user.id,
@@ -370,7 +374,8 @@ def test_join_private_league_without_password(
     assert roster_count == 0
 
 
-def test_join_private_league_with_wrong_password(
+@pytest.mark.asyncio
+async def test_join_private_league_with_wrong_password(
     db,
     test_user,
     test_club,
@@ -380,7 +385,7 @@ def test_join_private_league_with_wrong_password(
     valid_join_data.password = "wrong_password"
 
     with pytest.raises(InvalidLeaguePassword):
-        join_league(
+        await join_league(
             db=db,
             league_id=test_private_league.id,
             user_id=test_user.id,
@@ -404,7 +409,8 @@ def test_join_private_league_with_wrong_password(
     assert roster_count == 0
 
 
-def test_join_private_league_with_correct_password(
+@pytest.mark.asyncio
+async def test_join_private_league_with_correct_password(
     db,
     test_user,
     test_club,
@@ -413,7 +419,7 @@ def test_join_private_league_with_correct_password(
 ):
     valid_join_data.password = "secret123"
 
-    participation, roster = join_league(
+    participation, roster = await join_league(
             db=db,
             league_id=test_private_league.id,
             user_id=test_user.id,

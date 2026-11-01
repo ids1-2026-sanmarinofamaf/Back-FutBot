@@ -56,3 +56,6 @@ MAX_KICK_COOLDOWN_TICS = 70
 
 # Contest
 CONTEST_SCORE_MARGIN = 5.0
+
+# Maximum execution time for each player's behavior
+BEHAVIOR_EXECUTION_TIMEOUT_MS = 2
