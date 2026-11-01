@@ -14,5 +14,5 @@ class PlayerOnRosterCreate(BaseModel):
 
 class RosterCreate(BaseModel):
     formation: Formation
-    coach_behavior_id: int | None = None
     players: list[PlayerOnRosterCreate]
+    coach_behavior_id: int | None = None

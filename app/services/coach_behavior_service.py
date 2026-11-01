@@ -23,16 +23,6 @@ class InvalidCoachCode(Exception):
 class CoachBehaviorNotFound(Exception):
     pass
 
-
-#crear:
-#el club tiene que existir;
-#si is_club_in_active_match → 403;
-#si el nombre es igual a un default → 409;
-#el código tiene que definir coach();
-#si salta IntegrityError → 409 por nombre repetido;
-#listar: solo los DT del club;
-#borrar: si hay partido en curso → 403; si no es del club → 404.
-
 DEFAULTS = (ATTACKER_NAME, DEFENDER_NAME, MIDFIELDER_NAME)
 
 def list_coach_behaviors(db: Session, user_id: int) -> list[CoachBehavior]:
