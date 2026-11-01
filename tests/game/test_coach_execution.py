@@ -338,6 +338,37 @@ async def test_execute_tick_without_triggers_does_not_run_coaches(match, monkeyp
     coordinator.get_coach_assignments.assert_not_called()
 
 
+@pytest.mark.asyncio
+async def test_run_match_runs_coaches_for_the_first_period(match, monkeypatch):
+    monkeypatch.setattr(
+        "app.game.match_runner.match_connection_manager.broadcast",
+        MagicMock(side_effect=lambda *args: _async_none()),
+    )
+    monkeypatch.setattr(
+        "app.game.match_runner.match_connection_manager.close_match_connection",
+        MagicMock(side_effect=lambda *args: _async_none()),
+    )
+    monkeypatch.setattr("app.game.match_runner.TIC_DURATION", 0)
+
+    match.state = MatchState.NOT_STARTED
+    match.duration_ticks = 1
+
+    coordinator = MagicMock()
+    coordinator.get_actions.return_value = {}
+    coordinator.get_coach_assignments.return_value = {}
+
+    runner = MatchRunner(coordinator, MagicMock())
+
+    await runner.run_match(match)
+
+    first_call = coordinator.get_coach_assignments.call_args_list[0]
+
+    assert first_call.args[1] == [
+        (match.participation_a.club_id, CoachTrigger.PERIOD_START),
+        (match.participation_b.club_id, CoachTrigger.PERIOD_START),
+    ]
+
+
 async def _async_none():
     return None
 
@@ -426,13 +457,17 @@ async def test_execute_tick_applies_pending_changes_before_behaviors(match, monk
 # websocket
 
 def test_build_coach_changes_message():
-    message = build_coach_changes_message({
-        1: [(1, "Defender")],
-        2: [],
-    })
+    message = build_coach_changes_message(
+        {
+            1: [(1, "Defender")],
+            2: [],
+        },
+        from_tic=5,
+    )
 
     assert message.model_dump() == {
         "event": "coach_changes",
+        "from_tic": 5,
         "changes": [
             {"club_id": 1, "player_id": 1, "behavior": "Defender"},
         ],

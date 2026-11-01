@@ -46,7 +46,7 @@ class MatchRunner:
         if any(applied_assignments.values()):
             await match_connection_manager.broadcast(
                 match.match_id,
-                build_coach_changes_message(applied_assignments),
+                build_coach_changes_message(applied_assignments, match.current_tick),
             )
 
         snapshot = match.snapshot()     # we make a copy of the match at a specific tick
@@ -99,6 +99,11 @@ class MatchRunner:
 
         # change the matchState and execute ticks
         match.state = MatchState.IN_PROGRESS
+
+        # the first period starts with the match, so the coaches run before
+        # the first tick and their assignments apply from that tick
+        match.register_period_start_triggers()
+        self._execute_coaches(match)
 
         # send the initial state of the match before executing the first tick
         initial_snapshot = match.snapshot()

@@ -151,7 +151,10 @@ class Match:
 
         self.substitution_requests_open = (next_period != Period.FOURTH_QUARTER)
 
-        # both coaches are triggered when a new period starts
+        self.register_period_start_triggers()
+
+    # both coaches are triggered when a period starts, including the first one
+    def register_period_start_triggers(self) -> None:
         self.pending_coach_triggers.append(
             (self.participation_a.club_id, CoachTrigger.PERIOD_START)
         )

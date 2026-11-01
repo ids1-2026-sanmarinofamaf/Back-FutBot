@@ -39,4 +39,5 @@ class MatchCoachChange(BaseModel):
 # behavior changes made by the coaches (DT) and applied in this tic
 class MatchCoachChangesMessage(BaseModel):
     event: Literal["coach_changes"] = "coach_changes"
+    from_tic: int  # first tic in which the changes are in effect
     changes: list[MatchCoachChange]

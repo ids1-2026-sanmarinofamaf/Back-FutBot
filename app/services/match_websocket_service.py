@@ -122,9 +122,11 @@ def build_match_state_message(
 # from the result of match.apply_pending_behavior_changes()
 def build_coach_changes_message(
     applied_assignments: dict[int, list[Assignment]],
+    from_tic: int,
 ) -> MatchCoachChangesMessage:
 
     return MatchCoachChangesMessage(
+        from_tic=from_tic,
         changes=[
             MatchCoachChange(
                 club_id=club_id,
