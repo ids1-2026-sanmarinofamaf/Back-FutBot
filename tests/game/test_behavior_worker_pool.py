@@ -288,7 +288,7 @@ def test_pool_uses_common_deadline_for_concurrent_jobs(
             from time import sleep
 
             def play():
-                sleep(0.1)
+                sleep(0.5)
                 return wait()
             """
         ),
@@ -323,9 +323,9 @@ def test_pool_uses_common_deadline_for_concurrent_jobs(
             for action in actions.values()
         )
 
-        # Six sequential 20 ms timeouts would already require about 120 ms.
+        # Six sequential 100 ms timeouts would already require about 600 ms.
         # With a shared deadline the executions timeout concurrently.
-        assert elapsed < 0.12
+        assert elapsed < 0.6
 
     finally:
         pool.shutdown()
