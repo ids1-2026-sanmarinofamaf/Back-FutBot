@@ -2,16 +2,19 @@ import asyncio
 
 import pytest
 
+from types import SimpleNamespace
 from unittest.mock import (
     AsyncMock,
     MagicMock,
     patch,
     call,
+    Mock,
 )
 
 from app.models.friendly_game import FriendlyGameState
 from app.models.friendly_game_participation import FriendlyGameRole
 
+from app.services import friendly_game_service
 from app.services.friendly_game_service import (
     start_friendly_game,
     _finish_friendly_game,
@@ -433,3 +436,36 @@ def test_finish_friendly_game_sets_finalizado(
 
     db.commit.assert_called_once()
     db.rollback.assert_not_called()
+
+
+def test_create_match_participation_delegates_to_builder(monkeypatch):
+    db = Mock()
+
+    roster = Mock()
+    expected_participation = Mock()
+
+    friendly_participation = SimpleNamespace(
+        roster=roster,
+    )
+
+    builder = Mock(return_value=expected_participation)
+
+    monkeypatch.setattr(
+        friendly_game_service,
+        "create_match_participation",
+        builder,
+    )
+
+    result = friendly_game_service._create_match_participation(
+        db=db,
+        friendly_participation=friendly_participation,
+        mirror_position=True,
+    )
+
+    assert result is expected_participation
+
+    builder.assert_called_once_with(
+        db=db,
+        roster=roster,
+        mirror_position=True,
+    )
