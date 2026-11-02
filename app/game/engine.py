@@ -1151,6 +1151,9 @@ class GameEngine:
 
                 player.position = player.starting_position
                 player.velocity = (0.0, 0.0)
+                # added to solve a possible race condition
+                player.forced_wait_remaining = 0
+                match.last_conceding_side = None
 
         self._restitute_ball(match)
 
