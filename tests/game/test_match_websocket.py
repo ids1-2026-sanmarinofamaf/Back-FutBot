@@ -1,3 +1,4 @@
+
 from fastapi.testclient import TestClient
 import pytest
 from unittest.mock import AsyncMock
@@ -52,14 +53,14 @@ def match(six_players):
             position=(20.0, 10.0),
             velocity=(0.0, 0.0),
         ),
-        duration_ticks=10,
+        duration_ticks=4,
     )
 
 def test_client_can_connect_to_match():
     match_id = 1
 
     match_connection_manager.active_connections.clear()
-    
+
     with client.websocket_connect(f"/ws/matches/{match_id}"):
         # we checked that the connection was created and that it was just one
         assert match_id in match_connection_manager.active_connections
@@ -258,6 +259,9 @@ async def test_match_runner_sends_initial_state_and_tick_updates(match):
     runner = MatchRunner(
         behavior_coordinator,
         game_engine,
+        hydration_duration=0,
+        halftime_duration=0,
+        execution_window=0,
     )
 
     websocket = AsyncMock()
@@ -268,20 +272,34 @@ async def test_match_runner_sends_initial_state_and_tick_updates(match):
     ] = [websocket]
 
     # use only two ticks 
-    match.duration_ticks = 2
+    match.duration_ticks = 4
 
     await runner.run_match(match)
 
-    # 1 initial state + 2 tick updates
-    assert websocket.send_json.await_count == 3
+    # 1 initial state + 4 tick updates + 3 break states + 9 break events
+    assert websocket.send_json.await_count == 17
 
     sent_messages = [
         call.args[0]
         for call in websocket.send_json.await_args_list
     ]
 
+    events = [message["event"] for message in sent_messages]
+
+    assert events.count("estado_partido") == 8
+    assert events.count("pause_started") == 3
+    assert events.count("substitution_window_closed") == 3
+    assert events.count("pause_finished") == 3
+
     assert sent_messages[0]["event"] == "estado_partido"
     assert sent_messages[0]["actual_tic"] == 0
 
-    assert sent_messages[1]["actual_tic"] == 1
-    assert sent_messages[2]["actual_tic"] == 2
+    state_messages = [
+        message
+        for message in sent_messages
+        if message["event"] == "estado_partido"
+    ]
+
+    assert [message["actual_tic"] for message in state_messages] == [
+        0, 1, 1, 2, 2, 3, 3, 4
+    ]

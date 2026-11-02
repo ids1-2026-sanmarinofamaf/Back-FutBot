@@ -1,4 +1,5 @@
 from pydantic import BaseModel
+from typing import Literal
 
 
 class MatchPlayerState(BaseModel):
@@ -27,3 +28,20 @@ class MatchStateMessage(BaseModel):
 
     ball: BallState
     players: list[MatchPlayerState]
+
+
+class MatchPauseStartedMessage(BaseModel):
+    event: Literal["pause_started"] = "pause_started"
+    pause_type: Literal["hydration", "halftime"]
+    duration: float
+    planning_duration: float
+
+
+class MatchSubstitutionWindowClosedMessage(BaseModel):
+    event: Literal["substitution_window_closed"] = "substitution_window_closed"
+    pause_type: Literal["hydration", "halftime"]
+
+
+class MatchPauseFinishedMessage(BaseModel):
+    event: Literal["pause_finished"] = "pause_finished"
+    pause_type: Literal["hydration", "halftime"]
