@@ -360,3 +360,79 @@ async def test_cancelling_match_does_not_block_event_loop(
         finish_actions.set()
         task.cancel()
         await asyncio.gather(task, return_exceptions=True)
+
+
+@pytest.mark.asyncio
+async def test_start_match_task_returns_task(
+    isolated_match_service,
+    monkeypatch,
+):
+    pool = Mock()
+    runner = SimpleNamespace(run_match=AsyncMock())
+
+    monkeypatch.setattr(match_service, "_worker_pool", pool)
+    monkeypatch.setattr(
+        match_service,
+        "MatchRunner",
+        Mock(return_value=runner),
+    )
+
+    match = make_match(100)
+
+    task = match_service.start_match_task(match, [])
+
+    assert isinstance(task, asyncio.Task)
+
+    await task
+
+    runner.run_match.assert_awaited_once_with(match)
+    pool.release_match.assert_called_once_with(100)
+    match_service.remove_match.assert_called_once_with(100)
+
+
+@pytest.mark.asyncio
+async def test_start_match_task_propagates_errors(
+    isolated_match_service,
+    monkeypatch,
+):
+    pool = Mock()
+    runner = SimpleNamespace(
+        run_match=AsyncMock(side_effect=RuntimeError("Match failed"))
+    )
+
+    monkeypatch.setattr(match_service, "_worker_pool", pool)
+    monkeypatch.setattr(
+        match_service,
+        "MatchRunner",
+        Mock(return_value=runner),
+    )
+
+    task = match_service.start_match_task(make_match(101), [])
+
+    with pytest.raises(RuntimeError, match="Match failed"):
+        await task
+
+    pool.release_match.assert_called_once_with(101)
+    match_service.remove_match.assert_called_once_with(101)
+
+
+@pytest.mark.asyncio
+async def test_start_match_preserves_original_return_value(
+    isolated_match_service,
+    monkeypatch,
+):
+    pool = Mock()
+    runner = SimpleNamespace(run_match=AsyncMock())
+
+    monkeypatch.setattr(match_service, "_worker_pool", pool)
+    monkeypatch.setattr(
+        match_service,
+        "MatchRunner",
+        Mock(return_value=runner),
+    )
+
+    match_id = match_service.start_match(make_match(102), [])
+
+    assert match_id == 102
+
+    await asyncio.gather(*tuple(match_service._running_match_tasks))
