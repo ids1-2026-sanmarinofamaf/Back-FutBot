@@ -1,6 +1,6 @@
 
 from types import SimpleNamespace
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock, patch, AsyncMock
 
 import pytest
 
@@ -27,6 +27,14 @@ def repos():
         patch("app.services.league_service.club_repository") as club_repo,
         patch("app.services.league_service.league_participation_repository") as participation_repo,
         patch("app.services.league_service.roster_repository") as roster_repo,
+        patch(
+            "app.services.league_service.league_connection_manager.broadcast",
+            new_callable=AsyncMock,
+        ),
+        patch(
+            "app.services.league_service.league_connection_manager.disconnect_user",
+            new_callable=AsyncMock,
+        ),
     ):
         yield SimpleNamespace(
             league=league_repo,
@@ -46,7 +54,11 @@ def valid_league(repos):
     )
 
     # club 2 wants to leave the league
-    club = SimpleNamespace(id=2)
+    club = SimpleNamespace(
+        id=2,
+        name="Test Club",
+        avatar="",
+    )
 
     # roster associated with club 2
     roster = SimpleNamespace(
@@ -77,8 +89,9 @@ def valid_league(repos):
 
 
 # successful leave
-def test_leave_league_success(db, repos, valid_league):
-    leave_league(
+@pytest.mark.asyncio
+async def test_leave_league_success(db, repos, valid_league):
+    await leave_league(
         db=db,
         league_id=10,
         user_id=5,
@@ -117,11 +130,12 @@ def test_leave_league_success(db, repos, valid_league):
 
 
 # league does not exist
-def test_leave_league_not_found(db, repos):
+@pytest.mark.asyncio
+async def test_leave_league_not_found(db, repos):
     repos.league.get_by_id.return_value = None
 
     with pytest.raises(LeagueNotFound,match="League does not exist"):
-        leave_league(
+        await leave_league(
             db=db,
             league_id=999,
             user_id=5,
@@ -134,11 +148,12 @@ def test_leave_league_not_found(db, repos):
 
 
 # user does not have a club
-def test_leave_league_user_without_club(db, repos, valid_league):
+@pytest.mark.asyncio
+async def test_leave_league_user_without_club(db, repos, valid_league):
     repos.club.get_by_user_id.return_value = None
 
     with pytest.raises(LeagueParticipationNotFound,match="User is not participating"):
-        leave_league(db=db, league_id=10, user_id=5)
+        await leave_league(db=db, league_id=10, user_id=5)
 
     repos.participation.delete_participation.assert_not_called()
     repos.roster.delete_roster.assert_not_called()
@@ -147,11 +162,12 @@ def test_leave_league_user_without_club(db, repos, valid_league):
 
 
 # creator cannot leave
-def test_creator_cannot_leave_league(db, repos, valid_league):
+@pytest.mark.asyncio
+async def test_creator_cannot_leave_league(db, repos, valid_league):
     valid_league.league.creator_id = valid_league.club.id
 
     with pytest.raises(LeagueCreatorCannotLeave,match="League creator cannot leave"):
-        leave_league(db=db, league_id=10, user_id=5)
+        await leave_league(db=db, league_id=10, user_id=5)
 
     repos.participation.delete_participation.assert_not_called()
     repos.roster.delete_roster.assert_not_called()
@@ -160,6 +176,7 @@ def test_creator_cannot_leave_league(db, repos, valid_league):
 
 
 # started or finished league
+@pytest.mark.asyncio
 @pytest.mark.parametrize(
     "state",
     [
@@ -167,11 +184,11 @@ def test_creator_cannot_leave_league(db, repos, valid_league):
         LeagueState.FINALIZADA,
     ],
 )
-def test_cannot_leave_started_or_finished_league(db, repos, valid_league, state):
+async def test_cannot_leave_started_or_finished_league(db, repos, valid_league, state):
     valid_league.league.state = state
 
     with pytest.raises(LeagueAlreadyStarted,match="League has already started"):
-        leave_league(db=db, league_id=10, user_id=5)
+        await leave_league(db=db, league_id=10, user_id=5)
 
     repos.participation.delete_participation.assert_not_called()
     repos.roster.delete_roster.assert_not_called()
@@ -180,11 +197,12 @@ def test_cannot_leave_started_or_finished_league(db, repos, valid_league, state)
 
 
 # club does not participate
-def test_participation_not_found(db, repos, valid_league):
+@pytest.mark.asyncio
+async def test_participation_not_found(db, repos, valid_league):
     repos.participation.get_participation_by_club_and_league.return_value = None
 
     with pytest.raises(LeagueParticipationNotFound,match="User is not participating"):
-        leave_league(db=db, league_id=10, user_id=5)
+        await leave_league(db=db, league_id=10, user_id=5)
 
     repos.participation.delete_participation.assert_not_called()
     repos.roster.delete_roster.assert_not_called()
@@ -193,11 +211,12 @@ def test_participation_not_found(db, repos, valid_league):
 
 
 # failure while deleting participation
-def test_delete_participation_failure(db, repos, valid_league):
+@pytest.mark.asyncio
+async def test_delete_participation_failure(db, repos, valid_league):
     repos.participation.delete_participation.side_effect = (RuntimeError("Database error"))
 
     with pytest.raises(RuntimeError, match="Database error"):
-        leave_league(db=db, league_id=10, user_id=5)
+        await leave_league(db=db, league_id=10, user_id=5)
 
     repos.roster.delete_roster.assert_not_called()
     db.commit.assert_not_called()
@@ -205,11 +224,12 @@ def test_delete_participation_failure(db, repos, valid_league):
 
 
 # failure while deleting roster
-def test_delete_roster_failure(db, repos, valid_league):
+@pytest.mark.asyncio
+async def test_delete_roster_failure(db, repos, valid_league):
     repos.roster.delete_roster.side_effect = (RuntimeError("Roster deletion failed"))
 
     with pytest.raises(RuntimeError, match="Roster deletion failed"):
-        leave_league(db=db, league_id=10, user_id=5)
+        await leave_league(db=db, league_id=10, user_id=5)
 
     repos.participation.delete_participation.assert_called_once()
     db.commit.assert_not_called()
@@ -217,11 +237,12 @@ def test_delete_roster_failure(db, repos, valid_league):
 
 
 # failure during commit
-def test_commit_failure(db, repos, valid_league):
+@pytest.mark.asyncio
+async def test_commit_failure(db, repos, valid_league):
     db.commit.side_effect = RuntimeError("Commit failed")
 
     with pytest.raises(RuntimeError, match="Commit failed"):
-        leave_league(db=db, league_id=10, user_id=5)
+        await leave_league(db=db, league_id=10, user_id=5)
 
     repos.participation.delete_participation.assert_called_once()
     repos.roster.delete_roster.assert_called_once()
