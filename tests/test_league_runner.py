@@ -3,13 +3,36 @@ import asyncio
 from types import SimpleNamespace
 from unittest.mock import Mock, call
 
+from sqlalchemy import create_engine
+from sqlalchemy.orm import Session
+
 import pytest
 
-from app.models.match_participation import MatchRole
+from app.database import Base
+
+from app.models.user import User
+from app.models.club import Club
+from app.models.player import Player
+from app.models.behavior import Behavior
+from app.models.roster import Roster, Formation
+from app.models.player_on_roster import PlayerOnRoster
+from app.models.league import League, LeaguePrivacy, LeagueState
+from app.models.league_participation import LeagueParticipation
+from app.models.club_statistics import ClubStatistics
+from app.models.match import Match as PersistedMatch, MatchState
+from app.models.match_participation import (
+    MatchRole,
+    MatchParticipation as PersistedParticipation,
+)
+
+from app.game.models.match import MatchState as RuntimeMatchState
 from app.game.constants import FIELD_CENTER, TICS_PER_SECOND
 
 from app.services import league_runner
-from app.services.league_runner import load_round_matches
+from app.services.league_runner import (
+    load_round_matches,
+    complete_round,
+)
 
 
 class ControlledMatchStarter:
@@ -444,3 +467,393 @@ async def test_run_round_matches_with_empty_round(monkeypatch):
 
     starter.assert_not_called()
     behavior_loader.assert_not_called()
+
+
+@pytest.fixture
+def round_db():
+    engine = create_engine("sqlite+pysqlite:///:memory:")
+
+    tables = [
+        User.__table__,
+        Club.__table__,
+        Player.__table__,
+        Behavior.__table__,
+        Roster.__table__,
+        PlayerOnRoster.__table__,
+        League.__table__,
+        LeagueParticipation.__table__,
+        ClubStatistics.__table__,
+        PersistedMatch.__table__,
+        PersistedParticipation.__table__,
+    ]
+
+    Base.metadata.create_all(engine, tables=tables)
+
+    with Session(engine) as db:
+        yield db
+
+    engine.dispose()
+
+
+@pytest.fixture
+def round_case(round_db):
+    clubs = [
+        Club(
+            name=f"Club {i}",
+            user=User(
+                email=f"round-club-{i}@test.com",
+                hash_passwd="hash",
+            ),
+            statistics=ClubStatistics(),
+        )
+        for i in range(4)
+    ]
+
+    round_db.add_all(clubs)
+    round_db.flush()
+
+    rosters = [
+        Roster(
+            club_id=club.id,
+            formation=Formation.DEFENSIVE,
+        )
+        for club in clubs
+    ]
+
+    round_db.add_all(rosters)
+    round_db.flush()
+
+    league = League(
+        name="Liga Test",
+        match_duration=90,
+        max_clubs=4,
+        privacy=LeaguePrivacy.PUBLICA,
+        creator_id=clubs[0].id,
+        state=LeagueState.INICIADA,
+        last_completed_round=0,
+    )
+
+    round_db.add(league)
+    round_db.flush()
+
+    for club, roster in zip(clubs, rosters):
+        round_db.add(
+            LeagueParticipation(
+                league_id=league.id,
+                club_id=club.id,
+                roster_id=roster.id,
+            )
+        )
+
+    fixtures = [
+        (1001, 1, 0, 1),
+        (1002, 1, 2, 3),
+        (1003, 2, 0, 2),
+    ]
+
+    for order, (match_id, number, home, away) in enumerate(fixtures, 1):
+        round_db.add(
+            PersistedMatch(
+                id=match_id,
+                league_id=league.id,
+                round=number,
+                match_order=order,
+                participations=[
+                    PersistedParticipation(
+                        club_id=clubs[home].id,
+                        roster_id=rosters[home].id,
+                        role=MatchRole.LOCAL,
+                    ),
+                    PersistedParticipation(
+                        club_id=clubs[away].id,
+                        roster_id=rosters[away].id,
+                        role=MatchRole.VISITANTE,
+                    ),
+                ],
+            )
+        )
+
+    round_db.commit()
+
+    return SimpleNamespace(
+        league_id=league.id,
+        club_ids=[club.id for club in clubs],
+    )
+
+
+def make_completed_matches(case):
+    ids = case.club_ids
+
+    return [
+        SimpleNamespace(
+            match_id=1001,
+            state=RuntimeMatchState.FINISHED,
+            participation_a=SimpleNamespace(club_id=ids[0], goals=2),
+            participation_b=SimpleNamespace(club_id=ids[1], goals=1),
+        ),
+        SimpleNamespace(
+            match_id=1002,
+            state=RuntimeMatchState.FINISHED,
+            participation_a=SimpleNamespace(club_id=ids[2], goals=0),
+            participation_b=SimpleNamespace(club_id=ids[3], goals=0),
+        ),
+    ]
+
+
+def assert_round_unmodified(db, case):
+    db.expire_all()
+
+    league = db.get(League, case.league_id)
+    assert league.last_completed_round == 0
+
+    for match_id in (1001, 1002):
+        match = db.get(PersistedMatch, match_id)
+        assert match.state == MatchState.POR_COMENZAR
+        assert match.home_goals is None
+        assert match.away_goals is None
+
+    for club_id in case.club_ids:
+        participation = db.get(
+            LeagueParticipation,
+            (case.league_id, club_id),
+        )
+        assert participation.matches_played == 0
+        assert participation.points == 0
+
+
+def test_complete_round_persists_results_and_standings(
+    round_db,
+    round_case,
+):
+    matches = make_completed_matches(round_case)
+
+    complete_round(
+        round_db,
+        round_case.league_id,
+        1,
+        matches,
+    )
+
+    round_db.expire_all()
+
+    first = round_db.get(PersistedMatch, 1001)
+    second = round_db.get(PersistedMatch, 1002)
+
+    assert (first.home_goals, first.away_goals) == (2, 1)
+    assert (second.home_goals, second.away_goals) == (0, 0)
+    assert first.state == MatchState.FINALIZADO
+    assert second.state == MatchState.FINALIZADO
+
+    expected_points = [3, 0, 1, 1]
+
+    for club_id, points in zip(round_case.club_ids, expected_points):
+        participation = round_db.get(
+            LeagueParticipation,
+            (round_case.league_id, club_id),
+        )
+        statistics = round_db.get(ClubStatistics, club_id)
+
+        assert participation.points == points
+        assert participation.matches_played == 1
+        assert statistics.total_points == points
+        assert statistics.matches_played == 1
+
+    league = round_db.get(League, round_case.league_id)
+    assert league.last_completed_round == 1
+    assert league.break_ends_at is not None
+
+
+def test_complete_round_private_league_skips_global_statistics(
+    round_db,
+    round_case,
+):
+    league = round_db.get(League, round_case.league_id)
+    league.privacy = LeaguePrivacy.PRIVADA
+    league.password_hash = "hashed-password"
+    round_db.commit()
+
+    complete_round(
+        round_db,
+        round_case.league_id,
+        1,
+        make_completed_matches(round_case),
+    )
+
+    round_db.expire_all()
+
+    winner = round_case.club_ids[0]
+
+    participation = round_db.get(
+        LeagueParticipation,
+        (round_case.league_id, winner),
+    )
+    statistics = round_db.get(ClubStatistics, winner)
+
+    assert participation.points == 3
+    assert participation.matches_played == 1
+
+    assert statistics.total_points == 0
+    assert statistics.matches_played == 0
+
+
+def test_complete_round_rolls_back_on_statistics_error(
+    round_db,
+    round_case,
+):
+    # The second match will fail when updating global statistics.
+    failing_club_id = round_case.club_ids[2]
+
+    round_db.delete(
+        round_db.get(ClubStatistics, failing_club_id)
+    )
+    round_db.commit()
+
+    with pytest.raises(LookupError):
+        complete_round(
+            round_db,
+            round_case.league_id,
+            1,
+            make_completed_matches(round_case),
+        )
+
+    assert_round_unmodified(round_db, round_case)
+
+    # Even statistics already updated for the first match
+    # must be rolled back.
+    first_club = round_case.club_ids[0]
+    statistics = round_db.get(ClubStatistics, first_club)
+
+    assert statistics.matches_played == 0
+    assert statistics.total_points == 0
+
+
+def test_complete_round_cannot_be_confirmed_twice(
+    round_db,
+    round_case,
+):
+    matches = make_completed_matches(round_case)
+
+    complete_round(round_db, round_case.league_id, 1, matches)
+
+    with pytest.raises(ValueError, match="Invalid round"):
+        complete_round(round_db, round_case.league_id, 1, matches)
+
+    round_db.expire_all()
+
+    winner = round_case.club_ids[0]
+    participation = round_db.get(
+        LeagueParticipation,
+        (round_case.league_id, winner),
+    )
+
+    assert participation.matches_played == 1
+    assert participation.points == 3
+
+
+def test_complete_round_rejects_unfinished_match(
+    round_db,
+    round_case,
+):
+    matches = make_completed_matches(round_case)
+    matches[1].state = RuntimeMatchState.IN_PROGRESS
+
+    with pytest.raises(ValueError, match="has not finished"):
+        complete_round(round_db, round_case.league_id, 1, matches)
+
+    assert_round_unmodified(round_db, round_case)
+
+
+@pytest.mark.parametrize("invalid_input", [
+    "missing",
+    "duplicate",
+    "incorrect_id",
+    "empty",
+])
+def test_complete_round_rejects_incorrect_fixture(
+    round_db,
+    round_case,
+    invalid_input,
+):
+    matches = make_completed_matches(round_case)
+
+    if invalid_input == "missing":
+        matches.pop()
+    elif invalid_input == "duplicate":
+        matches.append(matches[0])
+    elif invalid_input == "incorrect_id":
+        matches[1].match_id = 9999
+    else:
+        matches = []
+
+    with pytest.raises(
+        ValueError,
+        match="Round matches do not match the fixture",
+    ):
+        complete_round(round_db, round_case.league_id, 1, matches)
+
+    assert_round_unmodified(round_db, round_case)
+
+
+@pytest.mark.parametrize("invalid_score", [-1, -5])
+def test_complete_round_rejects_negative_goals(
+    round_db,
+    round_case,
+    invalid_score,
+):
+    matches = make_completed_matches(round_case)
+    matches[1].participation_a.goals = invalid_score
+
+    with pytest.raises(ValueError, match="Invalid score"):
+        complete_round(round_db, round_case.league_id, 1, matches)
+
+    assert_round_unmodified(round_db, round_case)
+
+
+def test_complete_round_last_round_has_no_break(
+    round_db,
+    round_case,
+):
+    # Remove the next round, making round 1 the last one.
+    round_db.delete(round_db.get(PersistedMatch, 1003))
+    round_db.commit()
+
+    complete_round(
+        round_db,
+        round_case.league_id,
+        1,
+        make_completed_matches(round_case),
+    )
+
+    round_db.expire_all()
+
+    league = round_db.get(League, round_case.league_id)
+
+    assert league.last_completed_round == 1
+    assert league.break_ends_at is None
+
+
+@pytest.mark.parametrize(
+    "state",
+    [
+        LeagueState.POR_COMENZAR,
+        LeagueState.FINALIZADA,
+    ],
+)
+def test_complete_round_rejects_inactive_league(
+    round_db,
+    round_case,
+    state,
+):
+    league = round_db.get(League, round_case.league_id)
+    league.state = state
+    round_db.commit()
+
+    with pytest.raises(ValueError, match="League is not in progress"):
+        complete_round(
+            round_db,
+            round_case.league_id,
+            1,
+            make_completed_matches(round_case),
+        )
+
+    assert_round_unmodified(round_db, round_case)

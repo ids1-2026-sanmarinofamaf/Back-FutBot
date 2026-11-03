@@ -3,11 +3,20 @@ import asyncio
 from sqlalchemy import select
 from sqlalchemy.orm import Session, selectinload
 
-from app.models.match import Match as PersistedMatch
+from datetime import datetime, timedelta, timezone
+
+from app.models.league import League, LeagueState
+from app.models.match import (
+    Match as PersistedMatch,
+    MatchState as PersistedMatchState,
+)
 from app.models.match_participation import MatchParticipation, MatchRole
 from app.models.roster import Roster
 
-from app.game.models.match import Match as RuntimeMatch
+from app.game.models.match import (
+    Match as RuntimeMatch,
+    MatchState as RuntimeMatchState,
+)
 from app.game.models.ball import Ball
 from app.game.constants import FIELD_CENTER, TICS_PER_SECOND
 
@@ -16,6 +25,8 @@ from app.services.match_service import (
     load_match_behaviors,
     start_match_task,
 )
+from app.services.league_service import update_standings
+from app.services.club_statistics_service import update_statistics
 
 
 def load_round_matches(
@@ -135,3 +146,148 @@ async def run_round_matches(
         raise
 
     return matches
+
+
+def _validate_round_matches(matches: list[RuntimeMatch]) -> None:
+    """
+    Verify that every match finished with a valid score.
+    """
+
+    for match in matches:
+        if match.state != RuntimeMatchState.FINISHED:
+            raise ValueError(f"Match {match.match_id} has not finished")
+
+        if (
+            match.participation_a.goals < 0
+            or match.participation_b.goals < 0
+        ):
+            raise ValueError(f"Invalid score for match {match.match_id}")
+
+
+def _apply_round_results(
+    db: Session,
+    league: League,
+    persisted_matches: list[PersistedMatch],
+    matches_by_id: dict[int, RuntimeMatch],
+) -> None:
+    """
+    Persist match results and update statistics without committing.
+    """
+    for persisted in persisted_matches:
+        runtime = matches_by_id[persisted.id]
+
+        home = runtime.participation_a
+        away = runtime.participation_b
+
+        persisted.home_goals = home.goals
+        persisted.away_goals = away.goals
+        persisted.state = PersistedMatchState.FINALIZADO
+
+        update_standings(
+            db=db,
+            league_id=league.id,
+            local_club_id=home.club_id,
+            visitante_club_id=away.club_id,
+            local_goals=home.goals,
+            visitante_goals=away.goals,
+        )
+
+        update_statistics(
+            db=db,
+            league=league,
+            club_a_id=home.club_id,
+            club_b_id=away.club_id,
+            goals_a=home.goals,
+            goals_b=away.goals,
+        )
+
+
+def _get_break_end(
+    db: Session,
+    league_id: int,
+    round_number: int,
+) -> datetime | None:
+    """
+    Return the break deadline if another round exists.
+    """
+    next_match_id = db.scalar(
+        select(PersistedMatch.id)
+        .where(
+            PersistedMatch.league_id == league_id,
+            PersistedMatch.round > round_number,
+        )
+        .limit(1)
+    )
+
+    if next_match_id is None:
+        return None
+
+    return datetime.now(timezone.utc) + timedelta(seconds=60)
+
+
+def complete_round(
+    db: Session,
+    league_id: int,
+    round_number: int,
+    matches: list[RuntimeMatch],
+) -> None:
+    """
+    Atomically persist results and statistics for a league round.
+    """
+    try:
+        league = db.scalar(
+            select(League)
+            .where(League.id == league_id)
+            .with_for_update()
+        )
+
+        if league is None or league.state != LeagueState.INICIADA:
+            raise ValueError("League is not in progress")
+
+        if league.last_completed_round != round_number -1:
+            raise ValueError("Invalid round")
+
+        persisted_matches = load_round_matches(
+            db,
+            league_id,
+            round_number,
+        )
+
+        matches_by_id = {
+            match.match_id: match
+            for match in matches
+        }
+
+        expected_ids = {
+            match.id
+            for match in persisted_matches
+        }
+
+        if (
+            not expected_ids
+            or len(matches_by_id) != len(matches)
+            or set(matches_by_id) != expected_ids
+        ):
+            raise ValueError("Round matches do not match the fixture")
+
+        _validate_round_matches(matches)
+
+        _apply_round_results(
+            db,
+            league,
+            persisted_matches,
+            matches_by_id,
+        )
+
+        league.last_completed_round = round_number
+        league.break_ends_at = _get_break_end(
+            db,
+            league_id,
+            round_number,
+        )
+
+        db.commit()
+
+    except Exception:
+        db.rollback()
+        raise
