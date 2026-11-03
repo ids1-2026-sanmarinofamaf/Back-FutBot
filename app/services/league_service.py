@@ -353,7 +353,7 @@ def start_league(
     seed: int | None = None,
 ) -> None:
     try:
-        league = league_repository.get_by_id(
+        league = league_repository.get_by_id_for_update(
             db=db,
             league_id=league_id,
         )

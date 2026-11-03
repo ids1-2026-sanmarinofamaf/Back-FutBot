@@ -1,16 +1,22 @@
 
 from fastapi.testclient import TestClient
 import pytest
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, Mock
 import copy
 from app.game.models.match_participation import MatchParticipation
 from app.game.models.ball import Ball
 from app.game.models.match import Match
-from app.schemas.match_websocket import (MatchStateMessage,BallState)
+from app.schemas.match_websocket import (
+    MatchStateMessage,
+    BallState,
+)
 from app.main import app
 # the endpoint always use the manager = match_connection_manager
 from app.services.match_websocket_service import match_connection_manager
-from app.services.match_websocket_service import (MatchConnectionManager, build_match_state_message)
+from app.services.match_websocket_service import (
+    MatchConnectionManager,
+    build_match_state_message,
+)
 
 from unittest.mock import AsyncMock, MagicMock
 
@@ -303,3 +309,26 @@ async def test_match_runner_sends_initial_state_and_tick_updates(match):
     assert [message["actual_tic"] for message in state_messages] == [
         0, 1, 1, 2, 2, 3, 3, 4
     ]
+
+
+@pytest.mark.asyncio
+async def test_close_match_continues_after_connection_error():
+    manager = MatchConnectionManager()
+    failing_connection = Mock()
+    healthy_connection = Mock()
+
+    failing_connection.close = AsyncMock(
+        side_effect=RuntimeError("Connection already closed"),
+    )
+    healthy_connection.close = AsyncMock()
+
+    manager.active_connections[123] = [
+        failing_connection,
+        healthy_connection,
+    ]
+
+    await manager.close_match_connection(123)
+
+    failing_connection.close.assert_awaited_once_with()
+    healthy_connection.close.assert_awaited_once_with()
+    assert 123 not in manager.active_connections

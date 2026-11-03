@@ -145,9 +145,11 @@ async def test_application_shutdown_closes_shared_pool(
     recover = Mock()
     connect = MagicMock()
     dispose = Mock()
+    league_recover = Mock()
     monkeypatch.setattr(main_module, "recover_interrupted_games", recover)
     monkeypatch.setattr(main_module.engine, "connect", connect)
     monkeypatch.setattr(main_module.engine, "dispose", dispose)
+    monkeypatch.setattr(main_module, "recover_interrupted_leagues", league_recover)
 
     async with main_module.lifespan(main_module.app):
         assert match_service._worker_pool is pool
@@ -158,6 +160,7 @@ async def test_application_shutdown_closes_shared_pool(
     assert match_service._worker_pool is None
     recover.assert_called_once_with()
     dispose.assert_called_once_with()
+    league_recover.assert_called_once_with()
 
 
 def test_start_match_releases_resources_if_initialization_fails(
