@@ -1,4 +1,6 @@
 import asyncio
+import logging
+from functools import partial
 from datetime import datetime, timedelta, timezone
 
 from sqlalchemy import func, select
@@ -26,6 +28,12 @@ from app.services.match_service import load_match_behaviors, start_match_task
 
 
 ROUND_BREAK_SECONDS = 60
+
+
+logger = logging.getLogger(__name__)
+
+
+_running_leagues: dict[int, asyncio.Task[None]] = {}
 
 
 def load_round_matches(
@@ -354,3 +362,45 @@ async def run_league(league_id: int) -> None:
                 matches=matches,
                 is_last_round=(round_number == last_round),
             )
+
+
+def _on_league_finished(
+    league_id: int,
+    task: asyncio.Task[None],
+) -> None:
+    _running_leagues.pop(league_id, None)
+
+    if task.cancelled():
+        return
+
+    try:
+        task.result()
+
+    except Exception:
+        logger.exception("League %s execution failed", league_id)
+
+
+def start_league_runner(league_id: int) -> None:
+    if league_id in _running_leagues:
+        return
+
+    task = asyncio.create_task(run_league(league_id))
+
+    _running_leagues[league_id] = task
+
+    task.add_done_callback(
+        partial(_on_league_finished, league_id)
+    )
+
+
+async def stop_league_runners() -> None:
+    tasks = list(_running_leagues.values())
+
+    for task in tasks:
+        task.cancel()
+
+    if tasks:
+        await asyncio.gather(
+            *tasks,
+            return_exceptions=True,
+        )

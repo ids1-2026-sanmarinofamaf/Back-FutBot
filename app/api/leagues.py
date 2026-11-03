@@ -36,7 +36,16 @@ from app.services.league_service import (
     build_league_state,
     get_league_detail,
 )
-from app.schemas.league import LeagueCreate, LeagueJoin, LeagueJoinResponse, LeagueUpdate, LeagueStartedEvent, LeagueDetail
+from app.services.league_runner import start_league_runner
+
+from app.schemas.league import (
+    LeagueCreate,
+    LeagueJoin,
+    LeagueJoinResponse,
+    LeagueUpdate,
+    LeagueStartedEvent,
+    LeagueDetail,
+)
 
 router = APIRouter(prefix="/leagues",tags=["Leagues"])
 
@@ -190,7 +199,8 @@ async def start(
             user_id=current_user.id,
             requested_state=data.state,
         )
-        
+
+        start_league_runner(league_id)
 
         # send the broadcast start league  in ws session
         await session_websocket_service.broadcast_leagues(db)

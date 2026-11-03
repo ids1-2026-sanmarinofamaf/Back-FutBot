@@ -927,3 +927,29 @@ async def test_run_league_resumes_pending_round(monkeypatch, round_db, round_cas
     )
 
     assert first_round_club.matches_played == 1
+
+
+async def wait_until_cancelled(league_id):
+    await asyncio.Event().wait()
+
+
+@pytest.mark.asyncio
+async def test_start_league_runner_avoids_duplicates(monkeypatch):
+    execute = AsyncMock(side_effect=wait_until_cancelled)
+    monkeypatch.setattr(league_runner, "run_league", execute)
+
+    league_runner.start_league_runner(123)
+    task = league_runner._running_leagues[123]
+
+    try:
+        league_runner.start_league_runner(123)
+        await asyncio.sleep(0)
+
+        execute.assert_awaited_once_with(123)
+        assert league_runner._running_leagues[123] is task
+        assert not task.done()
+    finally:
+        await league_runner.stop_league_runners()
+
+    assert task.cancelled()
+    assert not league_runner._running_leagues
