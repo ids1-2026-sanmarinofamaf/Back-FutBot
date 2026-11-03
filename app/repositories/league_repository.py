@@ -64,3 +64,15 @@ def get_visible_leagues(
             .order_by(League.id)
         ).all()
     )
+
+
+def get_started_leagues_ids(db: Session) -> list[int]:
+    return list(
+        db.scalars(
+            select(League.id)
+            .where(
+                League.state == LeagueState.INICIADA
+            )
+            .order_by(League.id)
+        ).all()
+    )

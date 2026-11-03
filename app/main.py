@@ -11,7 +11,10 @@ from app.api import (
     leagues, players
 )
 from app.services.league_runner import stop_league_runners
-from app.services.startup_service import recover_interrupted_games
+from app.services.startup_service import (
+    recover_interrupted_games,
+    recover_interrupted_leagues,
+)
 from app.services.match_service import (
     initialize_worker_pool,
     shutdown_worker_pool,
@@ -48,7 +51,10 @@ async def lifespan(app: FastAPI):
     recover_interrupted_games()
 
     initialize_worker_pool()
+
     try:
+        recover_interrupted_leagues()
+
         yield
 
     finally:
