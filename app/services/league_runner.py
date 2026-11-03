@@ -1,3 +1,5 @@
+import asyncio
+
 from sqlalchemy import select
 from sqlalchemy.orm import Session, selectinload
 
@@ -10,6 +12,10 @@ from app.game.models.ball import Ball
 from app.game.constants import FIELD_CENTER, TICS_PER_SECOND
 
 from app.services.match_builder import create_match_participation
+from app.services.match_service import (
+    load_match_behaviors,
+    start_match_task,
+)
 
 
 def load_round_matches(
@@ -88,3 +94,44 @@ def build_round_matches(
         runtime_matches.append(runtime_match)
     
     return runtime_matches
+
+
+async def run_round_matches(
+    db: Session,
+    matches: list[RuntimeMatch]
+) -> list[RuntimeMatch]:
+    """
+    Run all matches in a league round concurrently.
+    """
+    tasks = []
+
+    try:
+        for match in matches:
+            behaviors = load_match_behaviors(
+                db=db,
+                match=match,
+            )
+
+            task = start_match_task(
+                match=match,
+                behaviors=behaviors,
+            )
+
+            tasks.append(task)
+
+        await asyncio.gather(*tasks)
+
+    except BaseException:
+        #Stop all matches if execution or initialization fails
+        for task in tasks:
+            task.cancel()
+
+        if tasks:
+            await asyncio.gather(
+                *tasks,
+                return_exceptions=True,
+            )
+
+        raise
+
+    return matches
