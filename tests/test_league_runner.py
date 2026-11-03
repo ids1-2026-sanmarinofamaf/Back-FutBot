@@ -1,10 +1,10 @@
 import asyncio
 
 from types import SimpleNamespace
-from unittest.mock import Mock, call
+from unittest.mock import Mock, call, AsyncMock
 
 from sqlalchemy import create_engine
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, sessionmaker
 
 import pytest
 
@@ -182,13 +182,10 @@ def test_build_round_matches(monkeypatch):
         participations=[away, home],  # Reversed intentionally
     )
 
-    def build_participation(db, roster, mirror_position):
-        return SimpleNamespace(
-            club_id=roster.club_id,
-            roster_id=roster.id,
-        )
-
-    builder = Mock(side_effect=build_participation)
+    builder = Mock(side_effect=[
+        SimpleNamespace(club_id=1, roster_id=10),
+        SimpleNamespace(club_id=2, roster_id=20),
+    ])
 
     monkeypatch.setattr(
         league_runner,
@@ -263,26 +260,14 @@ async def test_run_round_matches_concurrently(
     monkeypatch,
     runtime_matches,
 ):
-    db = Mock()
     starter = ControlledMatchStarter()
-
-    behavior_loader = Mock(
-        side_effect=[
-            ["behavior_1"],
-            ["behavior_2"],
-        ]
-    )
-
-    mock_match_execution(
-        monkeypatch,
-        starter,
-        behavior_loader,
-    )
+    mock_match_execution(monkeypatch, starter)
+    behaviors = {100: ["behavior_1"], 101: ["behavior_2"]}
 
     round_task = asyncio.create_task(
         league_runner.run_round_matches(
-            db=db,
             matches=runtime_matches,
+            behaviors_by_match=behaviors,
         )
     )
 
@@ -295,11 +280,6 @@ async def test_run_round_matches_concurrently(
         # Both matches started, but the round is still running.
         assert starter.started == [100, 101]
         assert not round_task.done()
-
-        behavior_loader.assert_has_calls([
-            call(db=db, match=runtime_matches[0]),
-            call(db=db, match=runtime_matches[1]),
-        ])
 
         assert starter.calls == [
             call(
@@ -343,8 +323,8 @@ async def test_run_round_matches_cancels_others_on_failure(
         match="Match failed",
     ):
         await league_runner.run_round_matches(
-            db=Mock(),
             matches=runtime_matches,
+            behaviors_by_match={100: [], 101: []},
         )
 
     assert starter.started == [100, 101]
@@ -354,41 +334,6 @@ async def test_run_round_matches_cancels_others_on_failure(
 
     assert starter.tasks[1].cancelled()
     assert starter.cancelled == [101]
-
-
-@pytest.mark.asyncio
-async def test_run_round_matches_cancels_tasks_if_behavior_loading_fails(
-    monkeypatch,
-    runtime_matches,
-):
-    starter = ControlledMatchStarter(
-        expected_matches=1,
-    )
-
-    behavior_loader = Mock(
-        side_effect=[
-            [],
-            RuntimeError("Cannot load behaviors"),
-        ]
-    )
-
-    mock_match_execution(
-        monkeypatch,
-        starter,
-        behavior_loader,
-    )
-
-    with pytest.raises(
-        RuntimeError,
-        match="Cannot load behaviors",
-    ):
-        await league_runner.run_round_matches(
-            db=Mock(),
-            matches=runtime_matches,
-        )
-
-    assert len(starter.tasks) == 1
-    assert starter.tasks[0].cancelled()
 
 
 @pytest.mark.asyncio
@@ -408,8 +353,8 @@ async def test_run_round_matches_cancels_tasks_if_start_fails(
         match="Cannot start match",
     ):
         await league_runner.run_round_matches(
-            db=Mock(),
             matches=runtime_matches,
+            behaviors_by_match={100: [], 101: []},
         )
 
     assert len(starter.tasks) == 1
@@ -427,8 +372,8 @@ async def test_run_round_matches_handles_cancellation(
 
     round_task = asyncio.create_task(
         league_runner.run_round_matches(
-            db=Mock(),
             matches=runtime_matches,
+            behaviors_by_match={100: [], 101: []},
         )
     )
 
@@ -459,14 +404,13 @@ async def test_run_round_matches_with_empty_round(monkeypatch):
     )
 
     result = await league_runner.run_round_matches(
-        db=Mock(),
         matches=[],
+        behaviors_by_match={},
     )
 
     assert result == []
 
     starter.assert_not_called()
-    behavior_loader.assert_not_called()
 
 
 @pytest.fixture
@@ -632,6 +576,7 @@ def test_complete_round_persists_results_and_standings(
         round_case.league_id,
         1,
         matches,
+        is_last_round=False,
     )
 
     round_db.expire_all()
@@ -677,6 +622,7 @@ def test_complete_round_private_league_skips_global_statistics(
         round_case.league_id,
         1,
         make_completed_matches(round_case),
+        is_last_round=False,
     )
 
     round_db.expire_all()
@@ -714,6 +660,7 @@ def test_complete_round_rolls_back_on_statistics_error(
             round_case.league_id,
             1,
             make_completed_matches(round_case),
+            is_last_round=False,
         )
 
     assert_round_unmodified(round_db, round_case)
@@ -733,10 +680,22 @@ def test_complete_round_cannot_be_confirmed_twice(
 ):
     matches = make_completed_matches(round_case)
 
-    complete_round(round_db, round_case.league_id, 1, matches)
+    complete_round(
+        round_db,
+        round_case.league_id,
+        1,
+        matches,
+        is_last_round=False,
+    )
 
     with pytest.raises(ValueError, match="Invalid round"):
-        complete_round(round_db, round_case.league_id, 1, matches)
+        complete_round(
+            round_db,
+            round_case.league_id,
+            1,
+            matches,
+            is_last_round=False,
+        )
 
     round_db.expire_all()
 
@@ -758,7 +717,13 @@ def test_complete_round_rejects_unfinished_match(
     matches[1].state = RuntimeMatchState.IN_PROGRESS
 
     with pytest.raises(ValueError, match="has not finished"):
-        complete_round(round_db, round_case.league_id, 1, matches)
+        complete_round(
+            round_db,
+            round_case.league_id,
+            1,
+            matches,
+            is_last_round=False,
+        )
 
     assert_round_unmodified(round_db, round_case)
 
@@ -789,7 +754,13 @@ def test_complete_round_rejects_incorrect_fixture(
         ValueError,
         match="Round matches do not match the fixture",
     ):
-        complete_round(round_db, round_case.league_id, 1, matches)
+        complete_round(
+            round_db,
+            round_case.league_id,
+            1,
+            matches,
+            is_last_round=False,
+        )
 
     assert_round_unmodified(round_db, round_case)
 
@@ -804,7 +775,13 @@ def test_complete_round_rejects_negative_goals(
     matches[1].participation_a.goals = invalid_score
 
     with pytest.raises(ValueError, match="Invalid score"):
-        complete_round(round_db, round_case.league_id, 1, matches)
+        complete_round(
+            round_db,
+            round_case.league_id,
+            1,
+            matches,
+            is_last_round=False,
+        )
 
     assert_round_unmodified(round_db, round_case)
 
@@ -822,6 +799,7 @@ def test_complete_round_last_round_has_no_break(
         round_case.league_id,
         1,
         make_completed_matches(round_case),
+        is_last_round=True,
     )
 
     round_db.expire_all()
@@ -854,6 +832,98 @@ def test_complete_round_rejects_inactive_league(
             round_case.league_id,
             1,
             make_completed_matches(round_case),
+            is_last_round=False,
         )
 
     assert_round_unmodified(round_db, round_case)
+
+
+def make_second_round_matches(case):
+    return [
+        SimpleNamespace(
+            match_id=1003,
+            state=RuntimeMatchState.FINISHED,
+            participation_a=SimpleNamespace(
+                club_id=case.club_ids[0],
+                goals=0,
+            ),
+            participation_b=SimpleNamespace(
+                club_id=case.club_ids[2],
+                goals=2,
+            ),
+        ),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_run_league_executes_rounds(monkeypatch, round_db, round_case):
+    first_round = make_completed_matches(round_case)
+    second_round = make_second_round_matches(round_case)
+    build = Mock(side_effect=[first_round, second_round])
+    execute = AsyncMock()
+    sleep = AsyncMock()
+
+    monkeypatch.setattr(league_runner, "SessionLocal", sessionmaker(bind=round_db.bind))
+    monkeypatch.setattr(league_runner, "build_round_matches", build)
+    monkeypatch.setattr(league_runner, "load_match_behaviors", Mock(return_value=[]))
+    monkeypatch.setattr(league_runner, "run_round_matches", execute)
+    monkeypatch.setattr(league_runner.asyncio, "sleep", sleep)
+
+    await league_runner.run_league(round_case.league_id)
+
+    assert execute.await_count == 2
+    assert execute.await_args_list[0].kwargs["matches"] is first_round
+    assert execute.await_args_list[1].kwargs["matches"] is second_round
+    assert execute.await_args_list[0].kwargs["behaviors_by_match"] == {1001: [], 1002: []}
+    assert execute.await_args_list[1].kwargs["behaviors_by_match"] == {1003: []}
+    sleep.assert_awaited_once()
+    assert 0 < sleep.await_args.args[0] <= league_runner.ROUND_BREAK_SECONDS
+
+    round_db.expire_all()
+    league = round_db.get(League, round_case.league_id)
+    assert league.last_completed_round == 2
+    assert league.state == LeagueState.FINALIZADA
+    assert league.break_ends_at is None
+    assert all(
+        round_db.get(PersistedMatch, match_id).state == MatchState.FINALIZADO
+        for match_id in (1001, 1002, 1003)
+    )
+
+
+@pytest.mark.asyncio
+async def test_run_league_resumes_pending_round(monkeypatch, round_db, round_case):
+    complete_round(
+        round_db,
+        round_case.league_id,
+        1,
+        make_completed_matches(round_case),
+        is_last_round=False,
+    )
+    second_round = make_second_round_matches(round_case)
+    build = Mock(return_value=second_round)
+    execute = AsyncMock()
+    sleep = AsyncMock()
+
+    monkeypatch.setattr(league_runner, "SessionLocal", sessionmaker(bind=round_db.bind))
+    monkeypatch.setattr(league_runner, "build_round_matches", build)
+    monkeypatch.setattr(league_runner, "load_match_behaviors", Mock(return_value=[]))
+    monkeypatch.setattr(league_runner, "run_round_matches", execute)
+    monkeypatch.setattr(league_runner.asyncio, "sleep", sleep)
+
+    await league_runner.run_league(round_case.league_id)
+
+    build.assert_called_once()
+    assert [match.id for match in build.call_args.args[1]] == [1003]
+    execute.assert_awaited_once()
+    sleep.assert_awaited_once()
+
+    round_db.expire_all()
+    league = round_db.get(League, round_case.league_id)
+    assert league.last_completed_round == 2
+    assert league.state == LeagueState.FINALIZADA
+    first_round_club = round_db.get(
+        LeagueParticipation,
+        (round_case.league_id, round_case.club_ids[1]),
+    )
+
+    assert first_round_club.matches_played == 1

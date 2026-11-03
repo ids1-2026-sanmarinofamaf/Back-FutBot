@@ -1,32 +1,31 @@
 import asyncio
-
-from sqlalchemy import select
-from sqlalchemy.orm import Session, selectinload
-
 from datetime import datetime, timedelta, timezone
 
-from app.models.league import League, LeagueState
-from app.models.match import (
-    Match as PersistedMatch,
-    MatchState as PersistedMatchState,
-)
+from sqlalchemy import func, select
+from sqlalchemy.orm import Session, selectinload
+
+from app.database import SessionLocal
+
+from app.game.constants import FIELD_CENTER, TICS_PER_SECOND
+from app.game.models.ball import Ball
+from app.game.models.match import Match as RuntimeMatch
+from app.game.models.match import MatchState as RuntimeMatchState
+from app.game.models.behavior_definition import BehaviorDefinition
+
+from app.models.league import League, LeaguePrivacy, LeagueState
+from app.models.league_participation import LeagueParticipation
+from app.models.match import Match as PersistedMatch
+from app.models.match import MatchState as PersistedMatchState
 from app.models.match_participation import MatchParticipation, MatchRole
 from app.models.roster import Roster
 
-from app.game.models.match import (
-    Match as RuntimeMatch,
-    MatchState as RuntimeMatchState,
-)
-from app.game.models.ball import Ball
-from app.game.constants import FIELD_CENTER, TICS_PER_SECOND
-
-from app.services.match_builder import create_match_participation
-from app.services.match_service import (
-    load_match_behaviors,
-    start_match_task,
-)
+from app.services.club_statistics_service import update_league_statistics, update_statistics
 from app.services.league_service import update_standings
-from app.services.club_statistics_service import update_statistics
+from app.services.match_builder import create_match_participation
+from app.services.match_service import load_match_behaviors, start_match_task
+
+
+ROUND_BREAK_SECONDS = 60
 
 
 def load_round_matches(
@@ -108,26 +107,20 @@ def build_round_matches(
 
 
 async def run_round_matches(
-    db: Session,
-    matches: list[RuntimeMatch]
+    matches: list[RuntimeMatch],
+    behaviors_by_match: dict[int, list[BehaviorDefinition]],
 ) -> list[RuntimeMatch]:
     """
-    Run all matches in a league round concurrently.
+    Run all matches of a round concurrently.
     """
     tasks = []
 
     try:
         for match in matches:
-            behaviors = load_match_behaviors(
-                db=db,
-                match=match,
-            )
-
             task = start_match_task(
                 match=match,
-                behaviors=behaviors,
+                behaviors=behaviors_by_match[match.match_id],
             )
-
             tasks.append(task)
 
         await asyncio.gather(*tasks)
@@ -152,7 +145,6 @@ def _validate_round_matches(matches: list[RuntimeMatch]) -> None:
     """
     Verify that every match finished with a valid score.
     """
-
     for match in matches:
         if match.state != RuntimeMatchState.FINISHED:
             raise ValueError(f"Match {match.match_id} has not finished")
@@ -202,27 +194,35 @@ def _apply_round_results(
         )
 
 
-def _get_break_end(
-    db: Session,
-    league_id: int,
-    round_number: int,
-) -> datetime | None:
-    """
-    Return the break deadline if another round exists.
-    """
-    next_match_id = db.scalar(
-        select(PersistedMatch.id)
-        .where(
-            PersistedMatch.league_id == league_id,
-            PersistedMatch.round > round_number,
-        )
-        .limit(1)
+def _finish_league(db: Session, league: League) -> None:
+    """Finalize the league and update global statistics if public."""
+
+    participants = list(
+        db.scalars(
+            select(LeagueParticipation)
+            .where(LeagueParticipation.league_id == league.id)
+        ).all()
     )
 
-    if next_match_id is None:
-        return None
+    winner = max(
+        participants,
+        key=lambda p: (
+            p.points,
+            p.goals_for - p.goals_against,
+            p.goals_for,
+            -p.club_id,
+        ),
+    )
 
-    return datetime.now(timezone.utc) + timedelta(seconds=60)
+    if league.privacy == LeaguePrivacy.PUBLICA:
+        update_league_statistics(
+            db=db,
+            club_ids=[p.club_id for p in participants],
+            winner_id=winner.club_id,
+        )
+
+    league.state = LeagueState.FINALIZADA
+    league.break_ends_at = None
 
 
 def complete_round(
@@ -230,38 +230,25 @@ def complete_round(
     league_id: int,
     round_number: int,
     matches: list[RuntimeMatch],
+    is_last_round: bool,
 ) -> None:
     """
-    Atomically persist results and statistics for a league round.
+    Commit one full round, including finalization if it is the last.
     """
     try:
         league = db.scalar(
-            select(League)
-            .where(League.id == league_id)
-            .with_for_update()
+            select(League).where(League.id == league_id).with_for_update()
         )
 
         if league is None or league.state != LeagueState.INICIADA:
             raise ValueError("League is not in progress")
-
-        if league.last_completed_round != round_number -1:
+        
+        if league.last_completed_round != round_number - 1:
             raise ValueError("Invalid round")
 
-        persisted_matches = load_round_matches(
-            db,
-            league_id,
-            round_number,
-        )
-
-        matches_by_id = {
-            match.match_id: match
-            for match in matches
-        }
-
-        expected_ids = {
-            match.id
-            for match in persisted_matches
-        }
+        persisted_matches = load_round_matches(db, league_id, round_number)
+        matches_by_id = {match.match_id: match for match in matches}
+        expected_ids = {match.id for match in persisted_matches}
 
         if (
             not expected_ids
@@ -272,22 +259,98 @@ def complete_round(
 
         _validate_round_matches(matches)
 
-        _apply_round_results(
-            db,
-            league,
-            persisted_matches,
-            matches_by_id,
-        )
+        _apply_round_results(db, league, persisted_matches, matches_by_id)
 
         league.last_completed_round = round_number
-        league.break_ends_at = _get_break_end(
-            db,
-            league_id,
-            round_number,
-        )
+
+        if is_last_round:
+            _finish_league(db, league)
+
+        else:
+            league.break_ends_at = (
+                datetime.now(timezone.utc)
+                + timedelta(seconds=ROUND_BREAK_SECONDS)
+            )
 
         db.commit()
 
     except Exception:
         db.rollback()
         raise
+
+
+async def run_league(league_id: int) -> None:
+    """
+    Execute the league round by round, resuming from saved progress.
+    """
+    while True:
+        # 1. Determine the next round and whether a break is still pending.
+        with SessionLocal() as db:
+            league = db.get(League, league_id)
+
+            if league is None:
+                raise ValueError("League does not exist")
+            
+            if league.state == LeagueState.FINALIZADA:
+                return
+            
+            if league.state != LeagueState.INICIADA:
+                raise ValueError("League is not in progress")
+
+            round_number = league.last_completed_round + 1
+            duration_seconds = league.match_duration
+            break_ends_at = league.break_ends_at
+
+            last_round = db.scalar(
+                select(func.max(PersistedMatch.round))
+                .where(PersistedMatch.league_id == league_id)
+            )
+
+            if last_round is None or round_number > last_round:
+                raise ValueError("Invalid league fixture or progress")
+
+        # 2. Wait outside of any database session.
+        if break_ends_at is not None:
+            if break_ends_at.tzinfo is None:
+                break_ends_at = break_ends_at.replace(tzinfo=timezone.utc)
+
+            seconds = (break_ends_at - datetime.now(timezone.utc)).total_seconds()
+            await asyncio.sleep(max(0, seconds))
+
+        # 3. Load the latest rosters immediately before starting the round.
+        with SessionLocal() as db:
+            persisted = load_round_matches(
+                db,
+                league_id,
+                round_number
+            )
+
+            if not persisted:
+                raise ValueError(f"No matches in round {round_number}")
+            
+            matches = build_round_matches(
+                db,
+                persisted,
+                duration_seconds
+            )
+
+            behaviors = {
+                match.match_id: load_match_behaviors(db=db, match=match)
+                for match in matches
+            }
+
+        # 4. Run matches with no open DB session.
+        await run_round_matches(
+            matches=matches,
+            behaviors_by_match=behaviors,
+        )
+
+        # 5. Confirm the entire round in a single transaction.
+        with SessionLocal() as db:
+            complete_round(
+                db=db,
+                league_id=league_id,
+                round_number=round_number,
+                matches=matches,
+                is_last_round=(round_number == last_round),
+            )
