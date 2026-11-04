@@ -23,6 +23,9 @@ from app.services.league_websocket_service import (
     league_connection_manager,
 )
 
+from app.schemas.league import LeagueDetail
+from app.schemas.league_websocket import LeagueStateEvent
+
 
 class FakeWebSocket:
     def __init__(self):
@@ -85,8 +88,14 @@ def league(league_id=10, members=(1, 2)):
 @pytest.fixture(autouse=True)
 def clean_manager():
     league_connection_manager.active_connections.clear()
+    league_connection_manager._send_locks.clear()
+    league_connection_manager._ready_events.clear()
+
     yield
+
     league_connection_manager.active_connections.clear()
+    league_connection_manager._send_locks.clear()
+    league_connection_manager._ready_events.clear()
 
 
 @pytest.fixture
@@ -113,6 +122,24 @@ def websocket_dependencies():
             user=user, league=active_league, club=active_club,
             participation_lookup=participation_lookup,
         )
+
+
+@pytest.fixture
+def initial_states():
+    lobby_state = build_league_lobby_state(league())
+
+    league_state = LeagueStateEvent(
+        data=LeagueDetail(
+            league_id=10,
+            name="Test League",
+            state=LeagueState.POR_COMENZAR,
+            privacy=LeaguePrivacy.PUBLICA,
+            current_participants=2,
+            capacity=8,
+        ),
+    )
+
+    return lobby_state, league_state
 
 
 # Verify that a league participant can connect and receive the initial lobby state
@@ -581,3 +608,131 @@ async def test_broadcast_delivers_to_fast_client_while_slow_client_waits():
         await asyncio.gather(task, return_exceptions=True)
         manager.disconnect(10, 101, slow)
         manager.disconnect(10, 102, fast)
+
+
+@pytest.mark.asyncio
+async def test_broadcast_waits_for_both_initial_states(initial_states):
+    manager = LeagueConnectionManager()
+    websocket = ControlledWebSocket()
+    await manager.connect(10, 101, websocket, initializing=True)
+
+    ready = manager._ready_events[websocket]
+    event = build_league_user_event(league(), club(3), "user_joined")
+
+    broadcast_task = asyncio.create_task(manager.broadcast(10, event))
+    tasks = [broadcast_task]
+
+    try:
+        # Permite que gather y su envío comiencen a ejecutarse.
+        await asyncio.sleep(0)
+        await asyncio.sleep(0)
+
+        assert not ready.is_set()
+        assert not websocket.started.is_set()
+        assert not broadcast_task.done()
+
+        initial_task = asyncio.create_task(
+            manager.send_initial_states(websocket, *initial_states),
+        )
+        tasks.append(initial_task)
+
+        await asyncio.wait_for(websocket.started.wait(), timeout=1)
+
+        # El primer snapshot está detenido dentro de send_json.
+        assert not ready.is_set()
+        assert websocket.sent == []
+        assert not broadcast_task.done()
+
+        websocket.release.set()
+        await asyncio.wait_for(asyncio.gather(*tasks), timeout=1)
+
+        assert [message["type"] for message in websocket.sent] == [
+            "lobby_state",
+            "league_state",
+            "user_joined",
+        ]
+        assert ready.is_set()
+    finally:
+        websocket.release.set()
+        for task in tasks:
+            task.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
+        manager.disconnect(10, 101, websocket)
+
+
+@pytest.mark.asyncio
+async def test_failed_initial_state_does_not_mark_connection_ready(initial_states):
+    manager = LeagueConnectionManager()
+    websocket = FakeWebSocket()
+    websocket.send_json = AsyncMock(
+        side_effect=[
+            None,
+            RuntimeError("Snapshot delivery failed"),
+        ],
+    )
+    await manager.connect(10, 101, websocket, initializing=True)
+
+    ready = manager._ready_events[websocket]
+
+    try:
+        with pytest.raises(RuntimeError, match="Snapshot delivery failed"):
+            await manager.send_initial_states(websocket, *initial_states)
+
+        assert not ready.is_set()
+        assert websocket.send_json.await_count == 2
+
+        sent_types = [
+            awaited.args[0]["type"]
+            for awaited in websocket.send_json.await_args_list
+        ]
+        assert sent_types == ["lobby_state", "league_state"]
+    finally:
+        manager.disconnect(10, 101, websocket)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "operation",
+    ["disconnect", "disconnect_user", "close_lobby"],
+)
+async def test_disconnect_wakes_pending_send_and_cleans_records(operation):
+    manager = LeagueConnectionManager()
+    websocket = FakeWebSocket()
+    await manager.connect(10, 101, websocket, initializing=True)
+
+    ready = manager._ready_events[websocket]
+
+    task = asyncio.create_task(
+        manager._send_to_connection(
+            league_id=10,
+            user_id=101,
+            websocket=websocket,
+            payload={"type": "test_event"},
+        ),
+    )
+
+    try:
+        await asyncio.sleep(0)
+
+        assert not task.done()
+        assert not ready.is_set()
+        assert websocket.sent == []
+
+        if operation == "disconnect":
+            manager.disconnect(10, 101, websocket)
+        elif operation == "disconnect_user":
+            await manager.disconnect_user(10, 101)
+        else:
+            await manager.close_lobby(10)
+
+        await asyncio.wait_for(task, timeout=1)
+
+        assert ready.is_set()
+        assert websocket.sent == []
+        assert manager.active_connections == {}
+        assert manager._send_locks == {}
+        assert manager._ready_events == {}
+    finally:
+        task.cancel()
+        await asyncio.gather(task, return_exceptions=True)
+        manager.disconnect(10, 101, websocket)

@@ -24,6 +24,7 @@ class LeagueConnectionManager:
         # league_id -> user_id -> websocket connections
         self.active_connections: dict[int, dict[int, set[WebSocket]]] = {}
         self._send_locks: dict[WebSocket, asyncio.Lock] = {}
+        self._ready_events: dict[WebSocket, asyncio.Event] = {} 
 
     # accept and register a new WebSocket connection
     async def connect(
@@ -31,10 +32,18 @@ class LeagueConnectionManager:
         league_id: int,
         user_id: int,
         websocket: WebSocket,
+        initializing: bool = False,
     ) -> None:
         await websocket.accept()
 
         self._send_locks[websocket] = asyncio.Lock()
+
+        event = asyncio.Event()
+
+        if not initializing:
+            event.set()
+
+        self._ready_events[websocket] = event
 
         league_connections = self.active_connections.setdefault(
             league_id, {}
@@ -49,7 +58,11 @@ class LeagueConnectionManager:
         user_id: int,
         websocket: WebSocket,
     ) -> None:
+        event = self._ready_events.pop(websocket, None)
         self._send_locks.pop(websocket, None)
+
+        if event is not None:
+            event.set()
 
         league_connections = self.active_connections.get(league_id)
 
@@ -90,6 +103,12 @@ class LeagueConnectionManager:
             for websocket in connections
         ]
 
+        for websocket in connections:
+            event = self._ready_events.pop(websocket, None)
+
+            if event is not None:
+                event.set()
+
         for websocket, lock in connections_with_locks:
             try:
                 await self._close_connection(
@@ -124,6 +143,12 @@ class LeagueConnectionManager:
             for websocket in connections
         ]
 
+        for websocket in connections:
+            event = self._ready_events.pop(websocket, None)
+
+            if event is not None:
+                event.set()
+
         for websocket, lock in connections_with_locks:
             try:
                 await self._close_connection(
@@ -134,6 +159,35 @@ class LeagueConnectionManager:
                 )
             except Exception:
                 pass
+
+
+    async def send_initial_states(
+        self,
+        websocket: WebSocket,
+        lobby_state: LeagueLobbyState,
+        league_state: LeagueStateEvent,
+    ) -> None:
+        event = self._ready_events.get(websocket, None)
+
+        if event is None:
+            raise RuntimeError("WebSocket is not registered")
+
+        async with asyncio.timeout(SEND_TIMEOUT_SECONDS):
+            await self.send_state(
+                websocket,
+                lobby_state,
+            )
+
+            await self.send_state(
+                websocket,
+                league_state,
+            )
+
+            if self._ready_events.get(websocket) is not event:
+                raise RuntimeError("WebSocket is no longer registered")
+
+            event.set()
+
 
     # send the current lobby state to a specific connection (used when a user join to a new league)
     async def send_state(
@@ -222,10 +276,18 @@ class LeagueConnectionManager:
         payload: dict,
     ) -> None:
         try:
-            await self._send_json(
-                websocket=websocket,
-                payload=payload,
-            )
+            event = self._ready_events.get(websocket, None)
+
+            if event is None:
+                raise RuntimeError("WebSocket is not registered")
+            
+            async with asyncio.timeout(SEND_TIMEOUT_SECONDS):
+                await event.wait()
+
+                await self._send_json(
+                    websocket=websocket,
+                    payload=payload,
+                )
 
         except Exception:
             self.disconnect(
