@@ -1,3 +1,5 @@
+import asyncio
+
 from typing import Literal
 
 from fastapi import WebSocket
@@ -9,13 +11,19 @@ from app.schemas.league_websocket import (
     LeagueLobbyState,
     LeagueLobbyUser,
     LeagueUserEvent,
+    LeagueStateEvent,
 )
+
+
+SEND_TIMEOUT_SECONDS = 5
+
 
 class LeagueConnectionManager:
 
     def __init__(self):
         # league_id -> user_id -> websocket connections
         self.active_connections: dict[int, dict[int, set[WebSocket]]] = {}
+        self._send_locks: dict[WebSocket, asyncio.Lock] = {}
 
     # accept and register a new WebSocket connection
     async def connect(
@@ -25,6 +33,8 @@ class LeagueConnectionManager:
         websocket: WebSocket,
     ) -> None:
         await websocket.accept()
+
+        self._send_locks[websocket] = asyncio.Lock()
 
         league_connections = self.active_connections.setdefault(
             league_id, {}
@@ -39,6 +49,8 @@ class LeagueConnectionManager:
         user_id: int,
         websocket: WebSocket,
     ) -> None:
+        self._send_locks.pop(websocket, None)
+
         league_connections = self.active_connections.get(league_id)
 
         if league_connections is None:
@@ -57,6 +69,7 @@ class LeagueConnectionManager:
         if not league_connections:
             self.active_connections.pop(league_id, None)
 
+
     async def disconnect_user(
         self,
         league_id: int,
@@ -72,12 +85,20 @@ class LeagueConnectionManager:
         if not league_connections:
             self.active_connections.pop(league_id, None)
 
-        for websocket in connections:
+        connections_with_locks = [
+            (websocket, self._send_locks.pop(websocket, None))
+            for websocket in connections
+        ]
+
+        for websocket, lock in connections_with_locks:
             try:
-                await websocket.close(
+                await self._close_connection(
+                    websocket=websocket,
+                    lock=lock,
                     code=4403,
                     reason="User left the league",
                 )
+                
             except Exception:
                 pass
 
@@ -98,9 +119,16 @@ class LeagueConnectionManager:
             for websocket in user_connections
         ]
 
-        for websocket in connections:
+        connections_with_locks = [
+            (websocket, self._send_locks.pop(websocket, None))
+            for websocket in connections
+        ]
+
+        for websocket, lock in connections_with_locks:
             try:
-                await websocket.close(
+                await self._close_connection(
+                    websocket=websocket,
+                    lock=lock,
                     code=code,
                     reason=reason,
                 )
@@ -111,9 +139,12 @@ class LeagueConnectionManager:
     async def send_state(
         self,
         websocket: WebSocket,
-        state: LeagueLobbyState,
+        state: LeagueLobbyState | LeagueStateEvent,
     ) -> None:
-        await websocket.send_json(state.model_dump())
+        await self._send_json(
+            websocket,
+            state.model_dump(mode="json"),
+            )
 
     # send a message to all connections in a specific league (used to broadcast events)
     async def broadcast(
@@ -134,14 +165,54 @@ class LeagueConnectionManager:
 
         for user_id, websocket in connections:
             try:
-                await websocket.send_json(state.model_dump())
+                await self._send_json(
+                    websocket,
+                    state.model_dump(mode="json"),
+                )
             except Exception:
                 self.disconnect(
                     league_id,
                     user_id,
                     websocket,
                 )
-                
+
+
+    async def _send_json(
+        self,
+        websocket: WebSocket,
+        payload: dict
+    ) -> None:
+        lock = self._send_locks.get(websocket)
+
+        if lock is None:
+            raise RuntimeError("WebSocket is not registered")
+
+        async with asyncio.timeout(SEND_TIMEOUT_SECONDS):
+            async with lock:
+                if self._send_locks.get(websocket) is not lock:
+                    raise RuntimeError("WebSocket is no longer registered")
+
+                await websocket.send_json(payload)
+
+
+    async def _close_connection(
+        self,
+        websocket: WebSocket,
+        lock: asyncio.Lock | None,
+        code: int,
+        reason: str,
+    ) -> None:
+        if lock is None:
+            return
+
+        async with asyncio.timeout(SEND_TIMEOUT_SECONDS):
+            async with lock:
+                await websocket.close(
+                    code=code,
+                    reason=reason,
+                )
+
+
 # build the list of clubs participating in the league
 def build_league_lobby_state(
     league: League,

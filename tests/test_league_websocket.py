@@ -10,7 +10,10 @@ from starlette.websockets import WebSocketDisconnect
 
 from app.main import app
 from app.api import league_websocket as ws_api
-from app.services import league_service
+from app.services import (
+    league_service,
+    league_websocket_service as ws_service,
+)
 from app.models.league import LeagueState, LeaguePrivacy
 from app.schemas.league_websocket import LeagueUserEvent
 from app.services.league_websocket_service import (
@@ -35,6 +38,32 @@ class FakeWebSocket:
 
     async def close(self, code=1000, reason=""):
         self.closed.append((code, reason))
+
+
+class ControlledWebSocket:
+    def __init__(self):
+        self.started = asyncio.Event()
+        self.release = asyncio.Event()
+        self.sent = []
+        self.active_sends = 0
+        self.max_active_sends = 0
+
+    async def accept(self):
+        pass
+
+    async def send_json(self, payload):
+        self.active_sends += 1
+        self.max_active_sends = max(
+            self.max_active_sends,
+            self.active_sends,
+        )
+        self.started.set()
+
+        try:
+            await self.release.wait()
+            self.sent.append(payload)
+        finally:
+            self.active_sends -= 1
 
 
 def club(club_id, name=None):
@@ -347,3 +376,172 @@ def test_build_league_lobby_state():
     assert state.users[1].user_name == "Club B"
     assert state.users[1].is_creator is False
 
+
+@pytest.mark.asyncio
+async def test_sends_to_same_connection_are_serialized():
+    manager = LeagueConnectionManager()
+    websocket = ControlledWebSocket()
+    await manager.connect(10, 101, websocket)
+
+    first = asyncio.create_task(
+        manager._send_json(websocket, {"sequence": 1}),
+    )
+    tasks = [first]
+
+    try:
+        await asyncio.wait_for(websocket.started.wait(), timeout=1)
+
+        second = asyncio.create_task(
+            manager._send_json(websocket, {"sequence": 2}),
+        )
+        tasks.append(second)
+
+        # Permite que el segundo envío intente adquirir el lock.
+        await asyncio.sleep(0)
+
+        assert websocket.active_sends == 1
+        assert websocket.max_active_sends == 1
+        assert not second.done()
+
+        websocket.release.set()
+        await asyncio.wait_for(asyncio.gather(*tasks), timeout=1)
+
+        assert websocket.sent == [
+            {"sequence": 1},
+            {"sequence": 2},
+        ]
+        assert websocket.max_active_sends == 1
+        assert not manager._send_locks[websocket].locked()
+    finally:
+        websocket.release.set()
+        for task in tasks:
+            task.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
+        manager.disconnect(10, 101, websocket)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "block_lock",
+    [True, False],
+    ids=["waiting_for_lock", "waiting_for_send"],
+)
+async def test_send_timeout_covers_lock_and_network(monkeypatch, block_lock):
+    monkeypatch.setattr(ws_service, "SEND_TIMEOUT_SECONDS", 0.01)
+
+    manager = LeagueConnectionManager()
+    websocket = ControlledWebSocket()
+    await manager.connect(10, 101, websocket)
+
+    lock = manager._send_locks[websocket]
+
+    if block_lock:
+        await lock.acquire()
+
+    task = asyncio.create_task(
+        manager._send_json(websocket, {"message": "test"}),
+    )
+
+    try:
+        done, _ = await asyncio.wait({task}, timeout=1)
+
+        assert task in done, "El timeout del manager no terminó el envío"
+
+        with pytest.raises(TimeoutError):
+            await task
+
+        assert websocket.sent == []
+
+        if block_lock:
+            assert not websocket.started.is_set()
+        else:
+            assert websocket.started.is_set()
+            assert websocket.active_sends == 0
+            assert not lock.locked()
+    finally:
+        task.cancel()
+        await asyncio.gather(task, return_exceptions=True)
+
+        if block_lock:
+            lock.release()
+
+        manager.disconnect(10, 101, websocket)
+
+
+@pytest.mark.asyncio
+async def test_disconnect_prevents_waiting_send():
+    manager = LeagueConnectionManager()
+    websocket = FakeWebSocket()
+    await manager.connect(10, 101, websocket)
+
+    lock = manager._send_locks[websocket]
+    await lock.acquire()
+    holding_lock = True
+
+    task = asyncio.create_task(
+        manager._send_json(websocket, {"message": "test"}),
+    )
+
+    try:
+        await asyncio.sleep(0)
+        assert not task.done()
+
+        manager.disconnect(10, 101, websocket)
+        lock.release()
+        holding_lock = False
+
+        with pytest.raises(RuntimeError, match="no longer registered"):
+            await asyncio.wait_for(task, timeout=1)
+
+        assert websocket.sent == []
+        assert websocket not in manager._send_locks
+        assert 10 not in manager.active_connections
+    finally:
+        if holding_lock:
+            lock.release()
+
+        task.cancel()
+        await asyncio.gather(task, return_exceptions=True)
+        manager.disconnect(10, 101, websocket)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("operation", ["disconnect_user", "close_lobby"])
+async def test_close_cleans_records_even_when_connection_fails(operation):
+    manager = LeagueConnectionManager()
+    failing = FakeWebSocket()
+    healthy = FakeWebSocket()
+    other = FakeWebSocket()
+
+    failing.close = AsyncMock(
+        side_effect=RuntimeError("Connection already closed"),
+    )
+    healthy.close = AsyncMock()
+
+    await manager.connect(10, 101, failing)
+    await manager.connect(10, 101, healthy)
+    await manager.connect(20, 201, other)
+
+    other_lock = manager._send_locks[other]
+
+    if operation == "disconnect_user":
+        await manager.disconnect_user(10, 101)
+        expected_code = 4403
+        expected_reason = "User left the league"
+    else:
+        await manager.close_lobby(10)
+        expected_code = 1000
+        expected_reason = "Lobby closed"
+
+    failing.close.assert_awaited_once_with(
+        code=expected_code,
+        reason=expected_reason,
+    )
+    healthy.close.assert_awaited_once_with(
+        code=expected_code,
+        reason=expected_reason,
+    )
+
+    assert manager.active_connections == {20: {201: {other}}}
+    assert manager._send_locks == {other: other_lock}
+    assert other.closed == []
