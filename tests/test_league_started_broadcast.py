@@ -1,4 +1,6 @@
 import json
+import asyncio
+
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -78,8 +80,14 @@ def make_standings() -> list[StandingRow]:
 @pytest.fixture(autouse=True)
 def clean_manager():
     league_connection_manager.active_connections.clear()
+    league_connection_manager._send_locks.clear()
+    league_connection_manager._ready_events.clear()
+
     yield
+
     league_connection_manager.active_connections.clear()
+    league_connection_manager._send_locks.clear()
+    league_connection_manager._ready_events.clear()
 
 
 @pytest.fixture
@@ -97,13 +105,21 @@ def api_dependencies():
 
 @pytest.fixture
 def connected_clients():
-    # two clients in the league that starts and one in another league
-    first, second, other_league = FakeWebSocket(), FakeWebSocket(), FakeWebSocket()
+    first = FakeWebSocket()
+    second = FakeWebSocket()
+    other_league = FakeWebSocket()
 
     league_connection_manager.active_connections.update({
         10: {101: {first}, 102: {second}},
         20: {201: {other_league}},
     })
+
+    for websocket in (first, second, other_league):
+        league_connection_manager._send_locks[websocket] = asyncio.Lock()
+
+        ready = asyncio.Event()
+        ready.set()
+        league_connection_manager._ready_events[websocket] = ready
 
     return SimpleNamespace(
         first=first,
