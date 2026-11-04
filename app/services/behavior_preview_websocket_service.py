@@ -1,9 +1,21 @@
+import asyncio
+import logging
+
+from starlette.websockets import WebSocketDisconnect
+
 from uuid import UUID
 
 from fastapi import WebSocket
 
 from app.schemas.match_websocket import MatchStateMessage
 from app.schemas.behavior_preview import BehaviorPreviewFinishedMessage
+
+
+SEND_TIMEOUT_SECONDS = 2
+CLOSE_TIMEOUT_SECONDS = 2
+
+logger = logging.getLogger(__name__)
+
 
 class PreviewConnectionManager:
     def __init__(self):
@@ -45,18 +57,45 @@ class PreviewConnectionManager:
         preview_id: UUID,
         message: MatchStateMessage | BehaviorPreviewFinishedMessage,
     ) -> None:
-        connections = self.active_connections.get(preview_id, [])
+        connections = tuple(
+            self.active_connections.get(preview_id, [])
+            )
 
-        disconnected = []
+        payload = message.model_dump(mode="json")
 
         for websocket in connections:
             try:
-                await websocket.send_json(message.model_dump())
-            except Exception:
-                disconnected.append(websocket)
+                async with asyncio.timeout(SEND_TIMEOUT_SECONDS):
+                    await websocket.send_json(payload)
 
-        for websocket in disconnected:
-            self.disconnect(preview_id, websocket)
+            except (
+                TimeoutError,
+                WebSocketDisconnect,
+                OSError,
+            ):
+                self.disconnect(preview_id, websocket)
+                await self._close_connection(websocket)
+
+            except Exception:
+                logger.exception(
+                    "Unexpected error sending preview event: preview_id=%s",
+                    preview_id,
+                )
+                self.disconnect(preview_id, websocket)
+                await self._close_connection(websocket)
+
+
+    async def _close_connection(
+        self,
+        websocket: WebSocket
+    ) -> None:
+        try:
+            async with asyncio.timeout(CLOSE_TIMEOUT_SECONDS):
+                await websocket.close()
+        except (TimeoutError, WebSocketDisconnect, OSError):
+            pass
+        except Exception:
+            logger.exception("Unexpected error closing preview WebSocket")
 
 
     async def close_preview_connection(
@@ -66,10 +105,8 @@ class PreviewConnectionManager:
         connections = self.active_connections.pop(preview_id, [])
 
         for websocket in connections:
-            try:
-                await websocket.close()
-            except Exception:
-                pass
+            await self._close_connection(websocket)
+
 
 preview_connection_manager = PreviewConnectionManager()
         
