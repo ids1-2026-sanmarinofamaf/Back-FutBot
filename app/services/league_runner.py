@@ -13,6 +13,10 @@ from app.game.models.ball import Ball
 from app.game.models.match import Match as RuntimeMatch
 from app.game.models.match import MatchState as RuntimeMatchState
 from app.game.models.behavior_definition import BehaviorDefinition
+from app.game.active_league_rounds import (
+    register_round,
+    remove_round,
+)
 
 from app.models.league import League, LeaguePrivacy, LeagueState
 from app.models.league_participation import LeagueParticipation
@@ -368,43 +372,49 @@ async def run_league(league_id: int) -> None:
                 for match in matches
             }
 
-        # 4. Run matches with no open DB session.
-        await run_round_matches(
-            matches=matches,
-            behaviors_by_match=behaviors,
-            started_event=LeagueRoundStartedEvent(
-                league_id=league_id,
-                round=round_number,
-                match_ids=[match.match_id for match in matches]
-            )
-        )
+        register_round(league_id, round_number)
 
-        # 5. Confirm the entire round in a single transaction.
-        with SessionLocal() as db:
-            complete_round(
-                db=db,
-                league_id=league_id,
-                round_number=round_number,
+        try:
+            # 4. Run matches with no open DB session.
+            await run_round_matches(
                 matches=matches,
-                is_last_round=(round_number == last_round),
+                behaviors_by_match=behaviors,
+                started_event=LeagueRoundStartedEvent(
+                    league_id=league_id,
+                    round=round_number,
+                    match_ids=[match.match_id for match in matches]
+                )
             )
 
-            detail = get_league_detail(db, league_id)
+            # 5. Confirm the entire round in a single transaction.
+            with SessionLocal() as db:
+                complete_round(
+                    db=db,
+                    league_id=league_id,
+                    round_number=round_number,
+                    matches=matches,
+                    is_last_round=(round_number == last_round),
+                )
 
-            finish_round_event = LeagueRoundFinishedEvent(
-                league_id=league_id,
-                round=round_number,
-                results= [
-                    LeagueMatchResult(
-                        match_id=match.match_id,
-                        score=match.score,
-                    )
-                    for match in detail.fixture
-                    if match.round == round_number
-                ],
-                standings=detail.standings,
-                break_ends_at=detail.break_ends_at,   
-            )
+                detail = get_league_detail(db, league_id)
+
+                finish_round_event = LeagueRoundFinishedEvent(
+                    league_id=league_id,
+                    round=round_number,
+                    results= [
+                        LeagueMatchResult(
+                            match_id=match.match_id,
+                            score=match.score,
+                        )
+                        for match in detail.fixture
+                        if match.round == round_number
+                    ],
+                    standings=detail.standings,
+                    break_ends_at=detail.break_ends_at,   
+                )
+
+        finally:
+            remove_round(league_id)
 
         await _notify_league_event(
             league_id,

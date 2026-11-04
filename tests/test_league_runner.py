@@ -29,6 +29,7 @@ from app.models.match_participation import (
 
 from app.game.models.match import MatchState as RuntimeMatchState
 from app.game.constants import FIELD_CENTER, TICS_PER_SECOND
+from app.game.active_league_rounds import get_active_round
 
 from app.services import league_runner
 from app.services.league_runner import (
@@ -136,6 +137,32 @@ class RunnerEventProbe:
                 assert league.state == LeagueState.FINALIZADA
 
         self.events.append(event)
+        assert get_active_round(league_id) is None
+        
+
+
+class ControlledLeagueRound:
+    def __init__(self, fail=False):
+        self.fail = fail
+        self.started = asyncio.Event()
+        self.release = asyncio.Event()
+
+    async def __call__(
+        self,
+        *,
+        matches,
+        behaviors_by_match,
+        started_event,
+    ):
+        assert get_active_round(
+            started_event.league_id,
+        ) == started_event.round
+
+        self.started.set()
+        await self.release.wait()
+
+        if self.fail:
+            raise RuntimeError("Round execution failed")
 
 
 @pytest.fixture
@@ -147,7 +174,12 @@ def runtime_matches():
 
 
 @pytest.fixture
-def runner_event_setup(monkeypatch, round_db, round_case):
+def runner_event_setup(
+    monkeypatch,
+    round_db,
+    round_case,
+    isolated_active_rounds,
+):
     probe = RunnerEventProbe(round_db.bind)
     notify = AsyncMock(side_effect=probe.notify)
     execute = AsyncMock()
@@ -1178,6 +1210,7 @@ async def test_runner_does_not_notify_results_after_rollback(
     runner_event_setup.notify.assert_not_awaited()
     assert runner_event_setup.probe.open_sessions == 0
     assert_round_unmodified(round_db, round_case)
+    assert get_active_round(round_case.league_id) is None
 
 
 @pytest.mark.asyncio
@@ -1218,3 +1251,55 @@ async def test_notification_errors_do_not_stop_league(
     ]
 
     assert runner_event_setup.probe.open_sessions == 0
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "operation",
+    [
+        "failure",
+        "cancellation"
+    ]
+)
+async def test_runner_removes_active_round_when_execution_is_interrupted(
+    monkeypatch,
+    round_db,
+    round_case,
+    runner_event_setup,
+    operation,
+):
+    execution = ControlledLeagueRound(fail=operation == "failure")
+
+    monkeypatch.setattr(
+        league_runner,
+        "run_round_matches",
+        execution,
+    )
+
+    task = asyncio.create_task(
+        league_runner.run_league(round_case.league_id),
+    )
+
+    try:
+        await asyncio.wait_for(execution.started.wait(), timeout=1)
+
+        assert get_active_round(round_case.league_id) == 1
+
+        if operation == "failure":
+            execution.release.set()
+
+            with pytest.raises(RuntimeError, match="Round execution failed"):
+                await asyncio.wait_for(task, timeout=1)
+        else:
+            task.cancel()
+
+            with pytest.raises(asyncio.CancelledError):
+                await asyncio.wait_for(task, timeout=1)
+
+        assert get_active_round(round_case.league_id) is None
+        runner_event_setup.notify.assert_not_awaited()
+        assert_round_unmodified(round_db, round_case)
+    finally:
+        execution.release.set()
+        task.cancel()
+        await asyncio.gather(task, return_exceptions=True)

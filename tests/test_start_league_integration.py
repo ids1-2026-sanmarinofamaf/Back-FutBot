@@ -353,6 +353,7 @@ def test_persisted_rounds_follow_the_drawn_fechas(db, n):
 def test_league_detail_shows_running_match_without_persisting_state(
     db,
     monkeypatch,
+    isolated_active_rounds,
 ):
     league, _, creator_user_id = create_league(db, 4)
 
@@ -368,6 +369,11 @@ def test_league_detail_shows_running_match_without_persisting_state(
     running_match = matches[0]
     match_id = running_match.id
     round_number = running_match.round
+
+    isolated_active_rounds.register_round(
+        league.id,
+        round_number,
+    )
 
     runtime_match = SimpleNamespace(
         state=RunningMatchState.IN_PROGRESS,
@@ -393,19 +399,24 @@ def test_league_detail_shows_running_match_without_persisting_state(
     assert fixture_by_id[match_id].state == MatchState.JUGANDO
     assert fixture_by_id[match_id].score is None
 
-    for match in matches[1:]:
-        assert fixture_by_id[match.id].state == MatchState.POR_COMENZAR
+    for match in matches:
+        expected_state = (
+            MatchState.JUGANDO
+            if match.round == round_number
+            else MatchState.POR_COMENZAR
+        )
+
+        assert fixture_by_id[match.id].state == expected_state
         assert fixture_by_id[match.id].score is None
 
     # Fuerza cualquier escritura pendiente y vuelve a leer desde la BD.
     db.flush()
     db.expire_all()
 
-    persisted = db.get(Match, match_id)
-
-    assert persisted.state == MatchState.POR_COMENZAR
-    assert persisted.home_goals is None
-    assert persisted.away_goals is None
+    for persisted in get_matches(db, league.id):
+        assert persisted.state == MatchState.POR_COMENZAR
+        assert persisted.home_goals is None
+        assert persisted.away_goals is None
 
 
 def test_finished_league_detail_returns_scores_and_standings(db):
@@ -525,3 +536,72 @@ def test_league_detail_normalizes_break_and_has_no_active_matches(
     assert len(pending) == 4
     assert all(item.state == MatchState.POR_COMENZAR for item in pending)
     assert all(item.score is None for item in pending)
+
+
+@pytest.mark.parametrize(
+    "confirmed",
+    [False, True],
+    ids=["awaiting_confirmation", "already_confirmed"],
+)
+def test_league_detail_handles_registered_round_without_running_matches(
+    db,
+    monkeypatch,
+    isolated_active_rounds,
+    confirmed,
+):
+    league, _, creator_user_id = create_league(db, 4)
+
+    start_league(
+        db=db,
+        league_id=league.id,
+        user_id=creator_user_id,
+        requested_state=LeagueState.INICIADA,
+        seed=SEED,
+    )
+
+    isolated_active_rounds.register_round(league.id, 1)
+    matches = get_matches(db, league.id)
+
+    if confirmed:
+        for match in matches:
+            if match.round == 1:
+                match.state = MatchState.FINALIZADO
+                match.home_goals = 0
+                match.away_goals = 0
+
+        league.last_completed_round = 1
+        db.flush()
+
+    monkeypatch.setattr(
+        league_service,
+        "get_match",
+        Mock(return_value=None),
+    )
+
+    detail = get_league_detail(db, league.id)
+
+    assert detail.active_match_ids == []
+    assert detail.active_round == (None if confirmed else 1)
+
+    for item in detail.fixture:
+        if item.round != 1:
+            assert item.state == MatchState.POR_COMENZAR
+            assert item.score is None
+        elif confirmed:
+            assert item.state == MatchState.FINALIZADO
+            assert item.score.local == 0
+            assert item.score.visitante == 0
+        else:
+            assert item.state == MatchState.JUGANDO
+            assert item.score is None
+
+    db.flush()
+    db.expire_all()
+
+    for persisted in get_matches(db, league.id):
+        expected_state = (
+            MatchState.FINALIZADO
+            if confirmed and persisted.round == 1
+            else MatchState.POR_COMENZAR
+        )
+        assert persisted.state == expected_state

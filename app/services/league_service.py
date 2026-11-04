@@ -35,6 +35,7 @@ from app.services.league_websocket_service import (
 )
 
 from app.game.active_matches import get_match
+from app.game.active_league_rounds import get_active_round
 from app.game.models.match import MatchState as RunningMatchState
 
 # add this classes in order to distinguish the errors
@@ -553,15 +554,27 @@ def get_league_detail(db: Session, league_id: int) -> LeagueDetail:
     active_match_ids = []
 
     if (league.state == LeagueState.INICIADA):
+        registered_round = get_active_round(league_id)
+
+        if registered_round == league.last_completed_round + 1:
+            active_round = registered_round
+
         for match_item in fixture:
+            if (
+                match_item.round != active_round
+                or match_item.state == MatchState.FINALIZADO
+            ):
+                continue
+
+            match_item.state = MatchState.JUGANDO
+
             match = get_match(match_item.match_id)
+
             if (
                 match is not None
                 and match.state == RunningMatchState.IN_PROGRESS
             ):
-                active_round = match_item.round
                 active_match_ids.append(match_item.match_id)
-                match_item.state = MatchState.JUGANDO
 
 
     return LeagueDetail(
