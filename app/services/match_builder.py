@@ -42,7 +42,6 @@ def _create_player_in_match(
     return PlayerInMatch(
         player_id=player.id,
         position=position,
-        velocity=(0.0, 0.0),
         starting_position=starting_position,
         power=player.power,
         agility=player.agility,

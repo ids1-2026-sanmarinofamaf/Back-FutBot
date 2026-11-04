@@ -1,6 +1,6 @@
 from dataclasses import dataclass
 
-from app.game.types import Position, Velocity
+from app.game.types import Position
 
 # snapshot for playerInMatch because it's needed for matchsnapshot
 @dataclass(frozen=True)

@@ -77,7 +77,6 @@ def test_create_starter_player(roster, mock_players):
 
     assert player.position == (8.0, 5.0)
     assert player.starting_position == (8.0, 5.0)
-    assert player.velocity == (0.0, 0.0)
 
     assert player.current_behavior_id == 101
 
@@ -103,7 +102,6 @@ def test_create_substitute_player(roster, mock_players):
 
     assert player.position == (0.0, 0.0)
     assert player.starting_position is None
-    assert player.velocity == (0.0, 0.0)
 
     assert player.current_behavior_id is None
 
