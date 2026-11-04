@@ -3,6 +3,7 @@ import asyncio
 
 from uuid import UUID, uuid4
 from itertools import count
+from functools import partial
 
 from unittest.mock import patch, AsyncMock, MagicMock
 
@@ -19,6 +20,7 @@ from app.services.behavior_preview_service import (
     _active_previews,
     _running_preview_tasks,
     _run_preview,
+    stop_running_previews,
 )
 
 from app.game.default_behaviors import (
@@ -532,3 +534,140 @@ async def test_run_preview_stopped_before_start():
     worker_pool.release_match.assert_called_once_with(preview.match_id)
     worker_pool.shutdown.assert_not_called()
     assert preview_id not in _active_previews
+
+
+@pytest.mark.asyncio
+async def test_shutdown_stops_previews_and_releases_shared_pool_resources(
+    db,
+    shared_pool,
+):
+    defaults = (
+        db.query(Behavior)
+        .filter(Behavior.is_default.is_(True))
+        .all()
+    )
+
+    previews = []
+
+    try:
+        for user_id in (1, 2):
+            preview_id = await create_preview(
+                db=db,
+                user_id=user_id,
+                code="def play():\n    return wait()",
+                behavior_teammate_1=defaults[0].id,
+                behavior_teammate_2=defaults[1].id,
+            )
+            previews.append(preview_id)
+
+        runners = [
+            _active_previews[preview_id][1]
+            for preview_id in previews
+        ]
+        tasks = tuple(_running_preview_tasks)
+        registered_ids = {
+            registration.args[0]
+            for registration in shared_pool.register_match.call_args_list
+        }
+
+        await asyncio.wait_for(stop_running_previews(), timeout=1)
+
+        assert all(runner.stop_event.is_set() for runner in runners)
+        assert all(task.done() for task in tasks)
+        assert all(
+            preview_id not in _active_previews
+            for preview_id in previews
+        )
+
+        released_ids = {
+            release.args[0]
+            for release in shared_pool.release_match.call_args_list
+        }
+
+        assert len(registered_ids) == 2
+        assert shared_pool.release_match.call_count == 2
+        assert released_ids == registered_ids
+        shared_pool.shutdown.assert_not_called()
+
+    finally:
+        await stop_running_previews()
+
+
+async def pause_registration(
+    function,
+    *args,
+    register_match,
+    started,
+    proceed,
+):
+    if function == register_match:
+        started.set()
+        await proceed.wait()
+
+    return function(*args)
+
+
+@pytest.mark.asyncio
+async def test_create_preview_rejects_user_with_pending_registration(
+    db,
+    shared_pool,
+):
+    defaults = (
+        db.query(Behavior)
+        .filter(Behavior.is_default.is_(True))
+        .all()
+    )
+
+    started = asyncio.Event()
+    proceed = asyncio.Event()
+
+    data = {
+        "db": db,
+        "user_id": 1,
+        "code": "def play():\n    return wait()",
+        "behavior_teammate_1": defaults[0].id,
+        "behavior_teammate_2": defaults[1].id,
+    }
+
+    with patch(
+        "app.services.behavior_preview_service.asyncio.to_thread",
+        new=partial(
+            pause_registration,
+            register_match=shared_pool.register_match,
+            started=started,
+            proceed=proceed,
+        ),
+    ):
+        first_request = asyncio.create_task(create_preview(**data))
+
+        try:
+            await asyncio.wait_for(started.wait(), timeout=1)
+
+            assert not first_request.done()
+            assert not _active_previews
+
+            with pytest.raises(
+                ValueError,
+                match="User already has an active preview",
+            ):
+                await asyncio.wait_for(
+                    create_preview(**data),
+                    timeout=1,
+                )
+
+            proceed.set()
+            preview_id = await asyncio.wait_for(
+                first_request,
+                timeout=1,
+            )
+
+            assert preview_id in _active_previews
+            shared_pool.register_match.assert_called_once()
+
+        finally:
+            proceed.set()
+
+            try:
+                await asyncio.wait_for(first_request, timeout=1)
+            finally:
+                await stop_running_previews()

@@ -2,6 +2,7 @@ from uuid import uuid4
 from unittest.mock import AsyncMock
 
 import pytest
+import asyncio
 
 from app.services.behavior_preview_websocket_service import (
     PreviewConnectionManager,
@@ -229,3 +230,72 @@ async def test_broadcast_match_snapshot(
     websocket.send_json.assert_awaited_once_with(
         message.model_dump(mode="json")
     )
+
+
+async def blocked_operation(*args, **kwargs):
+    await asyncio.Future()
+
+
+@pytest.mark.asyncio
+async def test_broadcast_times_out_and_continues(
+    manager,
+    preview_id,
+    monkeypatch,
+):
+    monkeypatch.setattr(
+        "app.services.behavior_preview_websocket_service.SEND_TIMEOUT_SECONDS",
+        0.01,
+    )
+
+    blocked_ws = AsyncMock()
+    healthy_ws = AsyncMock()
+    blocked_ws.send_json.side_effect = blocked_operation
+
+    await manager.connect(preview_id, blocked_ws)
+    await manager.connect(preview_id, healthy_ws)
+
+    message = BehaviorPreviewFinishedMessage(reason="completed")
+
+    await asyncio.wait_for(
+        manager.broadcast(preview_id, message),
+        timeout=1,
+    )
+
+    assert manager.active_connections[preview_id] == [healthy_ws]
+
+    blocked_ws.send_json.assert_awaited_once()
+    blocked_ws.close.assert_awaited_once()
+
+    healthy_ws.send_json.assert_awaited_once_with(
+        message.model_dump(mode="json")
+    )
+    healthy_ws.close.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_close_preview_times_out_and_continues(
+    manager,
+    preview_id,
+    monkeypatch,
+):
+    monkeypatch.setattr(
+        "app.services.behavior_preview_websocket_service.CLOSE_TIMEOUT_SECONDS",
+        0.01,
+    )
+
+    blocked_ws = AsyncMock()
+    healthy_ws = AsyncMock()
+    blocked_ws.close.side_effect = blocked_operation
+
+    await manager.connect(preview_id, blocked_ws)
+    await manager.connect(preview_id, healthy_ws)
+
+    await asyncio.wait_for(
+        manager.close_preview_connection(preview_id),
+        timeout=1,
+    )
+
+    blocked_ws.close.assert_awaited_once()
+    healthy_ws.close.assert_awaited_once()
+
+    assert preview_id not in manager.active_connections
