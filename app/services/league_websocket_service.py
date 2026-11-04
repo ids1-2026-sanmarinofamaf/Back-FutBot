@@ -83,6 +83,34 @@ class LeagueConnectionManager:
             self.active_connections.pop(league_id, None)
 
 
+    async def close_connection(
+        self,
+        league_id: int,
+        user_id: int,
+        websocket: WebSocket,
+        code: int,
+        reason: str,
+    ) -> None:
+        lock = self._send_locks.get(websocket)
+
+        self.disconnect(
+            league_id,
+            user_id,
+            websocket
+        )
+
+        try:
+            await self._close_connection(
+                websocket=websocket,
+                lock=lock,
+                code=code,
+                reason=reason,
+            )
+
+        except Exception:
+            pass
+
+
     async def disconnect_user(
         self,
         league_id: int,

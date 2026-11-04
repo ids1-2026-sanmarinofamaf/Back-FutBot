@@ -2,7 +2,7 @@
 import asyncio
 from contextlib import contextmanager
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch, call
 
 import pytest
 from fastapi.testclient import TestClient
@@ -99,7 +99,7 @@ def clean_manager():
 
 
 @pytest.fixture
-def websocket_dependencies():
+def websocket_dependencies(initial_states):
     @contextmanager
     def fake_session():
         yield MagicMock()
@@ -117,6 +117,7 @@ def websocket_dependencies():
             "get_participation_by_club_and_league",
             return_value=SimpleNamespace(club_id=1, league_id=10),
         ) as participation_lookup,
+        patch.object(ws_api, "get_league_detail", return_value=initial_states[1].data),
     ):
         yield SimpleNamespace(
             user=user, league=active_league, club=active_club,
@@ -156,7 +157,18 @@ def test_participant_connects_and_receives_initial_state(websocket_dependencies)
                 ],
             }
             assert 101 in league_connection_manager.active_connections[10]
+
+            snapshot = ws.receive_json()
+
+            assert snapshot["type"] == "league_state"
+            assert snapshot["data"]["league_id"] == 10
+            assert snapshot["data"]["state"] == "POR_COMENZAR"
+            assert snapshot["data"]["last_completed_round"] == 0
+            assert snapshot["data"]["active_match_ids"] == []
+
     assert not league_connection_manager.active_connections
+    assert not league_connection_manager._send_locks
+    assert not league_connection_manager._ready_events
 
 
 # Verify that connections without a token or league participation are rejected
@@ -736,3 +748,77 @@ async def test_disconnect_wakes_pending_send_and_cleans_records(operation):
         task.cancel()
         await asyncio.gather(task, return_exceptions=True)
         manager.disconnect(10, 101, websocket)
+
+
+def test_participant_removed_during_connection_is_rejected(
+    websocket_dependencies,
+):
+    lookup = websocket_dependencies.participation_lookup
+    lookup.side_effect = [
+        SimpleNamespace(club_id=1, league_id=10),
+        None,
+    ]
+
+    with TestClient(app) as client:
+        with pytest.raises(WebSocketDisconnect) as error:
+            with client.websocket_connect(
+                "/ws/league/10?token=valid",
+            ) as websocket:
+                websocket.receive_json()
+
+    assert error.value.code == 4403
+    assert lookup.call_count == 2
+    assert not league_connection_manager.active_connections
+    assert not league_connection_manager._send_locks
+    assert not league_connection_manager._ready_events
+
+
+@pytest.mark.asyncio
+async def test_initial_snapshots_are_sent_after_database_sessions_close(
+    websocket_dependencies,
+    initial_states,
+):
+    first_session = MagicMock()
+    second_session = MagicMock()
+    session_factory = MagicMock(
+        side_effect=[first_session, second_session],
+    )
+
+    websocket = FakeWebSocket()
+    websocket.accept = AsyncMock()
+    websocket.send_json = AsyncMock()
+    websocket.receive_text = AsyncMock(
+        side_effect=WebSocketDisconnect(code=1000),
+    )
+
+    timeline = MagicMock()
+    timeline.attach_mock(first_session.__exit__, "first_session_closed")
+    timeline.attach_mock(second_session.__exit__, "second_session_closed")
+    timeline.attach_mock(websocket.accept, "accept")
+    timeline.attach_mock(websocket.send_json, "send")
+
+    with patch.object(ws_api, "SessionLocal", session_factory):
+        await ws_api.league_websocket(
+            websocket=websocket,
+            league_id=10,
+            token="valid",
+        )
+
+    lobby_state, league_state = initial_states
+
+    assert session_factory.call_count == 2
+    first_session.__enter__.assert_called_once_with()
+    second_session.__enter__.assert_called_once_with()
+
+    assert timeline.mock_calls == [
+        call.first_session_closed(None, None, None),
+        call.accept(),
+        call.second_session_closed(None, None, None),
+        call.send(lobby_state.model_dump(mode="json")),
+        call.send(league_state.model_dump(mode="json")),
+    ]
+
+    websocket.receive_text.assert_awaited_once_with()
+    assert not league_connection_manager.active_connections
+    assert not league_connection_manager._send_locks
+    assert not league_connection_manager._ready_events
