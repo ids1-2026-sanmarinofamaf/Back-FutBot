@@ -1,4 +1,6 @@
 from sqlalchemy.orm import Session
+from datetime import timezone
+
 from app.core.security import get_password_hash, verify_password
 from app.models.league import League, LeagueState, LeaguePrivacy
 from app.models.league_participation import LeagueParticipation
@@ -25,12 +27,15 @@ from app.schemas.league import (
     FixtureMatchItem,
     StandingRow,
     LeagueDetail,
+    MatchScore,
 )
 from app.services.league_websocket_service import (
     league_connection_manager,
     build_league_user_event,
 )
 
+from app.game.active_matches import get_match
+from app.game.models.match import MatchState as RunningMatchState
 
 # add this classes in order to distinguish the errors
 
@@ -481,8 +486,20 @@ def build_league_state(db: Session, league: League) -> tuple[list[FixtureMatchIt
                 match_order=match.match_order,
                 round=match.round,
                 state=match.state,
-                local=FixtureClub(club_id=local.club_id, name=local.club.name),
-                visitante=FixtureClub(club_id=visitante.club_id, name=visitante.club.name),
+                local=FixtureClub(
+                    club_id=local.club_id,
+                    name=local.club.name
+                ),
+                visitante=FixtureClub(
+                    club_id=visitante.club_id,
+                    name=visitante.club.name
+                ),
+                score=MatchScore(
+                    local=match.home_goals,
+                    visitante=match.away_goals,
+                )
+                if match.state == MatchState.FINALIZADO
+                else None
             )
         )
 
@@ -521,8 +538,31 @@ def get_league_detail(db: Session, league_id: int) -> LeagueDetail:
     standings = None
 
     # the fixture only exists after the league started
-    if league.state == LeagueState.INICIADA:
+    if (league.state == LeagueState.INICIADA
+        or league.state == LeagueState.FINALIZADA    
+    ):
         fixture, standings = build_league_state(db, league)
+
+    break_ends_at = league.break_ends_at
+
+    if break_ends_at is not None:
+        if break_ends_at.tzinfo is None:
+            break_ends_at = break_ends_at.replace(tzinfo=timezone.utc)
+
+    active_round = None
+    active_match_ids = []
+
+    if (league.state == LeagueState.INICIADA):
+        for match_item in fixture:
+            match = get_match(match_item.match_id)
+            if (
+                match is not None
+                and match.state == RunningMatchState.IN_PROGRESS
+            ):
+                active_round = match_item.round
+                active_match_ids.append(match_item.match_id)
+                match_item.state = MatchState.JUGANDO
+
 
     return LeagueDetail(
         league_id=league.id,
@@ -533,4 +573,8 @@ def get_league_detail(db: Session, league_id: int) -> LeagueDetail:
         capacity=league.max_clubs,
         fixture=fixture,
         standings=standings,
+        last_completed_round=league.last_completed_round,
+        break_ends_at=break_ends_at,
+        active_round=active_round,
+        active_match_ids=active_match_ids,
     )
