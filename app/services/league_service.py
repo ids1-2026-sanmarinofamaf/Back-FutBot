@@ -15,6 +15,8 @@ from app.repositories import (
     behavior_repository,
     match_repository,
 )
+from app.schemas.roster import RosterCreate, RosterDetail
+from app.models.player_on_roster import PlayerOnRoster
 
 from app.services.fixture_service import generate_fixture
 
@@ -534,3 +536,98 @@ def get_league_detail(db: Session, league_id: int) -> LeagueDetail:
         fixture=fixture,
         standings=standings,
     )
+
+def update_league_roster(
+    db: Session,
+    league_id: int,
+    user_id: int,
+    data: RosterCreate,
+) -> None:
+    try:
+        #get league
+        league = league_repository.get_by_id(db=db, league_id=league_id)
+
+        if league is None:
+            raise LeagueNotFound("League does not exist")
+
+        if league.state != LeagueState.INICIADA:
+            raise InvalidLeagueState("League is not in progress")
+
+        # get club
+        club = club_repository.get_by_user_id(db, user_id)
+
+        if club is None:
+            raise LeagueForbidden("User does not have a club")
+
+        # get the respective league participation
+        participation = (
+            league_participation_repository
+            .get_participation_by_club_and_league(
+                db=db,
+                league_id=league_id,
+                club_id=club.id,
+            )
+        )
+
+        if participation is None:
+            raise LeagueForbidden("User is not participating in this league")
+
+        # get the respective participation roster
+        roster = participation.roster
+
+        # build a temporary roster to compare the new and old players, and verify that they are the same players
+        new_players = [
+            PlayerOnRoster(
+                player_id=p.player_id,
+                is_starter=p.is_starter,
+                slot=p.slot,
+                initial_behavior_id=p.initial_behavior_id,
+            )
+            for p in data.players
+        ]
+        temporary_roster = Roster(club_id=club.id, formation=data.formation, players=new_players)
+
+        # validate roster
+        try:
+            temporary_roster.validate_roster()
+        except ValueError as error:
+            raise InvalidRoster(str(error)) from error
+
+        # verify new players are the same that the old players
+        current_ids = {p.player_id for p in roster.players}
+        new_ids = {p.player_id for p in new_players}
+
+        if current_ids != new_ids:
+            raise InvalidRoster("The roster must contain the samesix players selected for this league")
+
+        # validate behaviors
+        for p in data.players:
+            if p.initial_behavior_id is None:
+                continue
+
+            behavior = behavior_repository.get_by_id(db, p.initial_behavior_id)
+
+            if behavior is None:
+                raise InvalidRoster("Behavior does not exist")
+
+            if (not behavior.is_default and behavior.club_id != club.id):
+                raise InvalidRoster("Behavior does not belong to user's club")
+
+        # now, we can modify the actual roster
+        roster.formation = data.formation
+        roster.players = [
+            PlayerOnRoster(
+                player_id=p.player_id,
+                is_starter=p.is_starter,
+                slot=p.slot,
+                initial_behavior_id=p.initial_behavior_id,
+            )
+            for p in data.players
+        ]
+
+        # save changes
+        db.commit()
+
+    except Exception:
+        db.rollback()
+        raise
