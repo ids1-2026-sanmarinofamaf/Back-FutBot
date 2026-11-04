@@ -11,10 +11,8 @@ from app.models.friendly_game_participation import FriendlyGameRole
 
 from app.game.models.match import Match
 from app.game.models.match_participation import MatchParticipation
-from app.game.models.player_in_match import PlayerInMatch
 from app.game.models.ball import Ball
 
-from app.game.formations import FORMATION_POSITIONS
 from app.game.constants import FIELD_WIDTH, FIELD_HEIGHT, TICS_PER_SECOND
 
 from app.services.match_service import (
@@ -22,6 +20,7 @@ from app.services.match_service import (
     start_match,
 )
 
+from app.services.match_builder import create_match_participation
 from app.services import session_websocket_service
 
 from app.repositories import (
@@ -45,82 +44,19 @@ class FriendlyGameNotFoundError(Exception):
 class FriendlyGameForbiddenError(Exception):
     pass
 
-# helper for create playerInMatch
-def _create_player_in_match(
-    db: Session,
-    player_on_roster: PlayerOnRoster,
-    formation,
-    mirror_position: bool,
-) -> PlayerInMatch:
-    # obtain the player, which is useful for the PACSS
-    player = player_repository.get_by_id(db,player_on_roster.player_id)
-
-    if player is None:
-        raise ValueError("Player does not exist")
-
-    # substitutes do not have a starting field position
-    if not player_on_roster.is_starter:
-        starting_position = None
-        position = (0.0, 0.0)
-
-    else:
-        starting_position = FORMATION_POSITIONS[formation][player_on_roster.slot]
-
-        # FORMATION_POSITIONS defines one side of the field.
-        # The second team uses the mirrored coordinate.
-        if mirror_position:
-            starting_position = (
-                FIELD_WIDTH - starting_position[0],
-                starting_position[1],
-            )
-
-        position = starting_position
-    # build the playerInMatch
-    return PlayerInMatch(
-        player_id=player.id,
-
-        position=position,
-
-        starting_position=starting_position,
-
-        power=player.power,
-        agility=player.agility,
-        control=player.control,
-        speed=player.speed,
-        strength=player.strength,
-
-        current_behavior_id=(
-            player_on_roster.initial_behavior_id
-            if player_on_roster.is_starter
-            else None
-        ),
-
-        is_on_field=player_on_roster.is_starter,
-    )
 
 def _create_match_participation(
     db: Session,
     friendly_participation,
     mirror_position: bool,
 ) -> MatchParticipation:
-
-    roster = friendly_participation.roster
-
-    players = [
-        _create_player_in_match(
-            db=db,
-            player_on_roster=player_on_roster,
-            formation=roster.formation,
-            mirror_position=mirror_position,
-        )
-        for player_on_roster in roster.players
-    ]
-
-    return MatchParticipation(
-        club_id=friendly_participation.club_id,
-        roster_id=friendly_participation.roster_id,
-        players=players,
+    return create_match_participation(
+        db=db,
+        roster=friendly_participation.roster,
+        mirror_position=mirror_position,
     )
+
+
 class FriendlyGameNotFound(Exception):
     pass
 

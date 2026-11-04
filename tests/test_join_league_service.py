@@ -21,8 +21,8 @@ def db():
     return MagicMock()
 
 
-@pytest.fixture
 # mock repositories used by the service
+@pytest.fixture
 def repos():
     with (
         patch("app.services.league_service.league_repository") as league_repo,
@@ -85,7 +85,11 @@ def valid_join_repos(repos):
         max_clubs=8,
     )
 
-    repos.club.get_by_user_id.return_value = SimpleNamespace(id=2)
+    repos.club.get_by_user_id.return_value = SimpleNamespace(
+        id=2,
+        name="Test Club",
+        avatar="",
+    )
 
     repos.participation.get_participation_by_club_and_league.return_value = None
 
@@ -110,11 +114,12 @@ def valid_join_repos(repos):
     return repos
 
 
-def test_join_league_not_found(db, repos, valid_data):
+@pytest.mark.asyncio
+async def test_join_league_not_found(db, repos, valid_data):
     repos.league.get_by_id.return_value = None
 
     with pytest.raises(LeagueNotFound, match="League does not exist"):
-        join_league(
+        await join_league(
             db=db,
             league_id=999,
             user_id=5,
@@ -128,6 +133,7 @@ def test_join_league_not_found(db, repos, valid_data):
     repos.participation.create_participation.assert_not_called()
 
 
+@pytest.mark.asyncio
 @pytest.mark.parametrize(
     "state",
     [
@@ -135,7 +141,7 @@ def test_join_league_not_found(db, repos, valid_data):
         LeagueState.FINALIZADA,
     ],
 )
-def test_join_league_not_available(db, repos, valid_data, state):
+async def test_join_league_not_available(db, repos, valid_data, state):
     repos.league.get_by_id.return_value = SimpleNamespace(
         id=10,
         creator_id=1,
@@ -144,7 +150,7 @@ def test_join_league_not_available(db, repos, valid_data, state):
     )
 
     with pytest.raises(LeagueNotAvailable, match="League is not available"):
-        join_league(
+        await join_league(
             db=db,
             league_id=10,
             user_id=2,
@@ -158,7 +164,8 @@ def test_join_league_not_available(db, repos, valid_data, state):
     repos.participation.create_participation.assert_not_called()
 
 
-def test_join_league_already_participating(
+@pytest.mark.asyncio
+async def test_join_league_already_participating(
     db,
     valid_join_repos,
     valid_data,
@@ -172,7 +179,7 @@ def test_join_league_already_participating(
         AlreadyParticipating,
         match="Club is already participating in this league",
     ):
-        join_league(
+        await join_league(
             db=db,
             league_id=10,
             user_id=5,
@@ -190,11 +197,13 @@ def test_join_league_already_participating(
         club_id=2,
     )
 
-def test_join_league_full(db, valid_join_repos, valid_data):
+
+@pytest.mark.asyncio
+async def test_join_league_full(db, valid_join_repos, valid_data):
     valid_join_repos.league.count_participations.return_value = 8
 
     with pytest.raises(LeagueFull, match="League is full"):
-        join_league(
+        await join_league(
             db=db,
             league_id=10,
             user_id=5,
@@ -217,9 +226,10 @@ def test_join_league_full(db, valid_join_repos, valid_data):
     )
 
 
-def test_join_league_success(db, valid_join_repos, valid_data):
+@pytest.mark.asyncio
+async def test_join_league_success(db, valid_join_repos, valid_data):
 
-    participation, roster = join_league(
+    participation, roster = await join_league(
         db=db,
         league_id=10,
         user_id=5,
@@ -248,7 +258,8 @@ def test_join_league_success(db, valid_join_repos, valid_data):
     )
 
 
-def test_join_league_with_default_behaviors(
+@pytest.mark.asyncio
+async def test_join_league_with_default_behaviors(
     db,
     valid_join_repos,
     valid_data,
@@ -259,7 +270,7 @@ def test_join_league_with_default_behaviors(
         club_id=None,
     )
 
-    participation, roster = join_league(
+    participation, roster = await join_league(
         db=db,
         league_id=10,
         user_id=5,

@@ -1,15 +1,22 @@
+
 from fastapi.testclient import TestClient
 import pytest
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, Mock
 import copy
 from app.game.models.match_participation import MatchParticipation
 from app.game.models.ball import Ball
 from app.game.models.match import Match
-from app.schemas.match_websocket import (MatchStateMessage,BallState)
+from app.schemas.match_websocket import (
+    MatchStateMessage,
+    BallState,
+)
 from app.main import app
 # the endpoint always use the manager = match_connection_manager
 from app.services.match_websocket_service import match_connection_manager
-from app.services.match_websocket_service import (MatchConnectionManager, build_match_state_message)
+from app.services.match_websocket_service import (
+    MatchConnectionManager,
+    build_match_state_message,
+)
 
 from unittest.mock import AsyncMock, MagicMock
 
@@ -52,14 +59,14 @@ def match(six_players):
             position=(20.0, 10.0),
             velocity=(0.0, 0.0),
         ),
-        duration_ticks=10,
+        duration_ticks=4,
     )
 
 def test_client_can_connect_to_match():
     match_id = 1
 
     match_connection_manager.active_connections.clear()
-    
+
     with client.websocket_connect(f"/ws/matches/{match_id}"):
         # we checked that the connection was created and that it was just one
         assert match_id in match_connection_manager.active_connections
@@ -258,6 +265,9 @@ async def test_match_runner_sends_initial_state_and_tick_updates(match):
     runner = MatchRunner(
         behavior_coordinator,
         game_engine,
+        hydration_duration=0,
+        halftime_duration=0,
+        execution_window=0,
     )
 
     websocket = AsyncMock()
@@ -268,20 +278,57 @@ async def test_match_runner_sends_initial_state_and_tick_updates(match):
     ] = [websocket]
 
     # use only two ticks 
-    match.duration_ticks = 2
+    match.duration_ticks = 4
 
     await runner.run_match(match)
 
-    # 1 initial state + 2 tick updates
-    assert websocket.send_json.await_count == 3
+    # 1 initial state + 4 tick updates + 3 break states + 9 break events
+    assert websocket.send_json.await_count == 17
 
     sent_messages = [
         call.args[0]
         for call in websocket.send_json.await_args_list
     ]
 
+    events = [message["event"] for message in sent_messages]
+
+    assert events.count("estado_partido") == 8
+    assert events.count("pause_started") == 3
+    assert events.count("substitution_window_closed") == 3
+    assert events.count("pause_finished") == 3
+
     assert sent_messages[0]["event"] == "estado_partido"
     assert sent_messages[0]["actual_tic"] == 0
 
-    assert sent_messages[1]["actual_tic"] == 1
-    assert sent_messages[2]["actual_tic"] == 2
+    state_messages = [
+        message
+        for message in sent_messages
+        if message["event"] == "estado_partido"
+    ]
+
+    assert [message["actual_tic"] for message in state_messages] == [
+        0, 1, 1, 2, 2, 3, 3, 4
+    ]
+
+
+@pytest.mark.asyncio
+async def test_close_match_continues_after_connection_error():
+    manager = MatchConnectionManager()
+    failing_connection = Mock()
+    healthy_connection = Mock()
+
+    failing_connection.close = AsyncMock(
+        side_effect=RuntimeError("Connection already closed"),
+    )
+    healthy_connection.close = AsyncMock()
+
+    manager.active_connections[123] = [
+        failing_connection,
+        healthy_connection,
+    ]
+
+    await manager.close_match_connection(123)
+
+    failing_connection.close.assert_awaited_once_with()
+    healthy_connection.close.assert_awaited_once_with()
+    assert 123 not in manager.active_connections

@@ -81,3 +81,19 @@ def get_default_behaviors(db: Session) -> list[Behavior]:
             .where(Behavior.is_default.is_(True))
         ).all()
     )
+
+
+def save(db: Session, behavior: Behavior) -> Behavior:
+    """
+    Stage a new or updated Behavior instance in the current session.
+
+    Args:
+        db: Active SQLAlchemy database session.
+        behavior: Behavior ORM instance to persist.
+
+    Returns:
+        The staged Behavior instance with its primary key populated.
+    """
+    db.add(behavior)
+    db.flush()
+    return behavior

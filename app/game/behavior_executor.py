@@ -14,35 +14,45 @@ from app.game.context import (
     clear_current_context,
     )
 
+
 Action = MoveAction | KickAction | WaitAction
 
-def execute_behavior(
-        context: BehaviorContext,
-        behavior: RuntimeBehavior,
+
+class InvalidBehaviorAction(Exception):
+    """
+    Raised when a behavior returns an invalid action.
+    """
+
+
+def execute_behavior_strict(
+    context: BehaviorContext,
+    behavior: RuntimeBehavior,
 ) -> Action:
     """
-    Execute a runtime behavior within the given BehaviorContext.
+    Execute a behavior and propagate execution errors.
 
     Args:
         context: Execution context available to Behavior API primitives.
         behavior: Runtime behavior whose play() function will be executed.
 
     Returns:
-        Action returned by play(), or WaitAction if execution fails or
-        returns an invalid action.
+        The valid action returned by play().
+
+    Raises:
+        InvalidBehaviorAction: If play() returns an invalid action.
+        Exception: If play() raises an exception.
     """
     set_current_context(context)
 
     try:
         action = behavior.play()
 
-        if not isinstance(action, (MoveAction, KickAction, WaitAction)):
-            return WaitAction()
+        if not isinstance(action, Action):
+            raise InvalidBehaviorAction(
+                "Behavior returned an invalid action"
+            )
 
         return action
-    except Exception:
-        return WaitAction()
-    
+
     finally:
         clear_current_context()
-    
