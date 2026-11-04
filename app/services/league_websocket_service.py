@@ -12,6 +12,9 @@ from app.schemas.league_websocket import (
     LeagueLobbyUser,
     LeagueUserEvent,
     LeagueStateEvent,
+    LeagueRoundStartedEvent,
+    LeagueRoundFinishedEvent,
+    LeagueFinishedEvent,
 )
 
 
@@ -232,7 +235,14 @@ class LeagueConnectionManager:
     async def broadcast(
         self,
         league_id: int,
-        state: LeagueLobbyState | LeagueUserEvent | LeagueStartedEvent,
+        state: (
+            LeagueLobbyState
+            | LeagueUserEvent
+            | LeagueStartedEvent
+            | LeagueRoundStartedEvent
+            | LeagueRoundFinishedEvent
+            | LeagueFinishedEvent
+        ),
     ) -> None:
         league_connections = self.active_connections.get(
             league_id, {}

@@ -6,6 +6,8 @@ from unittest.mock import Mock, call, AsyncMock
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session, sessionmaker
 
+from contextlib import contextmanager
+
 import pytest
 
 from app.database import Base
@@ -33,6 +35,8 @@ from app.services.league_runner import (
     load_round_matches,
     complete_round,
 )
+
+from app.schemas.league_websocket import LeagueRoundStartedEvent
 
 
 class ControlledMatchStarter:
@@ -91,12 +95,89 @@ class ControlledMatchStarter:
             raise
 
 
+@contextmanager
+def tracked_runner_session(probe):
+    probe.open_sessions += 1
+
+    try:
+        with probe.sessions() as db:
+            yield db
+    finally:
+        probe.open_sessions -= 1
+
+
+class RunnerEventProbe:
+    def __init__(self, bind):
+        self.sessions = sessionmaker(bind=bind)
+        self.open_sessions = 0
+        self.events = []
+
+    def __call__(self):
+        return tracked_runner_session(self)
+
+    async def notify(self, league_id, event):
+        assert self.open_sessions == 0
+
+        with self.sessions() as db:
+            league = db.get(League, league_id)
+
+            if event.type == "league_round_finished":
+                assert league.last_completed_round == event.round
+
+                for result in event.results:
+                    persisted = db.get(PersistedMatch, result.match_id)
+
+                    assert persisted.round == event.round
+                    assert persisted.state == MatchState.FINALIZADO
+                    assert persisted.home_goals == result.score.local
+                    assert persisted.away_goals == result.score.visitante
+
+            elif event.type == "league_finished":
+                assert league.state == LeagueState.FINALIZADA
+
+        self.events.append(event)
+
+
 @pytest.fixture
 def runtime_matches():
     return [
         SimpleNamespace(match_id=100),
         SimpleNamespace(match_id=101),
     ]
+
+
+@pytest.fixture
+def runner_event_setup(monkeypatch, round_db, round_case):
+    probe = RunnerEventProbe(round_db.bind)
+    notify = AsyncMock(side_effect=probe.notify)
+    execute = AsyncMock()
+
+    real_notify = league_runner._notify_league_event
+
+    monkeypatch.setattr(league_runner, "SessionLocal", probe)
+    monkeypatch.setattr(
+        league_runner,
+        "build_round_matches",
+        Mock(side_effect=[
+            make_completed_matches(round_case),
+            make_second_round_matches(round_case),
+        ]),
+    )
+    monkeypatch.setattr(
+        league_runner,
+        "load_match_behaviors",
+        Mock(return_value=[]),
+    )
+    monkeypatch.setattr(league_runner, "run_round_matches", execute)
+    monkeypatch.setattr(league_runner.asyncio, "sleep", AsyncMock())
+    monkeypatch.setattr(league_runner, "_notify_league_event", notify)
+
+    return SimpleNamespace(
+        probe=probe,
+        notify=notify,
+        execute=execute,
+        real_notify=real_notify,
+    )
 
 
 def mock_match_execution(
@@ -953,3 +1034,187 @@ async def test_start_league_runner_avoids_duplicates(monkeypatch):
 
     assert task.cancelled()
     assert not league_runner._running_leagues
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("fail_start", [False, True])
+async def test_round_start_event_requires_all_matches_registered(
+    monkeypatch,
+    runtime_matches,
+    fail_start,
+):
+    starter = ControlledMatchStarter(
+        expected_matches=2,
+        fail_during_start=101 if fail_start else None,
+    )
+    starter.release.set()
+
+    start = Mock(wraps=starter)
+    notify = AsyncMock()
+    timeline = Mock()
+    timeline.attach_mock(start, "start")
+    timeline.attach_mock(notify, "notify")
+
+    monkeypatch.setattr(league_runner, "start_match_task", start)
+    monkeypatch.setattr(league_runner, "_notify_league_event", notify)
+
+    event = LeagueRoundStartedEvent(
+        league_id=10,
+        round=1,
+        match_ids=[100, 101],
+    )
+
+    try:
+        if fail_start:
+            with pytest.raises(RuntimeError, match="Cannot start match"):
+                await league_runner.run_round_matches(
+                    matches=runtime_matches,
+                    behaviors_by_match={100: [], 101: []},
+                    started_event=event,
+                )
+
+            notify.assert_not_awaited()
+            assert all(task.cancelled() for task in starter.tasks)
+        else:
+            await asyncio.wait_for(
+                league_runner.run_round_matches(
+                    matches=runtime_matches,
+                    behaviors_by_match={100: [], 101: []},
+                    started_event=event,
+                ),
+                timeout=2,
+            )
+
+            assert timeline.mock_calls == [
+                call.start(match=runtime_matches[0], behaviors=[]),
+                call.start(match=runtime_matches[1], behaviors=[]),
+                call.notify(10, event),
+            ]
+            notify.assert_awaited_once_with(10, event)
+    finally:
+        for task in starter.tasks:
+            task.cancel()
+        await asyncio.gather(*starter.tasks, return_exceptions=True)
+
+
+@pytest.mark.asyncio
+async def test_runner_emits_committed_results_before_league_finished(
+    round_case,
+    runner_event_setup,
+):
+    setup = runner_event_setup
+
+    await league_runner.run_league(round_case.league_id)
+
+    events = setup.probe.events
+
+    assert [event.type for event in events] == [
+        "league_round_finished",
+        "league_round_finished",
+        "league_finished",
+    ]
+
+    first, last, finished = events
+
+    assert first.round == 1
+    assert [result.match_id for result in first.results] == [1001, 1002]
+    assert [
+        (result.score.local, result.score.visitante)
+        for result in first.results
+    ] == [(2, 1), (0, 0)]
+
+    assert first.break_ends_at is not None
+    assert first.break_ends_at.utcoffset().total_seconds() == 0
+    assert all(row.matches_played == 1 for row in first.standings)
+
+    assert last.round == 2
+    assert [result.match_id for result in last.results] == [1003]
+    assert last.break_ends_at is None
+
+    standings = {row.club_id: row for row in last.standings}
+    expected_played = [2, 1, 2, 1]
+
+    assert [
+        standings[club_id].matches_played
+        for club_id in round_case.club_ids
+    ] == expected_played
+
+    assert finished.league_id == round_case.league_id
+    assert finished.state == "FINALIZADA"
+
+    # El runner también prepara correctamente los eventos de inicio.
+    started_events = [
+        awaited.kwargs["started_event"]
+        for awaited in setup.execute.await_args_list
+    ]
+
+    assert [
+        (event.round, event.match_ids)
+        for event in started_events
+    ] == [
+        (1, [1001, 1002]),
+        (2, [1003]),
+    ]
+
+    assert setup.probe.open_sessions == 0
+
+
+@pytest.mark.asyncio
+async def test_runner_does_not_notify_results_after_rollback(
+    monkeypatch,
+    round_db,
+    round_case,
+    runner_event_setup,
+):
+    monkeypatch.setattr(
+        league_runner,
+        "update_statistics",
+        Mock(side_effect=RuntimeError("Statistics update failed")),
+    )
+
+    with pytest.raises(RuntimeError, match="Statistics update failed"):
+        await league_runner.run_league(round_case.league_id)
+
+    runner_event_setup.notify.assert_not_awaited()
+    assert runner_event_setup.probe.open_sessions == 0
+    assert_round_unmodified(round_db, round_case)
+
+
+@pytest.mark.asyncio
+async def test_notification_errors_do_not_stop_league(
+    monkeypatch,
+    round_db,
+    round_case,
+    runner_event_setup,
+):
+    monkeypatch.setattr(
+        league_runner,
+        "_notify_league_event",
+        runner_event_setup.real_notify,
+    )
+
+    broadcast = AsyncMock(side_effect=RuntimeError("WebSocket failure"))
+    monkeypatch.setattr(
+        league_runner.league_connection_manager,
+        "broadcast",
+        broadcast,
+    )
+
+    await league_runner.run_league(round_case.league_id)
+
+    round_db.expire_all()
+    league = round_db.get(League, round_case.league_id)
+
+    assert league.state == LeagueState.FINALIZADA
+    assert league.last_completed_round == 2
+
+    assert [
+        awaited.args[1].type
+        for awaited in broadcast.await_args_list
+    ] == [
+        "league_round_finished",
+        "league_round_finished",
+        "league_finished",
+    ]
+
+    assert runner_event_setup.probe.open_sessions == 0

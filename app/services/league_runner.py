@@ -21,10 +21,24 @@ from app.models.match import MatchState as PersistedMatchState
 from app.models.match_participation import MatchParticipation, MatchRole
 from app.models.roster import Roster
 
-from app.services.club_statistics_service import update_league_statistics, update_statistics
-from app.services.league_service import update_standings
+from app.services.club_statistics_service import (
+    update_league_statistics,
+    update_statistics,
+)
+from app.services.league_service import (
+    update_standings,
+    get_league_detail,
+)
+from app.services.league_websocket_service import league_connection_manager
 from app.services.match_builder import create_match_participation
 from app.services.match_service import load_match_behaviors, start_match_task
+
+from app.schemas.league_websocket import (
+    LeagueRoundStartedEvent,
+    LeagueRoundFinishedEvent,
+    LeagueFinishedEvent,
+    LeagueMatchResult,
+)
 
 
 ROUND_BREAK_SECONDS = 60
@@ -117,6 +131,7 @@ def build_round_matches(
 async def run_round_matches(
     matches: list[RuntimeMatch],
     behaviors_by_match: dict[int, list[BehaviorDefinition]],
+    started_event: LeagueRoundStartedEvent | None = None,
 ) -> list[RuntimeMatch]:
     """
     Run all matches of a round concurrently.
@@ -130,6 +145,12 @@ async def run_round_matches(
                 behaviors=behaviors_by_match[match.match_id],
             )
             tasks.append(task)
+
+        if started_event is not None:
+            await _notify_league_event(
+                started_event.league_id,
+                started_event,
+            )
 
         await asyncio.gather(*tasks)
 
@@ -351,6 +372,11 @@ async def run_league(league_id: int) -> None:
         await run_round_matches(
             matches=matches,
             behaviors_by_match=behaviors,
+            started_event=LeagueRoundStartedEvent(
+                league_id=league_id,
+                round=round_number,
+                match_ids=[match.match_id for match in matches]
+            )
         )
 
         # 5. Confirm the entire round in a single transaction.
@@ -362,6 +388,40 @@ async def run_league(league_id: int) -> None:
                 matches=matches,
                 is_last_round=(round_number == last_round),
             )
+
+            detail = get_league_detail(db, league_id)
+
+            finish_round_event = LeagueRoundFinishedEvent(
+                league_id=league_id,
+                round=round_number,
+                results= [
+                    LeagueMatchResult(
+                        match_id=match.match_id,
+                        score=match.score,
+                    )
+                    for match in detail.fixture
+                    if match.round == round_number
+                ],
+                standings=detail.standings,
+                break_ends_at=detail.break_ends_at,   
+            )
+
+        await _notify_league_event(
+            league_id,
+            finish_round_event,
+        )
+
+        if detail.state == LeagueState.FINALIZADA:
+            finish_league_event = LeagueFinishedEvent(
+                league_id=league_id,
+            )
+
+            await _notify_league_event(
+                league_id,
+                finish_league_event,
+            )
+
+            return
 
 
 def _on_league_finished(
@@ -403,4 +463,26 @@ async def stop_league_runners() -> None:
         await asyncio.gather(
             *tasks,
             return_exceptions=True,
+        )
+
+
+async def _notify_league_event(
+    league_id: int,
+    event: (
+        LeagueRoundStartedEvent
+        | LeagueRoundFinishedEvent
+        | LeagueFinishedEvent
+    ),
+) -> None:
+    try:
+        await league_connection_manager.broadcast(
+            league_id,
+            event
+        )
+
+    except Exception:
+        logger.exception(
+            "Failed to notify league %s about event  %s",
+            league_id,
+            event.type,
         )
