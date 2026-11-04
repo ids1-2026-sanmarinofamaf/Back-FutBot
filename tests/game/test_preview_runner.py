@@ -330,15 +330,13 @@ async def test_run_preview_waits_remaining_tick_time(
     preview.duration_ticks = 1
 
     with (
-        patch(
-            "app.game.preview_runner.time.monotonic",
-            side_effect=[10.0, 10.02],
-        ),
+        patch("app.game.preview_runner.time") as mock_time,
         patch(
             "app.game.preview_runner.asyncio.wait_for",
             new_callable=AsyncMock,
         ) as mock_wait,
     ):
+        mock_time.monotonic.side_effect = [10.0, 10.02]
         mock_wait.side_effect = fake_wait_for
 
         await runner.run_preview(preview_id, preview)
@@ -359,15 +357,13 @@ async def test_run_preview_does_not_wait_after_slow_tick(
     preview.duration_ticks = 1
 
     with (
-        patch(
-            "app.game.preview_runner.time.monotonic",
-            side_effect=[10.0, 10.15],
-        ),
+        patch("app.game.preview_runner.time") as mock_time,
         patch(
             "app.game.preview_runner.asyncio.wait_for",
             new_callable=AsyncMock,
         ) as mock_wait,
     ):
+        mock_time.monotonic.side_effect = [10.0, 10.15]
         await runner.run_preview(preview_id, preview)
 
     mock_wait.assert_not_awaited()

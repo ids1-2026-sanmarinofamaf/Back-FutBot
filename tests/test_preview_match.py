@@ -28,6 +28,7 @@ DEFAULT_IDS = {
 @pytest.fixture
 def preview_match():
     return create_preview_match(
+        match_id=123,
         behavior_teammate_1=10,
         behavior_teammate_2=20,
         default_behaviors_ids=DEFAULT_IDS,
@@ -43,6 +44,7 @@ def test_preview_match_initial_state(preview_match):
     )
     assert preview_match.ball.position == FIELD_CENTER
     assert preview_match.ball.velocity == (0.0, 0.0)
+    assert preview_match.match_id == 123
 
 
 def test_preview_match_has_correct_players(preview_match):
@@ -127,11 +129,23 @@ def test_preview_match_uses_fixed_player_stats(preview_match):
 
 
 def test_preview_matches_have_independent_state():
-    first = create_preview_match(10, 20, DEFAULT_IDS)
-    second = create_preview_match(10, 20, DEFAULT_IDS)
+    first = create_preview_match(
+        match_id=123,
+        behavior_teammate_1=10,
+        behavior_teammate_2=20,
+        default_behaviors_ids=DEFAULT_IDS,
+    )
+    second = create_preview_match(
+        match_id=124,
+        behavior_teammate_1=10,
+        behavior_teammate_2=20,
+        default_behaviors_ids=DEFAULT_IDS,
+    )
 
     first.participation_a.players[0].position = (12.0, 8.0)
 
+    assert first.match_id == 123
+    assert second.match_id == 124
     assert second.participation_a.players[0].position != (12.0, 8.0)
 
 
@@ -159,6 +173,7 @@ def test_preview_match_has_distinct_participations(preview_match):
 
 def test_preview_match_allows_same_behavior_for_teammates():
     match = create_preview_match(
+        match_id=123,
         behavior_teammate_1=101,
         behavior_teammate_2=101,
         default_behaviors_ids=DEFAULT_IDS,

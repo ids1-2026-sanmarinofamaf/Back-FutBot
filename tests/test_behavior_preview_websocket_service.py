@@ -95,95 +95,6 @@ def test_disconnect_unknown_preview_does_nothing(
 
 
 @pytest.mark.asyncio
-async def test_connect_registers_websocket(
-    manager,
-    preview_id,
-    websocket,
-):
-    await manager.connect(preview_id, websocket)
-
-    websocket.accept.assert_awaited_once()
-    assert manager.active_connections[preview_id] == [websocket]
-
-
-@pytest.mark.asyncio
-async def test_connect_allows_multiple_websockets(
-    manager,
-    preview_id,
-):
-    ws1 = AsyncMock()
-    ws2 = AsyncMock()
-
-    await manager.connect(preview_id, ws1)
-    await manager.connect(preview_id, ws2)
-
-    assert manager.active_connections[preview_id] == [ws1, ws2]
-
-
-@pytest.mark.asyncio
-async def test_disconnect_removes_only_requested_websocket(
-    manager,
-    preview_id,
-):
-    ws1 = AsyncMock()
-    ws2 = AsyncMock()
-
-    await manager.connect(preview_id, ws1)
-    await manager.connect(preview_id, ws2)
-
-    manager.disconnect(preview_id, ws1)
-
-    assert manager.active_connections[preview_id] == [ws2]
-
-
-@pytest.mark.asyncio
-async def test_disconnect_removes_preview_when_empty(
-    manager,
-    preview_id,
-    websocket,
-):
-    await manager.connect(preview_id, websocket)
-
-    manager.disconnect(preview_id, websocket)
-
-    assert preview_id not in manager.active_connections
-
-
-def test_disconnect_unknown_preview_does_nothing(
-    manager,
-    preview_id,
-    websocket,
-):
-    manager.disconnect(preview_id, websocket)
-
-    assert manager.active_connections == {}
-
-
-@pytest.mark.asyncio
-async def test_broadcast_sends_message_to_all_connections(
-    manager,
-    preview_id,
-):
-    ws1 = AsyncMock()
-    ws2 = AsyncMock()
-
-    await manager.connect(preview_id, ws1)
-    await manager.connect(preview_id, ws2)
-
-    message = BehaviorPreviewFinishedMessage(reason="completed")
-
-    await manager.broadcast(preview_id, message)
-
-    expected = {
-        "event": "preview_finished",
-        "reason": "completed",
-    }
-
-    ws1.send_json.assert_awaited_once_with(expected)
-    ws2.send_json.assert_awaited_once_with(expected)
-
-
-@pytest.mark.asyncio
 async def test_broadcast_does_not_send_to_other_previews(
     manager,
 ):
@@ -226,8 +137,11 @@ async def test_broadcast_removes_failed_connections(
     assert manager.active_connections[preview_id] == [healthy_ws]
 
     healthy_ws.send_json.assert_awaited_once_with(
-        message.model_dump()
+        message.model_dump(mode="json")
     )
+
+    failed_ws.close.assert_awaited_once()
+    healthy_ws.close.assert_not_awaited()
 
 
 @pytest.mark.asyncio
@@ -296,6 +210,7 @@ async def test_broadcast_match_snapshot(
     websocket,
 ):
     preview = create_preview_match(
+        match_id=123,
         behavior_teammate_1=10,
         behavior_teammate_2=20,
         default_behaviors_ids={
@@ -312,5 +227,5 @@ async def test_broadcast_match_snapshot(
     await manager.broadcast(preview_id, message)
 
     websocket.send_json.assert_awaited_once_with(
-        message.model_dump()
+        message.model_dump(mode="json")
     )
