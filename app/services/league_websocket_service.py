@@ -163,18 +163,19 @@ class LeagueConnectionManager:
             for websocket in user_connections
         ]
 
-        for user_id, websocket in connections:
-            try:
-                await self._send_json(
-                    websocket,
-                    state.model_dump(mode="json"),
-                )
-            except Exception:
-                self.disconnect(
-                    league_id,
-                    user_id,
-                    websocket,
-                )
+        payload = state.model_dump(mode="json")
+
+        sends = [
+            self._send_to_connection(
+                league_id=league_id,
+                user_id=user_id,
+                websocket=websocket,
+                payload=payload,
+            )
+            for user_id, websocket in connections
+        ]
+
+        await asyncio.gather(*sends)
 
 
     async def _send_json(
@@ -211,6 +212,27 @@ class LeagueConnectionManager:
                     code=code,
                     reason=reason,
                 )
+
+
+    async def _send_to_connection(
+        self,
+        league_id: int,
+        user_id: int,
+        websocket: WebSocket,
+        payload: dict,
+    ) -> None:
+        try:
+            await self._send_json(
+                websocket=websocket,
+                payload=payload,
+            )
+
+        except Exception:
+            self.disconnect(
+                league_id,
+                user_id,
+                websocket,
+            )
 
 
 # build the list of clubs participating in the league

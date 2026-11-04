@@ -545,3 +545,39 @@ async def test_close_cleans_records_even_when_connection_fails(operation):
     assert manager.active_connections == {20: {201: {other}}}
     assert manager._send_locks == {other: other_lock}
     assert other.closed == []
+
+
+@pytest.mark.asyncio
+async def test_broadcast_delivers_to_fast_client_while_slow_client_waits():
+    manager = LeagueConnectionManager()
+    slow = ControlledWebSocket()
+    fast = ControlledWebSocket()
+    fast.release.set()
+
+    await manager.connect(10, 101, slow)
+    await manager.connect(10, 102, fast)
+
+    event = build_league_user_event(league(), club(3), "user_joined")
+    payload = event.model_dump(mode="json")
+
+    task = asyncio.create_task(manager.broadcast(10, event))
+
+    try:
+        await asyncio.wait_for(slow.started.wait(), timeout=1)
+        await asyncio.wait_for(fast.started.wait(), timeout=1)
+
+        assert fast.sent == [payload]
+        assert slow.sent == []
+        assert not task.done()
+
+        slow.release.set()
+        await asyncio.wait_for(task, timeout=1)
+
+        assert slow.sent == [payload]
+        assert fast.sent == [payload]
+    finally:
+        slow.release.set()
+        task.cancel()
+        await asyncio.gather(task, return_exceptions=True)
+        manager.disconnect(10, 101, slow)
+        manager.disconnect(10, 102, fast)
