@@ -94,13 +94,16 @@ async def _run_match(
             remove_match(match.match_id)
             
 
-def start_match(
+def start_match_task(
     match: Match,
     behaviors: list[BehaviorDefinition],
     on_finished: Callable[[Match], Awaitable[None]] | None = None,
-) -> int:
+) -> asyncio.Task[None]:
     """
     Register and start a match using the shared worker pool.
+
+    Return the execution task so callers can await completion,
+    handle failures, or cancel the match.
 
     Args:
         match: Match to execute.
@@ -108,7 +111,7 @@ def start_match(
         on_finished: Optional callback executed after the match finishes.
 
     Returns:
-        Identifier of the started match.
+        Task responsible for executing and cleaning up the match.
 
     Raises:
         RuntimeError: If the shared worker pool is not initialized.
@@ -154,7 +157,35 @@ def start_match(
     _running_match_tasks.add(task)
     task.add_done_callback(_running_match_tasks.discard)
 
-    return match.match_id    
+    return task   
+
+
+def start_match(
+    match: Match,
+    behaviors: list[BehaviorDefinition],
+    on_finished: Callable[[Match], Awaitable[None]] | None = None,
+) -> int:
+    """
+    Start a match in the background and return its ID.
+
+    Preserves the original interface for callers that do not need
+    to await match completion.
+
+    Args:
+        match: Match to execute.
+        behaviors: Available behavior definitions for the match.
+        on_finished: Optional callback executed after the match finishes.
+
+    Returns:
+        Identifier of the started match.
+    """
+    start_match_task(
+        match=match,
+        behaviors=behaviors,
+        on_finished=on_finished
+    )
+
+    return match.match_id
 
 
 def change_player_behavior(

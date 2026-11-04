@@ -54,7 +54,7 @@ class MatchConnectionManager:
     ),
     ) -> None:
 
-        connections = self.active_connections.get(match_id, [])
+        connections = (self.active_connections.get(match_id, [])).copy()
 
         disconnected = []
         # sent the status for everyone
@@ -70,10 +70,15 @@ class MatchConnectionManager:
     async def close_match_connection(self, match_id: int) -> None:
         connections = self.active_connections.get(match_id, [])
 
-        for websocket in connections:
-            await websocket.close()
-        # after closing the connections, we clean the dictionary entry for that match
+        # clean the dictionary entry before closing the connections
         self.active_connections.pop(match_id, None)
+
+        for websocket in connections:
+            try:    
+                await websocket.close()
+
+            except Exception:
+                pass
 
 # prepare the messahe that will be sended by through the websocket
 def build_match_state_message(
