@@ -35,6 +35,7 @@ from app.services.league_service import (
     build_league_state,
     get_league_detail,
     update_league_roster,
+    get_league_roster,
 )
 from app.services.league_runner import start_league_runner
 
@@ -46,7 +47,7 @@ from app.schemas.league import (
     LeagueStartedEvent,
     LeagueDetail,
 )
-from app.schemas.roster import RosterCreate
+from app.schemas.roster import RosterCreate, RosterDetail
 
 router = APIRouter(prefix="/leagues",tags=["Leagues"])
 
@@ -309,5 +310,36 @@ async def update_my_league_roster(
     except InvalidRoster as error:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(error),
+        ) from error
+
+# obtain the respective league particiátion roster
+@router.get(
+    "/{league_id}/users/me/roster",
+    response_model=RosterDetail,
+    status_code=status.HTTP_200_OK,
+)
+async def get_my_league_roster(
+    league_id: int,
+    db: Session = Depends(get_db),
+    current_user=Depends(get_current_user),
+):
+    try:
+        return await run_in_threadpool(
+            get_league_roster,
+            db=db,
+            league_id=league_id,
+            user_id=current_user.id,
+        )
+
+    except LeagueNotFound as error:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=str(error),
+        ) from error
+
+    except LeagueForbidden as error:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
             detail=str(error),
         ) from error
