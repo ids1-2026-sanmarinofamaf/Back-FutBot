@@ -88,6 +88,12 @@ async def broadcast_leagues(
 ) -> None:
     payload = build_leagues_payload(db)
 
+    await broadcast_leagues_payload(payload)
+
+
+async def broadcast_leagues_payload(
+    payload: LeaguesSessionPayload,
+) -> None:
     await manager.broadcast(
         payload.model_dump(mode="json")
     )

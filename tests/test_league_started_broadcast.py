@@ -2,7 +2,8 @@ import json
 import asyncio
 
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch, ANY, call
+from functools import partial
 
 import pytest
 from fastapi.testclient import TestClient
@@ -17,6 +18,8 @@ from app.schemas.league import (
     FixtureMatchItem,
     StandingRow,
     LeagueStartedEvent,
+    LeaguesSessionPayload,
+    LeagueUpdate,
 )
 from app.services.league_service import (
     LeagueNotFound,
@@ -131,10 +134,34 @@ def connected_clients():
 @pytest.fixture
 def start_dependencies():
     with (
-        patch.object(leagues_api, "start_league") as start,
-        patch.object(leagues_api.league_repository, "get_by_id", return_value=SimpleNamespace(id=10)),
-        patch.object(leagues_api, "build_league_state", return_value=(make_fixture(), make_standings())),
-        patch.object(leagues_api.session_websocket_service, "broadcast_leagues", new=AsyncMock()),
+        patch.object(
+            leagues_api,
+            "start_league"
+        ) as start,
+        patch.object(
+            leagues_api.league_repository,
+            "get_by_id",
+            return_value=SimpleNamespace(id=10)
+        ),
+        patch.object(
+            leagues_api,
+            "build_league_state",
+            return_value=(make_fixture(), make_standings())
+        ),
+        patch.object(
+            leagues_api.session_websocket_service,
+            "build_leagues_payload",
+            return_value=LeaguesSessionPayload(leagues=[]),
+        ),
+        patch.object(
+            leagues_api.session_websocket_service,
+            "broadcast_leagues_payload",
+            new=AsyncMock(),
+        ),
+        patch.object(
+            leagues_api,
+            "start_league_runner",
+        ),
     ):
         yield start
 
@@ -213,6 +240,12 @@ def test_rejected_start_does_not_emit_league_started(
     assert connected_clients.second.sent == []
     assert connected_clients.other_league.sent == []
 
+    leagues_api.start_league_runner.assert_not_called()
+    (
+        leagues_api.session_websocket_service
+        .broadcast_leagues_payload.assert_not_awaited()
+    )
+
 
 # Verify that the manager sends league_started only to the given league
 @pytest.mark.asyncio
@@ -228,3 +261,110 @@ async def test_manager_broadcasts_league_started_only_to_its_league(connected_cl
     assert connected_clients.first.sent[0]["type"] == "league_started"
     assert connected_clients.second.sent[0]["type"] == "league_started"
     assert connected_clients.other_league.sent == []
+
+
+def test_start_closes_session_and_notifies_before_launching_runner(
+    api_dependencies,
+    start_dependencies,
+):
+    _, db = api_dependencies
+    timeline = MagicMock()
+
+    with patch.object(
+        league_connection_manager,
+        "broadcast",
+        new=AsyncMock(),
+    ) as broadcast:
+        timeline.attach_mock(db.close, "close_session")
+        timeline.attach_mock(broadcast, "notify_league")
+        timeline.attach_mock(
+            leagues_api.session_websocket_service.broadcast_leagues_payload,
+            "notify_session",
+        )
+        timeline.attach_mock(
+            leagues_api.start_league_runner,
+            "start_runner",
+        )
+
+        response = client.patch(
+            "/leagues/10",
+            json={"state": "INICIADA"},
+        )
+
+    assert response.status_code == 204
+    start_dependencies.assert_called_once()
+
+    assert timeline.mock_calls == [
+        call.close_session(),
+        call.notify_league(10, ANY),
+        call.notify_session(ANY),
+        call.start_runner(10),
+    ]
+
+    broadcast.assert_awaited_once()
+    assert broadcast.await_args.args[1].type == "league_started"
+
+
+async def blocked_notification(*args, cancelled, **kwargs):
+    try:
+        await asyncio.Event().wait()
+    except asyncio.CancelledError:
+        cancelled.set()
+        raise
+
+
+@pytest.mark.asyncio
+async def test_notification_timeout_still_launches_runner(
+    api_dependencies,
+    start_dependencies,
+    monkeypatch,
+):
+    user, db = api_dependencies
+    cancelled = asyncio.Event()
+
+    monkeypatch.setattr(leagues_api, "SEND_TIMEOUT_SECONDS", 0.01)
+
+    with (
+        patch.object(
+            leagues_api,
+            "run_in_threadpool",
+            new=AsyncMock(),
+        ),
+        patch.object(
+            league_connection_manager,
+            "broadcast",
+            new=AsyncMock(
+                side_effect=partial(
+                    blocked_notification,
+                    cancelled=cancelled,
+                ),
+            ),
+        ) as broadcast,
+    ):
+        task = asyncio.create_task(
+            leagues_api.start(
+                league_id=10,
+                data=LeagueUpdate(state="INICIADA"),
+                db=db,
+                current_user=user,
+            ),
+        )
+
+        try:
+            done, _ = await asyncio.wait({task}, timeout=1)
+
+            assert task in done, "El endpoint quedó esperando la notificación"
+            await task
+
+            broadcast.assert_awaited_once()
+            assert cancelled.is_set()
+        finally:
+            task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
+
+    db.close.assert_called_once_with()
+    leagues_api.start_league_runner.assert_called_once_with(10)
+    (
+        leagues_api.session_websocket_service
+        .broadcast_leagues_payload.assert_not_awaited()
+    )
