@@ -13,6 +13,18 @@ def get_by_id(
     return db.get(League, league_id)
 
 
+# 
+def  get_by_id_for_update(
+    db: Session,
+    league_id: int,
+) -> League | None:
+    return db.scalar(
+        select(League)
+        .where (League.id == league_id)
+        .with_for_update()
+    )
+    
+
 def update_state(
     db: Session,
     league: League,
@@ -60,6 +72,18 @@ def get_visible_leagues(
                         LeagueState.INICIADA,
                     ]
                 )
+            )
+            .order_by(League.id)
+        ).all()
+    )
+
+
+def get_started_leagues_ids(db: Session) -> list[int]:
+    return list(
+        db.scalars(
+            select(League.id)
+            .where(
+                League.state == LeagueState.INICIADA
             )
             .order_by(League.id)
         ).all()

@@ -44,7 +44,7 @@ def valid_league(repos):
 
     club = SimpleNamespace(id=1)
 
-    repos.league.get_by_id.return_value = league
+    repos.league.get_by_id_for_update.return_value = league
     repos.club.get_by_user_id.return_value = club
     repos.participation.count_participations.return_value = 3
 
@@ -77,7 +77,7 @@ def test_start_league_success(db, repos, valid_league):
 
 # league does not exist
 def test_start_league_not_found(db, repos):
-    repos.league.get_by_id.return_value = None
+    repos.league.get_by_id_for_update.return_value = None
 
     with pytest.raises(LeagueNotFound):
         start_league(db, 999, 5, LeagueState.INICIADA)
