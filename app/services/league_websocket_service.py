@@ -328,10 +328,12 @@ class LeagueConnectionManager:
                 )
 
         except Exception:
-            self.disconnect(
-                league_id,
-                user_id,
-                websocket,
+            await self.close_connection(
+                league_id=league_id,
+                user_id=user_id,
+                websocket=websocket,
+                code=1011,
+                reason="Unable to deliver league event"
             )
 
 
