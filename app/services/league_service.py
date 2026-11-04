@@ -631,3 +631,58 @@ def update_league_roster(
     except Exception:
         db.rollback()
         raise
+
+# get the roster, so the frontend can only shows the original players
+def get_league_roster(
+    db: Session,
+    league_id: int,
+    user_id: int,
+) -> RosterDetail:
+
+    # get league
+    league = league_repository.get_by_id(
+        db=db,
+        league_id=league_id,
+    )
+
+    if league is None:
+        raise LeagueNotFound("League does not exist")
+
+    # get club
+    club = club_repository.get_by_user_id(db, user_id)
+
+    if club is None:
+        raise LeagueForbidden("User does not have a club")
+
+    # get the respective league participation
+    participation = (
+        league_participation_repository
+        .get_participation_by_club_and_league(
+            db=db,
+            league_id=league_id,
+            club_id=club.id,
+        )
+    )
+
+    if participation is None:
+        raise LeagueForbidden(
+            "User is not participating in this league"
+        )
+
+    # get the respective participation roster
+    roster = participation.roster
+
+    # return the roster information
+    return RosterDetail(
+        roster_id=roster.id,
+        formation=roster.formation,
+        players=[
+            {
+                "player_id": p.player_id,
+                "is_starter": p.is_starter,
+                "slot": p.slot,
+                "initial_behavior_id": p.initial_behavior_id,
+            }
+            for p in roster.players
+        ],
+    )
