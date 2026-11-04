@@ -39,7 +39,10 @@ class PreviewRunner:
     ) -> None:
         snapshot = preview.snapshot()
 
-        actions = self.behavior_coordinator.get_actions(snapshot)
+        actions = await asyncio.to_thread(
+            self.behavior_coordinator.get_actions,
+            snapshot,
+        )
 
         self.game_engine.step(
             preview,

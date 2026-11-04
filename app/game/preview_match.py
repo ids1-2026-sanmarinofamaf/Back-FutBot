@@ -107,6 +107,7 @@ def _create_participation(
 
 
 def create_preview_match(
+    match_id: int,
     behavior_teammate_1: int,
     behavior_teammate_2: int,
     default_behaviors_ids: dict[str, int],
@@ -143,7 +144,7 @@ def create_preview_match(
     )
 
     return Match(
-        match_id=0,
+        match_id=match_id,
         participation_a=participation_a,
         participation_b=participation_b,
         ball = Ball(

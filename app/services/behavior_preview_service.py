@@ -4,6 +4,7 @@ from uuid import UUID, uuid4
 from sqlalchemy.orm import Session
 
 from app.repositories import behavior_repository
+from app.repositories import match_repository
 
 from app.game.preview_match import (
     create_preview_match,
@@ -17,6 +18,7 @@ from app.game.engine import GameEngine
 from app.game.models.behavior_definition import BehaviorDefinition
 from app.game.models.match import Match
 
+from app.services.match_service import get_worker_pool
 from app.services.behavior_preview_websocket_service import (
     preview_connection_manager,
 )
@@ -27,6 +29,7 @@ PREVIEW_START_DELAY = 5
 
 _active_previews: dict[UUID, tuple[int, PreviewRunner]] = {}
 _running_preview_tasks: set[asyncio.Task] = set()
+_pending_preview_users: set[int] = set()
 
 
 async def _run_preview(
@@ -66,7 +69,11 @@ async def _run_preview(
 
     finally:
         try: 
-            worker_pool.shutdown()
+            await asyncio.to_thread(
+                worker_pool.release_match,
+                preview.match_id,
+            )
+
         finally:
             _active_previews.pop(preview_id, None)
 
@@ -108,18 +115,23 @@ def load_preview_behaviors(
     return definitions, default_ids
 
 
-def create_preview(
+async def create_preview(
     db: Session,
     user_id: int,
     code: str,
     behavior_teammate_1: int,
     behavior_teammate_2: int,
 ) -> UUID:
-    if any(
-        owner_id == user_id
-        for owner_id, _ in _active_previews.values()
+    if (
+        user_id in _pending_preview_users
+        or any(
+            owner_id == user_id
+            for owner_id, _ in _active_previews.values()
+        )
     ):
         raise ValueError("User already has an active preview")
+
+
 
     definitions, default_ids = load_preview_behaviors(
         db,
@@ -134,22 +146,30 @@ def create_preview(
         )
     )
 
+    match_id = match_repository.get_next_match_id(db)
+
     preview = create_preview_match(
+        match_id,
         behavior_teammate_1,
         behavior_teammate_2,
         default_ids,
     )
 
-    worker_pool = BehaviorWorkerPool(
-        size=6,
-        timeout_ms=100,
-    )
+    worker_pool = get_worker_pool()
+    _pending_preview_users.add(user_id)
 
     try:
-        worker_pool.register_behaviors(definitions)
+        await asyncio.to_thread(
+            worker_pool.register_match,
+            preview.match_id,
+            definitions,
+        )
 
         runner = PreviewRunner(
-            behavior_coordinator=BehaviorCoordinator(worker_pool),
+            behavior_coordinator=BehaviorCoordinator(
+                worker_pool,
+                match_id=preview.match_id,
+            ),
             game_engine=GameEngine(),
         )
 
@@ -170,8 +190,14 @@ def create_preview(
         task.add_done_callback(_running_preview_tasks.discard)
 
     except Exception:
-        worker_pool.shutdown()
+        await asyncio.to_thread(
+            worker_pool.release_match,
+            preview.match_id,
+        )
         raise
+
+    finally:
+        _pending_preview_users.discard(user_id)
 
     return preview_id
 
@@ -200,3 +226,17 @@ def preview_belongs_to_user(
     session = _active_previews.get(preview_id)
 
     return session is not None and session[0] == user_id
+
+
+async def stop_running_previews() -> None:
+    tasks = tuple(_running_preview_tasks)
+    previews = tuple(_active_previews.values())
+
+    for owner_id, runner in previews:
+        runner.stop()
+
+    if tasks:
+        await asyncio.gather(
+            *tasks,
+            return_exceptions=True
+        )

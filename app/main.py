@@ -33,6 +33,7 @@ from app.services.match_service import (
     shutdown_worker_pool,
     stop_running_matches,
 )
+from app.services.behavior_preview_service import stop_running_previews
 
 
 @asynccontextmanager
@@ -49,6 +50,7 @@ async def lifespan(app: FastAPI):
     finally:
         await stop_league_runners()
         await stop_running_matches()
+        await stop_running_previews()
         shutdown_worker_pool()
         engine.dispose()
 

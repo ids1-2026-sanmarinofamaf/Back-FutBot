@@ -59,6 +59,13 @@ def initialize_worker_pool() -> None:
         )
 
 
+def get_worker_pool() -> BehaviorWorkerPool:
+    if _worker_pool is None:
+        raise RuntimeError("Behavior worker pool is not initialized")
+
+    return _worker_pool
+
+
 def shutdown_worker_pool() -> None:
     """
     Shut down the shared pool and release its resources.

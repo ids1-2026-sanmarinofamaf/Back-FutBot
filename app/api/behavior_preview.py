@@ -34,7 +34,7 @@ async def create(
     current_user=Depends(get_current_user),
 ):
     try:
-        preview_id = create_preview(
+        preview_id = await create_preview(
             db=db,
             user_id=current_user.id,
             code=data.code,
