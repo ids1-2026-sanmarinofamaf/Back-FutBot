@@ -19,6 +19,10 @@ PlayerState = tuple[int, Position]
 # Data type representing a ball by its current position and velocity
 BallState = tuple[Position, Velocity]
 
+# Data type representing a coach assignment of a behavior to a player
+Assignment = tuple[int, str]  # (player_id, behavior_name)
+
+
 # Enum representing the periods of a match
 class Period(Enum):
     FIRST_QUARTER = 1
@@ -31,3 +35,9 @@ class Period(Enum):
 class Side(Enum):
     LEFT = "left"
     RIGHT = "right"
+
+# Enum representing the event that triggered a coach execution
+class CoachTrigger(Enum):
+    GOAL_FOR = "GOAL_FOR"
+    GOAL_AGAINST = "GOAL_AGAINST"
+    PERIOD_START = "PERIOD_START"

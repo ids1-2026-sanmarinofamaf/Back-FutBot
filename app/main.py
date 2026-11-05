@@ -3,20 +3,33 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI, Request, status
 from fastapi.exceptions import RequestValidationError
 from fastapi.exception_handlers import request_validation_exception_handler
-from fastapi import FastAPI
 from app.api import (
     auth, users,
     friendly_games,
     sessions_websocket,
-    matches, behaviors,
+    matches, behaviors, coach_behaviors,
     leagues, players
 )
-from app.services.startup_service import recover_interrupted_games
-
+from app.services.league_runner import stop_league_runners
+from app.services.startup_service import (
+    recover_interrupted_games,
+    recover_interrupted_leagues,
+)
+from app.services.match_service import (
+    initialize_worker_pool,
+    shutdown_worker_pool,
+    stop_running_matches,
+)
 
 from sqlalchemy import text
 
 from app.database import engine
+from app.api import friendly_games, players
+from app.api import behaviors
+from app.api import leagues
+from app.api import ranking
+
+
 
 from app.api.friendly_game_websocket import router as friendly_game_websocket_router
 from app.api.match_websocket import router as match_websocket_router
@@ -36,18 +49,33 @@ async def lifespan(app: FastAPI):
         connection.execute(text("SELECT 1"))
 
     recover_interrupted_games()
-    yield
-    # 2. SHUTDOWN: runs while the server is shutting down (Ctrl+C, deploy, etc.)
-    engine.dispose()
+
+    initialize_worker_pool()
+
+    try:
+        recover_interrupted_leagues()
+
+        yield
+
+    finally:
+        await stop_league_runners()
+        await stop_running_matches()
+        shutdown_worker_pool()
+        # 2. SHUTDOWN: runs while the server is shutting down (Ctrl+C, deploy, etc.)
+        engine.dispose()
+        
 
 app = FastAPI(lifespan=lifespan)
 
 
-# POST /leagues must answer 400 on an invalid body; every other endpoint keeps FastAPI's default 422
+# these POST endpoints must answer 400 on an invalid body; every other endpoint keeps FastAPI's default 422
+BAD_REQUEST_ON_INVALID_BODY = {"/leagues", "/clubes/me/coach_behaviors"}
+
+
 @app.exception_handler(RequestValidationError)
 async def validation_exception_handler(request: Request, exc: RequestValidationError):
     response = await request_validation_exception_handler(request, exc)
-    if request.method == "POST" and request.url.path == "/leagues":
+    if request.method == "POST" and request.url.path in BAD_REQUEST_ON_INVALID_BODY:
         response.status_code = status.HTTP_400_BAD_REQUEST
     return response
 
@@ -64,9 +92,12 @@ app.include_router(users.router)
 app.include_router(sessions_websocket.router)
 app.include_router(friendly_game_websocket_router)
 app.include_router(behaviors.router)
+app.include_router(coach_behaviors.router)
 app.include_router(leagues.router)
+app.include_router(ranking.router)
 app.include_router(league_websocket_router)
-app.include_router(matches.router)
+
+
 
 @app.get("/")
 def root():

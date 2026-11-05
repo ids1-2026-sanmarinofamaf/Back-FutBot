@@ -1,9 +1,16 @@
+import asyncio
 import copy
 
 import pytest
-from unittest.mock import MagicMock
+from types import SimpleNamespace
+from unittest.mock import MagicMock, AsyncMock
 
-from app.game.match_runner import (MatchRunner,BehaviorCoordinatorProtocol,GameEngineProtocol)
+from app.game.match_runner import (
+    MatchRunner,
+    BehaviorCoordinatorProtocol,
+    GameEngineProtocol
+)
+import app.game.match_runner as match_runner_module
 from app.game.models.ball import Ball
 from app.game.models.match import Match, MatchState
 from app.game.models.match_participation import MatchParticipation
@@ -39,7 +46,7 @@ def match(six_players):
             position=(20.0, 10.0),
             velocity=(0.0, 0.0),
         ),
-        duration_ticks=10,
+        duration_ticks=40,
     )
 
 # we create a magicmock and assign it the attributes/methods of the class in spec
@@ -62,6 +69,14 @@ def game_engine():
     )
 
 
+@pytest.fixture(autouse=True)
+def disable_tick_delay(monkeypatch):
+    monkeypatch.setattr(
+        "app.game.match_runner.TIC_DURATION",
+        0,
+    )
+
+
 @pytest.mark.asyncio
 async def test_execute_tick_advances_one_tick(match,behavior_coordinator,game_engine):
     initial_tick = match.current_tick
@@ -70,6 +85,9 @@ async def test_execute_tick_advances_one_tick(match,behavior_coordinator,game_en
     runner = MatchRunner(
         behavior_coordinator,
         game_engine,
+        hydration_duration=0,
+        halftime_duration=0,
+        execution_window=0,
     )
     # and execute one tick
     await runner.execute_tick(match)
@@ -78,17 +96,20 @@ async def test_execute_tick_advances_one_tick(match,behavior_coordinator,game_en
 
 @pytest.mark.asyncio
 async def test_run_match_executes_behaviors_once_per_tick(match,behavior_coordinator,game_engine):
-    match.duration_ticks = 3
+    match.duration_ticks = 4
 
     runner = MatchRunner(
         behavior_coordinator,
         game_engine,
+        hydration_duration=0,
+        halftime_duration=0,
+        execution_window=0,
     )
 
     # execute the entire match
     await runner.run_match(match)
     # use magicmock functionrs to count
-    assert behavior_coordinator.get_actions.call_count == 3
+    assert behavior_coordinator.get_actions.call_count == 4
 
 @pytest.mark.asyncio
 async def test_behavior_executor_and_engine_use_same_snapshot(
@@ -99,11 +120,14 @@ async def test_behavior_executor_and_engine_use_same_snapshot(
     runner = MatchRunner(
         behavior_coordinator,
         game_engine,
+        hydration_duration=0,
+        halftime_duration=0,
+        execution_window=0,
     )
 
     await runner.execute_tick(match)
 
-    # use magic mock functiorns
+    # use magic mock functionrs
     # we get the first argument with which it went inside execute tick
     snapshot_received_by_behavior_executor = (
         behavior_coordinator
@@ -131,6 +155,9 @@ async def test_actions_are_sent_to_engine(
     runner = MatchRunner(
         behavior_coordinator,
         game_engine,
+        hydration_duration=0,
+        halftime_duration=0,
+        execution_window=0,
     )
 
     await runner.execute_tick(match)
@@ -151,7 +178,7 @@ async def test_generated_state_is_used_in_next_tick(
     game_engine,
 ):
     # change the duration only for this test
-    match.duration_ticks = 2
+    match.duration_ticks = 4
 
     initial_ball_position = match.ball.position
 
@@ -168,6 +195,9 @@ async def test_generated_state_is_used_in_next_tick(
     runner = MatchRunner(
         behavior_coordinator,
         game_engine,
+        hydration_duration=0,
+        halftime_duration=0,
+        execution_window=0,
     )
 
     await runner.run_match(match)
@@ -208,13 +238,213 @@ async def test_run_match_stops_at_duration_ticks(
     runner = MatchRunner(
         behavior_coordinator,
         game_engine,
+        hydration_duration=0,
+        halftime_duration=0,
+        execution_window=0,
     )
 
     await runner.run_match(match)
     # wait for the match to end and then verify
-    assert match.current_tick == 10
+    assert match.current_tick == 40
 
-    assert behavior_coordinator.get_actions.call_count == 10
-    assert game_engine.step.call_count == 10
+    assert behavior_coordinator.get_actions.call_count == 40
+    assert game_engine.step.call_count == 40
 
+    assert match.state == MatchState.FINISHED
+
+
+class FakeClock:
+    """
+    Simulate time progression with a fixed scheduling delay.
+    """
+
+    def __init__(
+        self,
+        tick_duration: float = 0.020,
+        scheduling_delay: float = 0.003,
+    ):
+        self.current_time = 0.0
+        self.tick_duration = tick_duration
+        self.scheduling_delay = scheduling_delay
+        self.tick_starts = []
+
+    def monotonic(self) -> float:
+        return self.current_time
+
+    async def sleep(self, seconds: float) -> None:
+        self.current_time += seconds + self.scheduling_delay
+
+    async def execute_tick(self, match: Match) -> None:
+        self.tick_starts.append(self.current_time)
+        self.current_time += self.tick_duration
+        match.current_tick += 1
+
+
+@pytest.mark.asyncio
+async def test_run_match_does_not_accumulate_tick_drift(
+    match,
+    behavior_coordinator,
+    game_engine,
+    monkeypatch,
+):
+    match.duration_ticks = 8
+
+    clock = FakeClock()
+
+    runner = MatchRunner(
+        behavior_coordinator,
+        game_engine,
+        hydration_duration=0,
+        halftime_duration=0,
+        execution_window=0,
+    )
+
+    async def fake_period_break(match):
+        pass
+
+    monkeypatch.setattr(
+        runner,
+        "handle_period_break",
+        fake_period_break,
+    )
+
+    monkeypatch.setattr(
+        match_runner_module,
+        "TIC_DURATION",
+        0.1,
+    )
+
+    monkeypatch.setattr(
+        match_runner_module,
+        "time",
+        SimpleNamespace(monotonic=clock.monotonic),
+    )
+
+    monkeypatch.setattr(
+        match_runner_module,
+        "asyncio",
+        SimpleNamespace(sleep=clock.sleep, to_thread=asyncio.to_thread),
+    )
+
+    monkeypatch.setattr(
+        runner,
+        "execute_tick",
+        clock.execute_tick,
+    )
+
+    monkeypatch.setattr(
+        match_runner_module.match_connection_manager,
+        "broadcast",
+        AsyncMock(),
+    )
+
+    monkeypatch.setattr(
+        match_runner_module.match_connection_manager,
+        "close_match_connection",
+        AsyncMock(),
+    )
+
+    await runner.run_match(match)
+
+    assert clock.tick_starts == pytest.approx([
+        0.000,
+        0.103,
+        0.203,
+        0.306,
+        0.406,
+        0.509,
+        0.609,
+        0.712,
+    ])
+
+    assert clock.current_time == pytest.approx(0.812)
+    assert match.current_tick == 8
+    assert match.state == MatchState.FINISHED
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("break_duration", [10.0, 20.0])
+async def test_match_does_not_catch_up_ticks_after_break(
+    match,
+    behavior_coordinator,
+    game_engine,
+    monkeypatch,
+    break_duration,
+):
+    match.duration_ticks = 8
+
+    clock = FakeClock(
+        tick_duration=0.020,
+        scheduling_delay=0.0,
+    )
+
+    runner = MatchRunner(
+        behavior_coordinator,
+        game_engine,
+        hydration_duration=0,
+        halftime_duration=0,
+        execution_window=0,
+    )
+
+    monkeypatch.setattr(
+        match_runner_module,
+        "TIC_DURATION",
+        0.1,
+    )
+
+    monkeypatch.setattr(
+        match_runner_module,
+        "time",
+        SimpleNamespace(monotonic=clock.monotonic),
+    )
+
+    monkeypatch.setattr(
+        match_runner_module,
+        "asyncio",
+        SimpleNamespace(sleep=clock.sleep, to_thread=asyncio.to_thread),
+    )
+
+    monkeypatch.setattr(
+        runner,
+        "execute_tick",
+        clock.execute_tick,
+    )
+
+    async def fake_period_break(match):
+        # emule a real pause without wait
+        clock.current_time += break_duration
+
+    monkeypatch.setattr(
+        runner,
+        "handle_period_break",
+        fake_period_break,
+    )
+
+    monkeypatch.setattr(
+        match_runner_module.match_connection_manager,
+        "broadcast",
+        AsyncMock(),
+    )
+
+    monkeypatch.setattr(
+        match_runner_module.match_connection_manager,
+        "close_match_connection",
+        AsyncMock(),
+    )
+
+    await runner.run_match(match)
+
+    for first_tick_after_break in (2, 4, 6):
+        previous_tick = clock.tick_starts[first_tick_after_break - 1]
+        resumed_tick = clock.tick_starts[first_tick_after_break]
+
+        assert resumed_tick - previous_tick == pytest.approx(
+            break_duration + 0.1
+        )
+
+        assert (
+            clock.tick_starts[first_tick_after_break + 1]
+            - resumed_tick
+        ) == pytest.approx(0.1)
+
+    assert match.current_tick == 8
     assert match.state == MatchState.FINISHED
