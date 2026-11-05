@@ -7,12 +7,17 @@ from functools import partial
 
 from unittest.mock import patch, AsyncMock, MagicMock
 
+from sqlalchemy import select
+
 from app.database import SessionLocal
 from app.core.security import get_password_hash
 
 from app.models.behavior import Behavior
 from app.models.club import Club
 from app.models.user import User
+from app.models.match import Match as PersistedMatch
+from app.models.match_participation import MatchParticipation
+from app.models.club_statistics import ClubStatistics
 from app.services.behavior_preview_service import (
     load_preview_behaviors,
     create_preview,
@@ -32,6 +37,7 @@ from app.game.default_behaviors import (
 from app.game.preview_match import TEMPORARY_BEHAVIOR_ID
 from app.game.behavior_worker_pool import BehaviorWorkerPool
 from app.game.behavior_validator import BehaviorValidationError
+from app.game.models.actions import WaitAction
 
 
 
@@ -66,6 +72,31 @@ def mock_validator():
         return_value=True,
     ) as validator:
         yield validator
+
+
+def preview_database_state(db):
+    models = (
+        Behavior,
+        PersistedMatch,
+        MatchParticipation,
+        ClubStatistics,
+    )
+
+    return {
+        model.__tablename__: db.execute(
+            select(model.__table__).order_by(
+                *model.__table__.primary_key.columns
+            )
+        ).all()
+        for model in models
+    }
+
+
+def preview_wait_actions(jobs, *, match_id):
+    return {
+        job.player_id: WaitAction()
+        for job in jobs
+    }
 
 
 def test_load_preview_behaviors_returns_defaults(db):
@@ -728,3 +759,76 @@ async def test_invalid_code_does_not_start_preview(
     assert _active_previews == active_before
     assert _running_preview_tasks == tasks_before
     assert user_id not in _pending_preview_users
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("finish_reason", ["completed", "stopped"])
+async def test_preview_does_not_persist_data(
+    db,
+    shared_pool,
+    monkeypatch,
+    finish_reason,
+):
+    defaults = (
+        db.query(Behavior)
+        .filter(Behavior.is_default.is_(True))
+        .all()
+    )
+
+    shared_pool.execute.side_effect = preview_wait_actions
+
+    monkeypatch.setattr(
+        "app.services.behavior_preview_service.PREVIEW_START_DELAY",
+        0,
+    )
+    monkeypatch.setattr(
+        "app.game.preview_match.PREVIEW_DURATION_SECONDS",
+        1,
+    )
+    monkeypatch.setattr(
+        "app.game.preview_runner.TIC_DURATION",
+        0,
+    )
+
+    before = preview_database_state(db)
+
+    try:
+        with patch(
+            "app.game.preview_runner.preview_connection_manager.broadcast",
+            new_callable=AsyncMock,
+        ) as broadcast:
+            preview_id = await create_preview(
+                db=db,
+                user_id=1,
+                code="def play():\n    return wait()",
+                behavior_teammate_1=defaults[0].id,
+                behavior_teammate_2=defaults[1].id,
+            )
+
+            db.flush()
+            assert preview_database_state(db) == before
+
+            tasks = tuple(_running_preview_tasks)
+
+            if finish_reason == "stopped":
+                stop_preview(preview_id, user_id=1)
+
+            await asyncio.wait_for(
+                asyncio.gather(*tasks),
+                timeout=2,
+            )
+
+            final_message = broadcast.await_args.args[1]
+
+            assert final_message.event == "preview_finished"
+            assert final_message.reason == finish_reason
+
+        db.flush()
+        assert preview_database_state(db) == before
+        assert preview_id not in _active_previews
+
+        if finish_reason == "completed":
+            shared_pool.execute.assert_called()
+
+    finally:
+        await stop_running_previews()
