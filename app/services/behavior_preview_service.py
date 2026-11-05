@@ -17,6 +17,7 @@ from app.game.engine import GameEngine
 
 from app.game.models.behavior_definition import BehaviorDefinition
 from app.game.models.match import Match
+from app.game.behavior_validator import validate_behavior_code
 
 from app.services.match_service import get_worker_pool
 from app.services.behavior_preview_websocket_service import (
@@ -131,8 +132,6 @@ async def create_preview(
     ):
         raise ValueError("User already has an active preview")
 
-
-
     definitions, default_ids = load_preview_behaviors(
         db,
         behavior_teammate_1,
@@ -160,41 +159,47 @@ async def create_preview(
 
     try:
         await asyncio.to_thread(
-            worker_pool.register_match,
-            preview.match_id,
-            definitions,
+            validate_behavior_code,
+            code,
         )
 
-        runner = PreviewRunner(
-            behavior_coordinator=BehaviorCoordinator(
-                worker_pool,
-                match_id=preview.match_id,
-            ),
-            game_engine=GameEngine(),
-        )
-
-        preview_id = uuid4()
-
-        task = asyncio.create_task(
-            _run_preview(
-                preview_id,
-                preview,
-                runner,
-                worker_pool,
+        try:
+            await asyncio.to_thread(
+                worker_pool.register_match,
+                preview.match_id,
+                definitions,
             )
-        )
 
-        _active_previews[preview_id] = (user_id, runner)
+            runner = PreviewRunner(
+                behavior_coordinator=BehaviorCoordinator(
+                    worker_pool,
+                    match_id=preview.match_id,
+                ),
+                game_engine=GameEngine(),
+            )
 
-        _running_preview_tasks.add(task)
-        task.add_done_callback(_running_preview_tasks.discard)
+            preview_id = uuid4()
 
-    except Exception:
-        await asyncio.to_thread(
-            worker_pool.release_match,
-            preview.match_id,
-        )
-        raise
+            task = asyncio.create_task(
+                _run_preview(
+                    preview_id,
+                    preview,
+                    runner,
+                    worker_pool,
+                )
+            )
+
+            _active_previews[preview_id] = (user_id, runner)
+
+            _running_preview_tasks.add(task)
+            task.add_done_callback(_running_preview_tasks.discard)
+
+        except Exception:
+            await asyncio.to_thread(
+                worker_pool.release_match,
+                preview.match_id,
+            )
+            raise
 
     finally:
         _pending_preview_users.discard(user_id)

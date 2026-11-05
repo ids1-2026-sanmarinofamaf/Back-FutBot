@@ -21,6 +21,7 @@ from app.services.behavior_preview_service import (
     _running_preview_tasks,
     _run_preview,
     stop_running_previews,
+    _pending_preview_users,
 )
 
 from app.game.default_behaviors import (
@@ -30,6 +31,7 @@ from app.game.default_behaviors import (
 )
 from app.game.preview_match import TEMPORARY_BEHAVIOR_ID
 from app.game.behavior_worker_pool import BehaviorWorkerPool
+from app.game.behavior_validator import BehaviorValidationError
 
 
 
@@ -55,6 +57,15 @@ def shared_pool():
 def db():
     with SessionLocal() as session:
         yield session
+
+
+@pytest.fixture(autouse=True)
+def mock_validator():
+    with patch(
+        "app.services.behavior_preview_service.validate_behavior_code",
+        return_value=True,
+    ) as validator:
+        yield validator
 
 
 def test_load_preview_behaviors_returns_defaults(db):
@@ -163,7 +174,7 @@ def test_load_preview_behaviors_rejects_nonexistent_behavior(db):
 
 
 @pytest.mark.asyncio
-async def test_create_preview_success(db):
+async def test_create_preview_success(db, mock_validator):
     defaults = (
         db.query(Behavior)
         .filter(Behavior.is_default.is_(True))
@@ -189,6 +200,8 @@ async def test_create_preview_success(db):
 
         assert owner_id == user_id
         assert runner is not None
+
+        mock_validator.assert_called_once_with(code)
 
     finally:
         stop_preview(preview_id, user_id)
@@ -671,3 +684,47 @@ async def test_create_preview_rejects_user_with_pending_registration(
                 await asyncio.wait_for(first_request, timeout=1)
             finally:
                 await stop_running_previews()
+
+
+@pytest.mark.asyncio
+async def test_invalid_code_does_not_start_preview(
+    db,
+    shared_pool,
+    mock_validator,
+):
+    defaults = (
+        db.query(Behavior)
+        .filter(Behavior.is_default.is_(True))
+        .all()
+    )
+
+    user_id = 1
+    code = "def play(:"
+    error_message = "Error sintáctico en la línea 1"
+
+    mock_validator.side_effect = BehaviorValidationError(error_message)
+
+    active_before = dict(_active_previews)
+    tasks_before = set(_running_preview_tasks)
+
+    with pytest.raises(
+        BehaviorValidationError,
+        match=error_message,
+    ):
+        await create_preview(
+            db=db,
+            user_id=user_id,
+            code=code,
+            behavior_teammate_1=defaults[0].id,
+            behavior_teammate_2=defaults[1].id,
+        )
+
+    mock_validator.assert_called_once_with(code)
+
+    shared_pool.register_match.assert_not_called()
+    shared_pool.release_match.assert_not_called()
+    shared_pool.shutdown.assert_not_called()
+
+    assert _active_previews == active_before
+    assert _running_preview_tasks == tasks_before
+    assert user_id not in _pending_preview_users

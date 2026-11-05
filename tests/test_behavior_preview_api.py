@@ -14,6 +14,8 @@ from app.schemas.behavior_preview import (
     BehaviorPreviewCreateResponse,
 )
 
+from app.game.behavior_validator import BehaviorValidationError
+
 
 client = TestClient(app)
 
@@ -153,7 +155,7 @@ def test_create_preview_returns_201(headers, user):
     assert response.json() == {
         "preview_id": str(preview_id),
     }
-    mock_create.assert_called_once_with(
+    mock_create.assert_awaited_once_with(
         db=ANY,
         user_id=user.id,
         code=VALID_DATA["code"],
@@ -228,3 +230,24 @@ def test_stop_preview_without_auth_returns_401():
     )
 
     assert response.status_code == 401
+
+
+def test_create_preview_invalid_code_returns_400(headers):
+    error_message = "Error sintáctico en la línea 1"
+    data = {**VALID_DATA, "code": "def play(:"}
+
+    with patch(
+        "app.api.behavior_preview.create_preview",
+        side_effect=BehaviorValidationError(error_message),
+    ) as mock_create:
+        response = client.post(
+            "/clubes/me/behaviors/previews",
+            json=data,
+            headers=headers,
+        )
+
+    assert response.status_code == 400
+    assert response.json() == {"detail": error_message}
+
+    mock_create.assert_awaited_once()
+    assert mock_create.await_args.kwargs["code"] == data["code"]
