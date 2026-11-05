@@ -6,6 +6,7 @@ from app.database import get_db
 from app.schemas.coach_behavior import CoachBehaviorIn, CoachBehaviorOut
 from app.services.coach_behavior_service import (
     list_coach_behaviors,
+    get_coach_behavior,
     create_coach_behavior,
     delete_coach_behavior,
     ClubNotFound,
@@ -70,6 +71,26 @@ def get_coach_behaviors(
         return list_coach_behaviors(db=db, user_id=current_user.id)
 
     except ClubNotFound as error:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=str(error),
+        )
+
+
+@router.get("/{coach_behavior_id}", response_model=CoachBehaviorOut)
+def get_coach_behavior_by_id(
+    coach_behavior_id: int,
+    current_user=Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    try:
+        return get_coach_behavior(
+            db=db,
+            user_id=current_user.id,
+            coach_behavior_id=coach_behavior_id,
+        )
+
+    except (ClubNotFound, CoachBehaviorNotFound) as error:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=str(error),

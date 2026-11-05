@@ -33,6 +33,24 @@ def list_coach_behaviors(db: Session, user_id: int) -> list[CoachBehavior]:
     return coach_behavior_repository.list_by_club(db, club.id)
 
 
+def get_coach_behavior(db: Session, user_id: int, coach_behavior_id: int) -> CoachBehavior:
+    club = club_repository.get_by_user_id(db, user_id)
+
+    if club is None:
+        raise ClubNotFound("User does not have a club")
+
+    coach_behavior = coach_behavior_repository.get_by_id_for_club(
+        db=db,
+        club_id=club.id,
+        coach_behavior_id=coach_behavior_id,
+    )
+
+    if coach_behavior is None:
+        raise CoachBehaviorNotFound("Coach behavior not found.")
+
+    return coach_behavior
+
+
 def create_coach_behavior(db: Session, user_id: int, name: str, code: str) -> CoachBehavior:
  
     club = club_repository.get_by_user_id(db, user_id)

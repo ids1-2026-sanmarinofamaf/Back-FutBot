@@ -113,6 +113,7 @@ def test_create_returns_201_and_persists(user, db):
     assert response.status_code == 201
     body = response.json()
     assert body["name"] == "Offensive"
+    assert body["code"] == CODE
 
     saved = db.get(CoachBehavior, body["coach_behavior_id"])
     assert saved.club_id == user.club.id
@@ -210,7 +211,54 @@ def test_list_returns_only_own_coach_behaviors(user, other_club, db):
     response = client.get(URL, headers=auth_header())
 
     assert response.status_code == 200
-    assert response.json() == [{"coach_behavior_id": own.id, "name": "Mio"}]
+    assert response.json() == [{"coach_behavior_id": own.id, "name": "Mio", "code": CODE}]
+
+
+# Tests for GET /clubes/me/coach_behaviors/{coach_behavior_id}
+
+def test_get_by_id_without_token_returns_401():
+    response = client.get(f"{URL}/1")
+
+    assert response.status_code == 401
+
+
+def test_get_by_id_returns_coach_behavior_with_code(user, db):
+    coach_behavior = CoachBehavior(club_id=user.club.id, name="Mio", code=CODE)
+    db.add(coach_behavior)
+    db.commit()
+
+    response = client.get(f"{URL}/{coach_behavior.id}", headers=auth_header())
+
+    assert response.status_code == 200
+    assert response.json() == {"coach_behavior_id": coach_behavior.id, "name": "Mio", "code": CODE}
+
+
+def test_get_by_id_nonexistent_returns_404(user):
+    response = client.get(f"{URL}/999999", headers=auth_header())
+
+    assert response.status_code == 404
+    assert response.json()["detail"] == "Coach behavior not found."
+
+
+def test_get_by_id_other_club_coach_behavior_returns_404(user, other_club, db):
+    foreign = CoachBehavior(club_id=other_club.id, name="Ajeno", code=CODE)
+    db.add(foreign)
+    db.commit()
+
+    response = client.get(f"{URL}/{foreign.id}", headers=auth_header())
+
+    assert response.status_code == 404
+    assert response.json()["detail"] == "Coach behavior not found."
+
+
+def test_get_by_id_user_without_club_returns_404(user, db):
+    db.add(User(email=OTHER_EMAIL, hash_passwd=get_password_hash(PASSWORD)))
+    db.commit()
+
+    response = client.get(f"{URL}/1", headers=auth_header(login(OTHER_EMAIL)))
+
+    assert response.status_code == 404
+    assert response.json()["detail"] == "User does not have a club"
 
 
 # Tests for DELETE /clubes/me/coach_behaviors/{coach_behavior_id}
