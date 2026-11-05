@@ -9,7 +9,7 @@ from app.models.club import Club
 from app.models.league import League, LeagueState, LeaguePrivacy
 from app.models.league_participation import LeagueParticipation
 from app.models.roster import Roster, Formation
-from app.repositories.league_repository import get_visible_leagues
+from app.repositories import league_repository
 
 
 @pytest.fixture
@@ -79,7 +79,7 @@ def create_league(
 
 
 def test_get_visible_leagues_returns_empty_list(db):
-    result = get_visible_leagues(db)
+    result = league_repository.get_visible_leagues(db)
 
     assert result == []
 
@@ -106,7 +106,7 @@ def test_get_visible_leagues_filters_by_state(db, clubs):
         state=LeagueState.FINALIZADA,
     )
 
-    result = get_visible_leagues(db)
+    result = league_repository.get_visible_leagues(db)
 
     assert [league.id for league in result] == [
         pending.id,
@@ -129,7 +129,7 @@ def test_get_visible_leagues_includes_public_and_private(db, clubs):
         privacy=LeaguePrivacy.PRIVADA,
     )
 
-    result = get_visible_leagues(db)
+    result = league_repository.get_visible_leagues(db)
 
     assert {league.id for league in result} == {
         public.id,
@@ -156,7 +156,7 @@ def test_get_visible_leagues_ordered_by_id(db, clubs):
         "Third League",
     )
 
-    result = get_visible_leagues(db)
+    result = league_repository.get_visible_leagues(db)
 
     assert [league.id for league in result] == [
         first.id,
@@ -201,7 +201,7 @@ def test_get_visible_leagues_loads_participations(db, clubs):
     # must retrieve the current database state.
     db.expire_all()
 
-    result = get_visible_leagues(db)
+    result = league_repository.get_visible_leagues(db)
 
     leagues_by_id = {
         league.id: league
@@ -219,3 +219,43 @@ def test_get_visible_leagues_loads_participations(db, clubs):
             league_without_participants.id
         ].league_participations
     ) == 0
+
+
+def test_get_started_leagues_ids_returns_only_started_leagues():
+    with Session(engine) as db:
+        user = User(
+            email="league_recovery_test@example.com",
+            hash_passwd="test_hash",
+        )
+        club = Club(
+            name="Recovery Test Club",
+            user=user,
+        )
+        db.add(club)
+        db.flush()
+
+        states = [
+            LeagueState.POR_COMENZAR,
+            LeagueState.INICIADA,
+            LeagueState.FINALIZADA,
+            LeagueState.INICIADA,
+        ]
+
+        leagues = [
+            League(
+                name=f"Recovery League {index}",
+                match_duration=10,
+                max_clubs=3,
+                state=state,
+                privacy=LeaguePrivacy.PUBLICA,
+                creator_id=club.id,
+            )
+            for index, state in enumerate(states)
+        ]
+
+        db.add_all(leagues)
+        db.flush()
+
+        result = league_repository.get_started_leagues_ids(db)
+
+        assert result == [leagues[1].id, leagues[3].id]

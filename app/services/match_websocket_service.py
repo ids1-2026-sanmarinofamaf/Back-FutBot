@@ -8,6 +8,9 @@ from app.schemas.match_websocket import (
     BallState,
     MatchCoachChange,
     MatchCoachChangesMessage,
+    MatchPauseStartedMessage,
+    MatchSubstitutionWindowClosedMessage,
+    MatchPauseFinishedMessage,
 )
 
 
@@ -46,10 +49,16 @@ class MatchConnectionManager:
     async def broadcast(
         self,
         match_id: int,
-        message: MatchStateMessage | MatchCoachChangesMessage
+        message: (
+        MatchStateMessage
+        | MatchCoachChangesMessage
+        | MatchPauseStartedMessage
+        | MatchSubstitutionWindowClosedMessage
+        | MatchPauseFinishedMessage
+    ),
     ) -> None:
 
-        connections = self.active_connections.get(match_id, [])
+        connections = (self.active_connections.get(match_id, [])).copy()
 
         disconnected = []
         # sent the status for everyone
@@ -65,10 +74,15 @@ class MatchConnectionManager:
     async def close_match_connection(self, match_id: int) -> None:
         connections = self.active_connections.get(match_id, [])
 
-        for websocket in connections:
-            await websocket.close()
-        # after closing the connections, we clean the dictionary entry for that match
+        # clean the dictionary entry before closing the connections
         self.active_connections.pop(match_id, None)
+
+        for websocket in connections:
+            try:    
+                await websocket.close()
+
+            except Exception:
+                pass
 
 # prepare the messahe that will be sended by through the websocket
 def build_match_state_message(
@@ -137,6 +151,35 @@ def build_coach_changes_message(
             for player_id, behavior_name in assignments
         ],
     )
+
+
+def build_pause_started_message(
+    pause_type: str,
+    duration: float,
+    planning_duration: float,
+) -> MatchPauseStartedMessage:
+    return MatchPauseStartedMessage(
+        pause_type=pause_type,
+        duration=duration,
+        planning_duration=planning_duration,
+    )
+
+
+def build_substitution_window_closed_message(
+    pause_type: str,
+) -> MatchSubstitutionWindowClosedMessage:
+    return MatchSubstitutionWindowClosedMessage(
+        pause_type=pause_type,
+    )
+
+
+def build_pause_finished_message(
+    pause_type: str,
+) -> MatchPauseFinishedMessage:
+    return MatchPauseFinishedMessage(
+        pause_type=pause_type,
+    )
+
 
 
 match_connection_manager = MatchConnectionManager()

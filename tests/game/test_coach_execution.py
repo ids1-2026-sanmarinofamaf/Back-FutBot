@@ -12,6 +12,7 @@ import pytest
 from app.game.behavior_coordinator import BehaviorCoordinator
 from app.game.behavior_executor import execute_coach_behavior
 from app.game.behavior_worker_pool import BehaviorWorkerPool
+from app.game.constants import TIC_DURATION
 from app.game.context import set_current_context, clear_current_context
 from app.game.context_builder import build_coach_context
 from app.game.engine import GameEngine
@@ -126,6 +127,32 @@ def test_coach_context_for_right_side(match):
 
     assert context.side == Side.RIGHT
     assert [player_id for player_id, _ in context.teammates] == [7, 8, 9]
+
+
+def test_coach_context_follows_the_side_switch(match):
+    match.switch_sides()
+
+    context = build_coach_context(
+        match,
+        match.participation_a,
+        CoachTrigger.PERIOD_START,
+    )
+
+    assert context.side == Side.RIGHT
+
+
+def test_coach_context_period_time_remaining_is_not_match_time(match):
+    match.duration_ticks = 400
+    match.current_tick = 40
+
+    context = build_coach_context(
+        match,
+        match.participation_a,
+        CoachTrigger.PERIOD_START,
+    )
+
+    assert context.period_time_remaining == pytest.approx(60 * TIC_DURATION)
+    assert context.match_time_remaining == pytest.approx(360 * TIC_DURATION)
 
 
 # primitives
@@ -458,13 +485,19 @@ async def test_run_match_runs_coaches_for_the_first_period(match, monkeypatch):
     monkeypatch.setattr("app.game.match_runner.TIC_DURATION", 0)
 
     match.state = MatchState.NOT_STARTED
-    match.duration_ticks = 1
+    match.duration_ticks = 4
 
     coordinator = MagicMock()
     coordinator.get_actions.return_value = {}
     coordinator.get_coach_assignments.return_value = {}
 
-    runner = MatchRunner(coordinator, MagicMock())
+    runner = MatchRunner(
+        coordinator,
+        MagicMock(),
+        hydration_duration=0,
+        halftime_duration=0,
+        execution_window=0,
+    )
 
     await runner.run_match(match)
 
@@ -474,6 +507,48 @@ async def test_run_match_runs_coaches_for_the_first_period(match, monkeypatch):
         (match.participation_a.club_id, CoachTrigger.PERIOD_START),
         (match.participation_b.club_id, CoachTrigger.PERIOD_START),
     ]
+
+
+@pytest.mark.asyncio
+async def test_coaches_run_after_each_break_before_the_first_tick_of_the_period(
+    match,
+    monkeypatch,
+):
+    monkeypatch.setattr(
+        "app.game.match_runner.match_connection_manager.broadcast",
+        MagicMock(side_effect=lambda *args: _async_none()),
+    )
+    monkeypatch.setattr(
+        "app.game.match_runner.match_connection_manager.close_match_connection",
+        MagicMock(side_effect=lambda *args: _async_none()),
+    )
+    monkeypatch.setattr("app.game.match_runner.TIC_DURATION", 0)
+
+    match.state = MatchState.NOT_STARTED
+    match.duration_ticks = 4
+
+    ticks_at_period_start = []
+
+    def get_coach_assignments(current_match, triggers):
+        ticks_at_period_start.append(current_match.current_tick)
+        return {}
+
+    coordinator = MagicMock()
+    coordinator.get_actions.return_value = {}
+    coordinator.get_coach_assignments.side_effect = get_coach_assignments
+
+    runner = MatchRunner(
+        coordinator,
+        MagicMock(),
+        hydration_duration=0,
+        halftime_duration=0,
+        execution_window=0,
+    )
+
+    await runner.run_match(match)
+
+    # once per period, each one before its first tick
+    assert ticks_at_period_start == [0, 1, 2, 3]
 
 
 async def _async_none():

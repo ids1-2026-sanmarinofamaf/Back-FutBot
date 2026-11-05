@@ -11,4 +11,6 @@ from app.models.coach_behavior import CoachBehavior
 from app.models.player import Player
 from app.models.league_participation import LeagueParticipation
 from app.models.league import League
+from app.models.match import Match, MatchState
+from app.models.match_participation import MatchParticipation
 from app.models.club_statistics import ClubStatistics

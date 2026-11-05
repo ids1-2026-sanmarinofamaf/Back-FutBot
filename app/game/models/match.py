@@ -28,6 +28,10 @@ class MatchSnapshot:
 
     last_conceding_side: Side | None
 
+    current_period: Period = Period.FIRST_QUARTER
+    side_a: Side = Side.LEFT
+    side_b: Side = Side.RIGHT
+
 @dataclass  # non-persistent class
 class Match:
     match_id: int   # it will be used for WebSockets.
@@ -47,6 +51,9 @@ class Match:
     state: MatchState = MatchState.NOT_STARTED
 
     current_period: Period = Period.FIRST_QUARTER # actual period
+
+    side_a: Side = Side.LEFT
+    side_b: Side = Side.RIGHT
 
     substitution_requests_open: bool = True # it is set to true as long as substitutions can be planned.
 
@@ -70,7 +77,11 @@ class Match:
             score_a=self.participation_a.goals,
             score_b=self.participation_b.goals,
 
-            last_conceding_side=self.last_conceding_side
+            last_conceding_side=self.last_conceding_side,
+
+            current_period=self.current_period,
+            side_a=self.side_a,
+            side_b=self.side_b
         )
 
     def get_participation(self, club_id: int) -> MatchParticipation | None:
@@ -161,3 +172,21 @@ class Match:
         self.pending_coach_triggers.append(
             (self.participation_b.club_id, CoachTrigger.PERIOD_START)
         )
+
+    def switch_sides(self) -> None:
+        self.side_a, self.side_b = self.side_b, self.side_a
+        self.last_conceding_side = None
+
+    # receives a SIDE, and returns the match participation contained within that SIDE
+    # it will be used to determine which team scored a goal.
+    def participation_defending(
+        self,
+        side: Side,
+    ) -> MatchParticipation:
+        if self.side_a == side:
+            return self.participation_a
+
+        if self.side_b == side:
+            return self.participation_b
+
+        raise ValueError("Invalid defending side")

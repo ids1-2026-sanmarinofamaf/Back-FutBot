@@ -10,7 +10,11 @@ from app.api import (
     matches, behaviors, coach_behaviors,
     leagues, players
 )
-from app.services.startup_service import recover_interrupted_games
+from app.services.league_runner import stop_league_runners
+from app.services.startup_service import (
+    recover_interrupted_games,
+    recover_interrupted_leagues,
+)
 from app.services.match_service import (
     initialize_worker_pool,
     shutdown_worker_pool,
@@ -47,10 +51,14 @@ async def lifespan(app: FastAPI):
     recover_interrupted_games()
 
     initialize_worker_pool()
+
     try:
+        recover_interrupted_leagues()
+
         yield
 
     finally:
+        await stop_league_runners()
         await stop_running_matches()
         shutdown_worker_pool()
         # 2. SHUTDOWN: runs while the server is shutting down (Ctrl+C, deploy, etc.)
@@ -88,6 +96,7 @@ app.include_router(coach_behaviors.router)
 app.include_router(leagues.router)
 app.include_router(ranking.router)
 app.include_router(league_websocket_router)
+
 
 
 @app.get("/")

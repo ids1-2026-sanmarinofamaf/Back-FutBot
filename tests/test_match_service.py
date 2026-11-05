@@ -148,9 +148,11 @@ async def test_application_shutdown_closes_shared_pool(
     recover = Mock()
     connect = MagicMock()
     dispose = Mock()
+    league_recover = Mock()
     monkeypatch.setattr(main_module, "recover_interrupted_games", recover)
     monkeypatch.setattr(main_module.engine, "connect", connect)
     monkeypatch.setattr(main_module.engine, "dispose", dispose)
+    monkeypatch.setattr(main_module, "recover_interrupted_leagues", league_recover)
 
     async with main_module.lifespan(main_module.app):
         assert match_service._worker_pool is pool
@@ -161,6 +163,7 @@ async def test_application_shutdown_closes_shared_pool(
     assert match_service._worker_pool is None
     recover.assert_called_once_with()
     dispose.assert_called_once_with()
+    league_recover.assert_called_once_with()
 
 
 def test_start_match_releases_resources_if_initialization_fails(
@@ -364,3 +367,95 @@ async def test_cancelling_match_does_not_block_event_loop(
         finish_actions.set()
         task.cancel()
         await asyncio.gather(task, return_exceptions=True)
+
+
+@pytest.mark.asyncio
+async def test_start_match_task_returns_task(
+    isolated_match_service,
+    monkeypatch,
+):
+    pool = Mock()
+    runner = SimpleNamespace(run_match=AsyncMock())
+
+    monkeypatch.setattr(match_service, "_worker_pool", pool)
+    monkeypatch.setattr(
+        match_service,
+        "MatchRunner",
+        Mock(return_value=runner),
+    )
+
+    match = make_match(100)
+
+    task = match_service.start_match_task(match, [])
+
+    assert isinstance(task, asyncio.Task)
+
+    await task
+
+    runner.run_match.assert_awaited_once_with(match)
+    pool.release_match.assert_called_once_with(100)
+    match_service.remove_match.assert_called_once_with(100)
+
+
+@pytest.mark.asyncio
+async def test_start_match_task_propagates_errors(
+    isolated_match_service,
+    monkeypatch,
+):
+    pool = Mock()
+    runner = SimpleNamespace(
+        run_match=AsyncMock(side_effect=RuntimeError("Match failed"))
+    )
+
+    monkeypatch.setattr(match_service, "_worker_pool", pool)
+    monkeypatch.setattr(
+        match_service,
+        "MatchRunner",
+        Mock(return_value=runner),
+    )
+
+    task = match_service.start_match_task(make_match(101), [])
+
+    with pytest.raises(RuntimeError, match="Match failed"):
+        await task
+
+    pool.release_match.assert_called_once_with(101)
+    match_service.remove_match.assert_called_once_with(101)
+
+
+@pytest.mark.asyncio
+async def test_start_match_preserves_original_return_value(
+    isolated_match_service,
+    monkeypatch,
+):
+    pool = Mock()
+    runner = SimpleNamespace(run_match=AsyncMock())
+
+    monkeypatch.setattr(match_service, "_worker_pool", pool)
+    monkeypatch.setattr(
+        match_service,
+        "MatchRunner",
+        Mock(return_value=runner),
+    )
+
+    match_id = match_service.start_match(make_match(102), [])
+
+    assert match_id == 102
+
+    await asyncio.gather(*tuple(match_service._running_match_tasks))
+
+
+def test_start_match_forwards_coach_behaviors(monkeypatch):
+    start_match_task = MagicMock()
+    monkeypatch.setattr(match_service, "start_match_task", start_match_task)
+
+    match = make_match(10)
+    coach_behaviors = ["coach"]
+
+    assert match_service.start_match(
+        match,
+        [],
+        coach_behaviors=coach_behaviors,
+    ) == 10
+
+    assert start_match_task.call_args.kwargs["coach_behaviors"] == coach_behaviors

@@ -10,7 +10,7 @@ from app.game.models.match_participation import MatchParticipation
 from app.game.models.player_in_match import PlayerInMatchSnapshot
 from app.game.constants import TIC_DURATION
 from app.game.context import BehaviorContext, CoachContext
-from app.game.types import Side, Period, CoachTrigger
+from app.game.types import Period, CoachTrigger
 from app.game.physics import (
     control_range,
     max_move_speed,
@@ -78,14 +78,14 @@ def build_behavior_context(
         match_snapshot.ball.velocity
     )
 
-    if player_team == match_snapshot.players_a:
+    if player_team is match_snapshot.players_a:
         context_my_team_score = match_snapshot.score_a
         context_opponent_score = match_snapshot.score_b
-        context_side = Side.LEFT
+        context_side = match_snapshot.side_a
     else:
         context_my_team_score = match_snapshot.score_b
         context_opponent_score = match_snapshot.score_a
-        context_side = Side.RIGHT
+        context_side = match_snapshot.side_b
 
     if player_snapshot.starting_position is None:
         raise ValueError("Player on field has no starting position")
@@ -95,9 +95,17 @@ def build_behavior_context(
         match_snapshot.duration_ticks - match_snapshot.current_tick
     ) * TIC_DURATION
 
-    # For second sprint it's ok
-    context_current_period = Period.FIRST_QUARTER
-    context_period_time_remaining = context_match_time_remaining
+    # usw new info of the periods
+    ticks_per_period = match_snapshot.duration_ticks // 4
+
+    context_current_period = match_snapshot.current_period
+
+    period_end_tick = (context_current_period.value * ticks_per_period)
+
+    # max to solve possible inconsistences
+    remaining_period_ticks = max(0, period_end_tick - match_snapshot.current_tick)
+
+    context_period_time_remaining = (remaining_period_ticks * TIC_DURATION)
 
     context_control_range = effective_physical_value(
         player_snapshot.control,
@@ -201,10 +209,10 @@ def build_coach_context(
     """
     if participation is match.participation_a:
         opponent_participation = match.participation_b
-        context_side = Side.LEFT
+        context_side = match.side_a
     elif participation is match.participation_b:
         opponent_participation = match.participation_a
-        context_side = Side.RIGHT
+        context_side = match.side_b
     else:
         raise ValueError("Participation does not belong to this match")
 
@@ -232,6 +240,11 @@ def build_coach_context(
         match.duration_ticks - match.current_tick
     ) * TIC_DURATION
 
+    period_end_tick = match.current_period.value * (match.duration_ticks // 4)
+
+    # max to solve possible inconsistences
+    remaining_period_ticks = max(0, period_end_tick - match.current_tick)
+
     # inverse of the club catalog, to expose behavior names instead of ids
     behavior_names = {
         behavior_id: name
@@ -252,8 +265,7 @@ def build_coach_context(
         current_period=match.current_period,
         side=context_side,
         match_time_remaining=context_match_time_remaining,
-        # same simplification as build_behavior_context
-        period_time_remaining=context_match_time_remaining,
+        period_time_remaining=remaining_period_ticks * TIC_DURATION,
         trigger=trigger,
         available_behaviors=list(participation.available_behaviors),
         current_behaviors=context_current_behaviors,
