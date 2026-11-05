@@ -8,7 +8,9 @@ safe and conforms to the Behavior API contract before execution or storage.
 
 import ast
 import inspect
-from multiprocessing import Process, Queue
+
+import multiprocessing as mp
+from multiprocessing.queues import Queue
 from queue import Empty
 
 from app.game.behavior_compiler import (
@@ -470,8 +472,9 @@ def _run_validation_in_worker(code: str) -> None:
         BehaviorValidationError: If validation times out, fails static/compilation
             checks, raises a runtime exception, or returns an invalid action.
     """
-    output_queue: Queue = Queue()
-    process = Process(
+    context = mp.get_context("forkserver")
+    output_queue: Queue = context.Queue()
+    process = context.Process(
         target=_validation_worker,
         args=(code, output_queue),
     )
