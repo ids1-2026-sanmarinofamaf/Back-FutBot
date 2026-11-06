@@ -9,8 +9,8 @@ from app.game.types import Period
 class MatchParticipation:
     club_id: int  # ID of the club to which that participation belongs
     roster_id: int  # ID of the roster to which that participation belongs
-    club_name: str
     players: list[PlayerInMatch]  # starting players and substitutes selected for this match
+    club_name: str = ""
 
     goals: int = 0
 
