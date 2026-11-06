@@ -2,7 +2,7 @@ from sqlalchemy.orm import Session
 
 from app.models.roster import Roster, Formation
 from app.models.player_on_roster import PlayerOnRoster
-from app.repositories import player_repository, club_repository
+from app.repositories import player_repository, club_repository, behavior_repository
 
 from app.game.models.player_in_match import PlayerInMatch
 from app.game.models.match_participation import MatchParticipation
@@ -15,7 +15,7 @@ def _create_player_in_match(
     player_on_roster: PlayerOnRoster,
     formation: Formation,
     mirror_position: bool,
-    shirt_number: int
+    shirt_number: int = 1,
 ) -> PlayerInMatch:
     player = player_repository.get_by_id(
         db,
@@ -40,6 +40,17 @@ def _create_player_in_match(
 
         position = starting_position
 
+    current_behavior_id = (
+        player_on_roster.initial_behavior_id
+        if player_on_roster.is_starter
+        else None
+    )
+    current_behavior_name = None
+    if current_behavior_id is not None:
+        behavior = behavior_repository.get_by_id(db, current_behavior_id)
+        if behavior is not None:
+            current_behavior_name = behavior.name
+
     return PlayerInMatch(
         player_id=player.id,
         position=position,
@@ -50,14 +61,11 @@ def _create_player_in_match(
         control=player.control,
         speed=player.speed,
         strength=player.strength,
-        current_behavior_id=(
-            player_on_roster.initial_behavior_id
-            if player_on_roster.is_starter
-            else None
-        ),
+        current_behavior_id=current_behavior_id,
         is_on_field=player_on_roster.is_starter,
-        name=player.name,
+        name=getattr(player, "name", "") or "",
         shirt_number=shirt_number,
+        current_behavior_name=current_behavior_name,
     )
 
 

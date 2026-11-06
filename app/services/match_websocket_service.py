@@ -99,6 +99,7 @@ def build_match_state_message(
                 is_on_field=player.is_on_field,
                 team="A",
                 current_behavior_id=player.current_behavior_id,
+                current_behavior_name=player.current_behavior_name,
             )
         )
 
@@ -111,6 +112,7 @@ def build_match_state_message(
                 is_on_field=player.is_on_field,
                 team="B",
                 current_behavior_id=player.current_behavior_id,
+                current_behavior_name=player.current_behavior_name,
             )
         )
 
@@ -167,6 +169,7 @@ def build_pause_finished_message(
 
 def build_match_info_message(
     match: Match,
+    my_club_id: int | None = None,
 ) -> MatchInfoMessage:
 
     participation_a = match.participation_a
@@ -191,6 +194,7 @@ def build_match_info_message(
 
     return MatchInfoMessage(
         match_id=match.match_id,
+        my_club_id=my_club_id,
 
         team_a=MatchTeamInfo(
             club_id=participation_a.club_id,
