@@ -6,6 +6,7 @@ import copy
 from app.game.models.match_participation import MatchParticipation
 from app.game.models.ball import Ball
 from app.game.models.match import Match
+from app.game.active_matches import register_match, remove_match
 from app.schemas.match_websocket import (
     MatchStateMessage,
     BallState,
@@ -61,6 +62,13 @@ def match(six_players):
         ),
         duration_ticks=4,
     )
+
+
+@pytest.fixture
+def active_match(match):
+    register_match(match)
+    yield match
+    remove_match(match.match_id)
 
 def test_client_can_connect_to_match():
     match_id = 1
@@ -332,3 +340,113 @@ async def test_close_match_continues_after_connection_error():
     failing_connection.close.assert_awaited_once_with()
     healthy_connection.close.assert_awaited_once_with()
     assert 123 not in manager.active_connections
+
+
+@pytest.mark.asyncio
+async def test_connect_sends_match_info_and_initial_state_when_match_active(active_match):
+    manager = MatchConnectionManager()
+    websocket = AsyncMock()
+
+    await manager.connect(active_match.match_id, websocket, client_club_id=1)
+
+    websocket.accept.assert_awaited_once()
+    assert manager.connection_clubs[websocket] == 1
+    assert websocket.send_json.await_count == 2
+
+    sent_info = websocket.send_json.await_args_list[0].args[0]
+    assert sent_info["event"] == "match_info"
+    assert sent_info["match_id"] == active_match.match_id
+    assert sent_info["my_club_id"] == 1
+    assert sent_info["team_a"]["club_id"] == active_match.participation_a.club_id
+    assert sent_info["team_b"]["club_id"] == active_match.participation_b.club_id
+    assert len(sent_info["players"]) == 12
+
+    sent_state = websocket.send_json.await_args_list[1].args[0]
+    assert sent_state["event"] == "estado_partido"
+    assert sent_state["actual_tic"] == 0
+
+
+@pytest.mark.asyncio
+async def test_connect_as_spectator_sends_match_info_with_none_club(active_match):
+    manager = MatchConnectionManager()
+    websocket = AsyncMock()
+
+    await manager.connect(active_match.match_id, websocket, client_club_id=None)
+
+    websocket.accept.assert_awaited_once()
+    assert manager.connection_clubs[websocket] is None
+    assert websocket.send_json.await_count == 2
+
+    sent_info = websocket.send_json.await_args_list[0].args[0]
+    assert sent_info["event"] == "match_info"
+    assert sent_info["my_club_id"] is None
+
+
+def test_disconnect_cleans_connection_clubs():
+    manager = MatchConnectionManager()
+    ws = AsyncMock()
+    manager.active_connections[1] = [ws]
+    manager.connection_clubs[ws] = 1
+
+    manager.disconnect(1, ws)
+
+    assert ws not in manager.connection_clubs
+    assert 1 not in manager.active_connections
+
+
+def test_websocket_endpoint_with_valid_token(active_match, monkeypatch):
+    match_connection_manager.active_connections.clear()
+    match_connection_manager.connection_clubs.clear()
+
+    monkeypatch.setattr("app.services.auth_service.get_user_from_token", lambda db, token: Mock(id=10))
+    monkeypatch.setattr("app.repositories.club_repository.get_by_user_id", lambda db, user_id: Mock(id=1))
+
+    with client.websocket_connect(f"/ws/matches/{active_match.match_id}?token=valid_token") as ws:
+        msg1 = ws.receive_json()
+        assert msg1["event"] == "match_info"
+        assert msg1["my_club_id"] == 1
+
+        msg2 = ws.receive_json()
+        assert msg2["event"] == "estado_partido"
+        assert msg2["actual_tic"] == 0
+
+    match_connection_manager.active_connections.clear()
+    match_connection_manager.connection_clubs.clear()
+
+
+def test_websocket_endpoint_spectator_without_token(active_match):
+    match_connection_manager.active_connections.clear()
+    match_connection_manager.connection_clubs.clear()
+
+    with client.websocket_connect(f"/ws/matches/{active_match.match_id}") as ws:
+        msg1 = ws.receive_json()
+        assert msg1["event"] == "match_info"
+        assert msg1["my_club_id"] is None
+
+        msg2 = ws.receive_json()
+        assert msg2["event"] == "estado_partido"
+
+    match_connection_manager.active_connections.clear()
+    match_connection_manager.connection_clubs.clear()
+
+
+def test_websocket_endpoint_with_invalid_token_falls_back_to_spectator(active_match, monkeypatch):
+    match_connection_manager.active_connections.clear()
+    match_connection_manager.connection_clubs.clear()
+
+    monkeypatch.setattr(
+        "app.services.auth_service.get_user_from_token",
+        Mock(side_effect=Exception("Invalid token")),
+    )
+
+    with client.websocket_connect(f"/ws/matches/{active_match.match_id}?token=invalid_token") as ws:
+        msg1 = ws.receive_json()
+        assert msg1["event"] == "match_info"
+        assert msg1["my_club_id"] is None
+
+        msg2 = ws.receive_json()
+        assert msg2["event"] == "estado_partido"
+
+    match_connection_manager.active_connections.clear()
+    match_connection_manager.connection_clubs.clear()
+
