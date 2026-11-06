@@ -10,6 +10,8 @@ from contextlib import contextmanager
 
 import pytest
 
+from functools import partial
+
 from app.database import Base
 
 from app.models.user import User
@@ -210,6 +212,19 @@ def runner_event_setup(
         execute=execute,
         real_notify=real_notify,
     )
+
+
+@pytest.fixture(autouse=True)
+def session_notification(monkeypatch):
+    notify = AsyncMock()
+
+    monkeypatch.setattr(
+        league_runner.session_websocket_service,
+        "notify_leagues_updated",
+        notify,
+    )
+
+    return notify
 
 
 def mock_match_execution(
@@ -1303,3 +1318,32 @@ async def test_runner_removes_active_round_when_execution_is_interrupted(
         execution.release.set()
         task.cancel()
         await asyncio.gather(task, return_exceptions=True)
+
+
+def assert_session_notification_after_finalization(probe, league_id):
+    assert probe.open_sessions == 0
+
+    with probe.sessions() as db:
+        league = db.get(League, league_id)
+
+        assert league.state == LeagueState.FINALIZADA
+        assert league.last_completed_round == 2
+
+    assert probe.events[-1].type == "league_finished"
+
+
+@pytest.mark.asyncio
+async def test_runner_updates_session_only_after_finalization(
+    round_case,
+    runner_event_setup,
+    session_notification,
+):
+    session_notification.side_effect = partial(
+        assert_session_notification_after_finalization,
+        runner_event_setup.probe,
+        round_case.league_id,
+    )
+
+    await league_runner.run_league(round_case.league_id)
+
+    session_notification.assert_awaited_once_with()

@@ -1,5 +1,10 @@
+import asyncio
+import logging
+
 from fastapi import WebSocket
 from sqlalchemy.orm import Session
+
+from app.database import SessionLocal
 
 from app.core.ws_manager import manager
 from app.repositories import friendly_game_repository, league_repository
@@ -11,6 +16,12 @@ from app.schemas.league import (
     LeagueSessionItem,
     LeaguesSessionPayload,
 )
+
+
+SEND_TIMEOUT_SECONDS = 5
+
+
+logger = logging.getLogger(__name__)
 
 
 def build_friendly_games_payload(
@@ -112,3 +123,25 @@ async def send_session_snapshot_to_connection(
             **leagues_payload.model_dump(mode="json"),
         }
     )
+
+
+
+def _load_session_leagues_payload() -> LeaguesSessionPayload:
+    with SessionLocal() as db:
+        payload = build_leagues_payload(db)
+
+    return payload
+
+
+async def notify_leagues_updated() -> None:
+    try:
+        payload = await asyncio.to_thread(
+            _load_session_leagues_payload,
+        )
+
+        async with asyncio.timeout(SEND_TIMEOUT_SECONDS):
+            await broadcast_leagues_payload(payload)
+    except Exception:
+        logger.exception(
+            "Failed to notify session clients about league updates"
+        )

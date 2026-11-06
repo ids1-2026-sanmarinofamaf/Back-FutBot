@@ -34,6 +34,7 @@ from app.services.league_service import (
     get_league_detail,
 )
 from app.services.league_websocket_service import league_connection_manager
+from app.services import session_websocket_service
 from app.services.match_builder import create_match_participation
 from app.services.match_service import load_match_behaviors, start_match_task
 
@@ -430,6 +431,8 @@ async def run_league(league_id: int) -> None:
                 league_id,
                 finish_league_event,
             )
+
+            await session_websocket_service.notify_leagues_updated()
 
             return
 
