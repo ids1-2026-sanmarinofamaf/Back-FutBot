@@ -1,6 +1,6 @@
 from fastapi import WebSocket
 
-from app.game.models.match import MatchSnapshot
+from app.game.models.match import MatchSnapshot, Match
 from app.schemas.match_websocket import (
     MatchPlayerState,
     MatchStateMessage,
@@ -8,6 +8,9 @@ from app.schemas.match_websocket import (
     MatchPauseStartedMessage,
     MatchSubstitutionWindowClosedMessage,
     MatchPauseFinishedMessage,
+    MatchTeamInfo,
+    MatchPlayerInfo,
+    MatchInfoMessage,
 )
 
 
@@ -155,6 +158,47 @@ def build_pause_finished_message(
         pause_type=pause_type,
     )
 
+def build_match_info_message(
+    match: Match,
+) -> MatchInfoMessage:
+
+    participation_a = match.participation_a
+    participation_b = match.participation_b
+
+    players = []
+
+    for team, participation in (
+        ("A", participation_a),
+        ("B", participation_b),
+    ):
+        for player in participation.players:
+            players.append(
+                MatchPlayerInfo(
+                    player_id=player.player_id,
+                    name=player.name,
+                    team=team,
+                    club_id=participation.club_id,
+                    shirt_number=player.shirt_number,
+                )
+            )
+
+    return MatchInfoMessage(
+        match_id=match.match_id,
+
+        team_a=MatchTeamInfo(
+            club_id=participation_a.club_id,
+            club_name=participation_a.club_name,
+            coach_behavior_name=participation_a.coach_behavior_name,
+        ),
+
+        team_b=MatchTeamInfo(
+            club_id=participation_b.club_id,
+            club_name=participation_b.club_name,
+            coach_behavior_name=participation_b.coach_behavior_name,
+        ),
+
+        players=players,
+    )
 
 
 match_connection_manager = MatchConnectionManager()

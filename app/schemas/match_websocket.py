@@ -45,3 +45,24 @@ class MatchSubstitutionWindowClosedMessage(BaseModel):
 class MatchPauseFinishedMessage(BaseModel):
     event: Literal["pause_finished"] = "pause_finished"
     pause_type: Literal["hydration", "halftime"]
+
+class MatchTeamInfo(BaseModel):
+    club_id: int
+    club_name: str
+    coach_behavior_name: str | None = None
+
+
+class MatchPlayerInfo(BaseModel):
+    player_id: int
+    name: str
+    team: Literal["A", "B"]
+    club_id: int
+    shirt_number: int
+
+
+class MatchInfoMessage(BaseModel):
+    event: Literal["match_info"] = "match_info"
+    match_id: int
+    team_a: MatchTeamInfo
+    team_b: MatchTeamInfo
+    players: list[MatchPlayerInfo]
