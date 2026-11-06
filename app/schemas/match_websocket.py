@@ -8,6 +8,7 @@ class MatchPlayerState(BaseModel):
     y: float
     is_on_field: bool
     team: str
+    current_behavior_id: int | None = None
 
 
 class BallState(BaseModel):
@@ -25,6 +26,11 @@ class MatchStateMessage(BaseModel):
 
     user1_goals: int
     user2_goals: int
+
+    current_period: int
+    is_paused: bool
+    pause_type: Literal["hydration", "halftime"] | None
+    substitution_window_open: bool
 
     ball: BallState
     players: list[MatchPlayerState]

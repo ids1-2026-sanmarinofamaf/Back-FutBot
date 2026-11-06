@@ -6,6 +6,9 @@ from app.game.models.ball import Ball, BallSnapshot
 from app.game.models.match_participation import MatchParticipation
 from app.game.models.player_in_match import PlayerInMatchSnapshot
 from app.game.types import Side, Period
+from typing import Literal
+
+PauseType = Literal["hydration", "halftime"]
 
 class MatchState(str, Enum):
     NOT_STARTED = "not_started"
@@ -31,6 +34,9 @@ class MatchSnapshot:
     current_period: Period = Period.FIRST_QUARTER
     side_a: Side = Side.LEFT
     side_b: Side = Side.RIGHT
+    is_paused: bool = False
+    pause_type: PauseType | None = None
+    substitution_window_open: bool = True
 
 @dataclass  # non-persistent class
 class Match:
@@ -53,6 +59,8 @@ class Match:
     side_b: Side = Side.RIGHT
 
     substitution_requests_open: bool = True # it is set to true as long as substitutions can be planned.
+    is_paused: bool = False
+    pause_type: PauseType | None = None
 
     def snapshot(self) -> MatchSnapshot:  # returns a copy of match in the state it was in when made
         return MatchSnapshot(
@@ -78,7 +86,11 @@ class Match:
 
             current_period=self.current_period,
             side_a=self.side_a,
-            side_b=self.side_b
+            side_b=self.side_b,
+
+            is_paused=self.is_paused,
+            pause_type=self.pause_type,
+            substitution_window_open=self.substitution_requests_open
         )
 
     def plan_substitution(

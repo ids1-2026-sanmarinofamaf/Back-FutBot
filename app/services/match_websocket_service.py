@@ -98,6 +98,7 @@ def build_match_state_message(
                 y=player.position[1],
                 is_on_field=player.is_on_field,
                 team="A",
+                current_behavior_id=player.current_behavior_id,
             )
         )
 
@@ -109,6 +110,7 @@ def build_match_state_message(
                 y=player.position[1],
                 is_on_field=player.is_on_field,
                 team="B",
+                current_behavior_id=player.current_behavior_id,
             )
         )
 
@@ -120,6 +122,11 @@ def build_match_state_message(
 
         user1_goals=snapshot.score_a,
         user2_goals=snapshot.score_b,
+
+        current_period=snapshot.current_period.value,
+        is_paused=snapshot.is_paused,
+        pause_type=snapshot.pause_type,
+        substitution_window_open=snapshot.substitution_window_open,
 
         ball=BallState(
             x=snapshot.ball.position[0],
@@ -198,6 +205,7 @@ def build_match_info_message(
         ),
 
         players=players,
+        
     )
 
 
