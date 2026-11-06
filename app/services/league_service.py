@@ -534,3 +534,14 @@ def get_league_detail(db: Session, league_id: int) -> LeagueDetail:
         fixture=fixture,
         standings=standings,
     )
+
+def get_my_league_ids(
+    db: Session,
+    user_id: int,
+) -> list[int]:
+    club = club_repository.get_by_user_id(db, user_id)
+
+    if club is None:
+        return []
+
+    return league_participation_repository.get_active_league_ids_by_club(db, club.id)

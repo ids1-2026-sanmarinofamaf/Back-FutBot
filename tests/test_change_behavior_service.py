@@ -73,6 +73,35 @@ def test_change_behavior_success(
     )
 
 
+@patch("app.services.match_service.behavior_repository.get_available_by_id")
+@patch("app.services.match_service.club_repository.get_by_user_id")
+@patch("app.services.match_service.get_match")
+def test_change_behavior_updates_current_behavior_name(
+    mock_get_match,
+    mock_get_club,
+    mock_get_behavior,
+    setup_match,
+):
+    db, club, player, _, match = setup_match
+
+    mock_get_match.return_value = match
+    mock_get_club.return_value = club
+    mock_behavior = MagicMock(id=7)
+    mock_behavior.name = "Ataque Total"
+    mock_get_behavior.return_value = mock_behavior
+
+    change_player_behavior(
+        db=db,
+        user_id=1,
+        match_id=100,
+        player_id=10,
+        behavior_id=7,
+    )
+
+    assert player.current_behavior_id == 7
+    assert player.current_behavior_name == "Ataque Total"
+
+
 @patch("app.services.match_service.get_match")
 def test_change_behavior_match_not_found(mock_get_match):
     mock_get_match.return_value = None

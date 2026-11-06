@@ -250,6 +250,9 @@ def change_player_behavior(
         raise LookupError("Behavior not available")
 
     player.current_behavior_id = behavior_id
+    behavior_name = getattr(behavior, "name", None)
+    if isinstance(behavior_name, str):
+        player.current_behavior_name = behavior_name
 
 
 async def stop_running_matches() -> None:

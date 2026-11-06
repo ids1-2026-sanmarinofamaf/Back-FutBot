@@ -88,3 +88,26 @@ def get_started_leagues_ids(db: Session) -> list[int]:
             .order_by(League.id)
         ).all()
     )
+
+
+def get_active_league_ids_by_club(
+    db: Session,
+    club_id: int,
+) -> list[int]:
+
+    res = (
+        select(LeagueParticipation.league_id)
+        .join(
+            League,
+            LeagueParticipation.league_id == League.id
+        )
+        .where(
+            LeagueParticipation.club_id == club_id,
+            League.state.in_([
+                LeagueState.POR_COMENZAR,
+                LeagueState.INICIADA
+            ])
+        )
+    )
+
+    return list(db.scalars(res).all())

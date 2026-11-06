@@ -35,6 +35,7 @@ from app.services.league_service import (
     InsufficientLeagueParticipants,
     build_league_state,
     get_league_detail,
+    get_my_league_ids
 )
 from app.services.league_runner import start_league_runner
 
@@ -45,7 +46,9 @@ from app.schemas.league import (
     LeagueUpdate,
     LeagueStartedEvent,
     LeagueDetail,
+    MyLeaguesResponse
 )
+
 
 router = APIRouter(prefix="/leagues",tags=["Leagues"])
 
@@ -264,3 +267,16 @@ async def get_by_id(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=str(error),
         ) from error
+
+@router.get("/me", response_model=MyLeaguesResponse)
+async def get_my_leagues(
+    db: Session = Depends(get_db),
+    current_user=Depends(get_current_user),
+):
+    league_ids = await run_in_threadpool(
+        get_my_league_ids,
+        db,
+        current_user.id,
+    )
+
+    return MyLeaguesResponse(league_ids=league_ids)

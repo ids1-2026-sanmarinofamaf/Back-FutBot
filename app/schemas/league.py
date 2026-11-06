@@ -122,3 +122,6 @@ class LeagueDetail(BaseModel):
     fixture: list[FixtureMatchItem] | None = None
     standings: list[StandingRow] | None = None
 
+
+class MyLeaguesResponse(BaseModel):
+    league_ids: list[int]
