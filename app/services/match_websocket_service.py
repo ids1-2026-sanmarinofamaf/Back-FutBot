@@ -1,7 +1,7 @@
 from fastapi import WebSocket
 
 from app.game.active_matches import get_match
-from app.game.models.match import MatchSnapshot, Match
+from app.game.models.match import MatchSnapshot, Match, PauseType
 from app.schemas.match_websocket import (
     MatchPlayerState,
     MatchStateMessage,
@@ -79,7 +79,7 @@ class MatchConnectionManager:
 
         connections = (self.active_connections.get(match_id, [])).copy()
 
-        disconnected = []
+        disconnected: list[WebSocket] = []
         # sent the status for everyone
         for websocket in connections:
             try:
@@ -104,12 +104,12 @@ class MatchConnectionManager:
             except Exception:
                 pass
 
-# prepare the messahe that will be sended by through the websocket
+# prepare the message that will be sent through the websocket
 def build_match_state_message(
     snapshot: MatchSnapshot,
 ) -> MatchStateMessage:
 
-    players = []
+    players: list[MatchPlayerState] = []
 
     for player in snapshot.players_a:
         players.append(
@@ -162,7 +162,7 @@ def build_match_state_message(
 
 
 def build_pause_started_message(
-    pause_type: str,
+    pause_type: PauseType,
     duration: float,
     planning_duration: float,
 ) -> MatchPauseStartedMessage:
@@ -174,7 +174,7 @@ def build_pause_started_message(
 
 
 def build_substitution_window_closed_message(
-    pause_type: str,
+    pause_type: PauseType,
 ) -> MatchSubstitutionWindowClosedMessage:
     return MatchSubstitutionWindowClosedMessage(
         pause_type=pause_type,
@@ -182,7 +182,7 @@ def build_substitution_window_closed_message(
 
 
 def build_pause_finished_message(
-    pause_type: str,
+    pause_type: PauseType,
 ) -> MatchPauseFinishedMessage:
     return MatchPauseFinishedMessage(
         pause_type=pause_type,
@@ -196,22 +196,29 @@ def build_match_info_message(
     participation_a = match.participation_a
     participation_b = match.participation_b
 
-    players = []
+    players: list[MatchPlayerInfo] = []
 
-    for team, participation in (
-        ("A", participation_a),
-        ("B", participation_b),
-    ):
-        for player in participation.players:
-            players.append(
-                MatchPlayerInfo(
-                    player_id=player.player_id,
-                    name=player.name,
-                    team=team,
-                    club_id=participation.club_id,
-                    shirt_number=player.shirt_number,
-                )
+    for player in participation_a.players:
+        players.append(
+            MatchPlayerInfo(
+                player_id=player.player_id,
+                name=player.name,
+                team="A",
+                club_id=participation_a.club_id,
+                shirt_number=player.shirt_number,
             )
+        )
+
+    for player in participation_b.players:
+        players.append(
+            MatchPlayerInfo(
+                player_id=player.player_id,
+                name=player.name,
+                team="B",
+                club_id=participation_b.club_id,
+                shirt_number=player.shirt_number,
+            )
+        )
 
     return MatchInfoMessage(
         match_id=match.match_id,

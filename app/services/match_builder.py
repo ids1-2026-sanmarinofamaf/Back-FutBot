@@ -30,13 +30,18 @@ def _create_player_in_match(
         position = (0.0, 0.0)
 
     else:
-        starting_position = FORMATION_POSITIONS[formation][player_on_roster.slot]
+        if player_on_roster.slot is None:
+            raise ValueError("Starter player must have a slot assigned")
+
+        base_position = FORMATION_POSITIONS[formation][player_on_roster.slot]
 
         if mirror_position:
             starting_position = (
-                FIELD_WIDTH - starting_position[0],
-                starting_position[1],
+                FIELD_WIDTH - base_position[0],
+                base_position[1],
             )
+        else:
+            starting_position = base_position
 
         position = starting_position
 
@@ -45,11 +50,13 @@ def _create_player_in_match(
         if player_on_roster.is_starter
         else None
     )
-    current_behavior_name = None
+    current_behavior_name: str | None = None
     if current_behavior_id is not None:
         behavior = behavior_repository.get_by_id(db, current_behavior_id)
         if behavior is not None:
             current_behavior_name = behavior.name
+
+    player_name = str(getattr(player, "name", "") or "")
 
     return PlayerInMatch(
         player_id=player.id,
@@ -63,7 +70,7 @@ def _create_player_in_match(
         strength=player.strength,
         current_behavior_id=current_behavior_id,
         is_on_field=player_on_roster.is_starter,
-        name=getattr(player, "name", "") or "",
+        name=player_name,
         shirt_number=shirt_number,
         current_behavior_name=current_behavior_name,
     )
