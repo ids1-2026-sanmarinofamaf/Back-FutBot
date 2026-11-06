@@ -129,6 +129,7 @@ class MatchParticipation:
 
         # inherit the current behavior from the outgoing player.
         incoming.current_behavior_id = outgoing.current_behavior_id
+        incoming.current_behavior_name = outgoing.current_behavior_name
 
         # reset alll the temporary restrictions.
         incoming.kick_cooldown_remaining = 0
@@ -140,6 +141,7 @@ class MatchParticipation:
         incoming.is_on_field = True
 
         outgoing.current_behavior_id = None
+        outgoing.current_behavior_name = None
 
         # mark the period as used and remove the pending request.
         self.last_substitution_period = period
