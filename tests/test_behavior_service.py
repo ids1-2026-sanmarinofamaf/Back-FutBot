@@ -4,9 +4,11 @@ from sqlalchemy.exc import IntegrityError
 
 from app.schemas.behavior import BehaviorIn
 from app.services.behavior_service import (
+    ActiveCompetitionError,
     BehaviorValidationError,
     DefaultBehaviorModificationError,
     create_behavior,
+    delete_behavior,
     get_behavior,
     update_behavior,
     validate_behavior,
@@ -448,4 +450,243 @@ def test_update_behavior_duplicate_name_integrity_error_rolls_back(
 
     db.commit.assert_not_called()
     db.rollback.assert_called_once()
+
+
+@patch("app.services.behavior_service.behavior_repository.delete")
+@patch("app.services.behavior_service._unassign_behavior_from_rosters")
+@patch("app.services.behavior_service._has_active_friendly_game", return_value=False)
+@patch("app.services.behavior_service._has_active_league", return_value=False)
+@patch("app.services.behavior_service.is_club_in_active_match", return_value=False)
+@patch("app.services.behavior_service.behavior_repository.get_available_by_id")
+@patch("app.services.behavior_service.club_repository.get_by_user_id")
+def test_delete_behavior_success(
+    mock_get_club,
+    mock_get_behavior,
+    mock_active_match,
+    mock_active_league,
+    mock_active_friendly,
+    mock_unassign,
+    mock_delete,
+):
+    db = MagicMock()
+    club = MagicMock()
+    club.id = 5
+    mock_get_club.return_value = club
+
+    behavior = MagicMock()
+    behavior.id = 10
+    behavior.is_default = False
+    mock_get_behavior.return_value = behavior
+
+    delete_behavior(db=db, user_id=1, behavior_id=10)
+
+    mock_get_club.assert_called_once_with(db, 1)
+    mock_get_behavior.assert_called_once_with(db=db, club_id=5, behavior_id=10)
+    mock_active_match.assert_called_once_with(5)
+    mock_active_league.assert_called_once_with(db, 5)
+    mock_active_friendly.assert_called_once_with(db, 5)
+    mock_unassign.assert_called_once_with(db, 10)
+    mock_delete.assert_called_once_with(db, behavior)
+    db.commit.assert_called_once()
+    db.rollback.assert_not_called()
+
+
+@patch("app.services.behavior_service.club_repository.get_by_user_id")
+def test_delete_behavior_user_without_club(mock_get_club):
+    db = MagicMock()
+    mock_get_club.return_value = None
+
+    with pytest.raises(ValueError, match="User does not have a club"):
+        delete_behavior(db=db, user_id=1, behavior_id=10)
+
+    db.commit.assert_not_called()
+    db.rollback.assert_called_once()
+
+
+@patch("app.services.behavior_service.behavior_repository.get_available_by_id")
+@patch("app.services.behavior_service.club_repository.get_by_user_id")
+def test_delete_behavior_not_found(mock_get_club, mock_get_behavior):
+    db = MagicMock()
+    club = MagicMock()
+    club.id = 5
+    mock_get_club.return_value = club
+    mock_get_behavior.return_value = None
+
+    with pytest.raises(LookupError, match="Behavior not found"):
+        delete_behavior(db=db, user_id=1, behavior_id=999)
+
+    db.commit.assert_not_called()
+    db.rollback.assert_called_once()
+
+
+@patch("app.services.behavior_service.behavior_repository.get_available_by_id")
+@patch("app.services.behavior_service.club_repository.get_by_user_id")
+def test_delete_behavior_default_raises_error(mock_get_club, mock_get_behavior):
+    db = MagicMock()
+    club = MagicMock()
+    club.id = 5
+    mock_get_club.return_value = club
+
+    behavior = MagicMock()
+    behavior.id = 1
+    behavior.is_default = True
+    mock_get_behavior.return_value = behavior
+
+    with pytest.raises(DefaultBehaviorModificationError, match="Default behaviors cannot be modified"):
+        delete_behavior(db=db, user_id=1, behavior_id=1)
+
+    db.commit.assert_not_called()
+    db.rollback.assert_called_once()
+
+
+@patch("app.services.behavior_service.is_club_in_active_match", return_value=True)
+@patch("app.services.behavior_service.behavior_repository.get_available_by_id")
+@patch("app.services.behavior_service.club_repository.get_by_user_id")
+def test_delete_behavior_active_match_raises_error(
+    mock_get_club,
+    mock_get_behavior,
+    mock_active_match,
+):
+    db = MagicMock()
+    club = MagicMock()
+    club.id = 5
+    mock_get_club.return_value = club
+
+    behavior = MagicMock()
+    behavior.id = 10
+    behavior.is_default = False
+    mock_get_behavior.return_value = behavior
+
+    with pytest.raises(
+        ActiveCompetitionError,
+        match="No se puede realizar esta acción mientras se participe en un partido o competencia activa.",
+    ):
+        delete_behavior(db=db, user_id=1, behavior_id=10)
+
+    db.commit.assert_not_called()
+    db.rollback.assert_called_once()
+
+
+@patch("app.services.behavior_service._has_active_league", return_value=True)
+@patch("app.services.behavior_service.is_club_in_active_match", return_value=False)
+@patch("app.services.behavior_service.behavior_repository.get_available_by_id")
+@patch("app.services.behavior_service.club_repository.get_by_user_id")
+def test_delete_behavior_active_league_raises_error(
+    mock_get_club,
+    mock_get_behavior,
+    mock_active_match,
+    mock_active_league,
+):
+    db = MagicMock()
+    club = MagicMock()
+    club.id = 5
+    mock_get_club.return_value = club
+
+    behavior = MagicMock()
+    behavior.id = 10
+    behavior.is_default = False
+    mock_get_behavior.return_value = behavior
+
+    with pytest.raises(
+        ActiveCompetitionError,
+        match="No se puede realizar esta acción mientras se participe en un partido o competencia activa.",
+    ):
+        delete_behavior(db=db, user_id=1, behavior_id=10)
+
+    db.commit.assert_not_called()
+    db.rollback.assert_called_once()
+
+
+@patch("app.services.behavior_service._has_active_friendly_game", return_value=True)
+@patch("app.services.behavior_service._has_active_league", return_value=False)
+@patch("app.services.behavior_service.is_club_in_active_match", return_value=False)
+@patch("app.services.behavior_service.behavior_repository.get_available_by_id")
+@patch("app.services.behavior_service.club_repository.get_by_user_id")
+def test_delete_behavior_active_friendly_game_raises_error(
+    mock_get_club,
+    mock_get_behavior,
+    mock_active_match,
+    mock_active_league,
+    mock_active_friendly,
+):
+    db = MagicMock()
+    club = MagicMock()
+    club.id = 5
+    mock_get_club.return_value = club
+
+    behavior = MagicMock()
+    behavior.id = 10
+    behavior.is_default = False
+    mock_get_behavior.return_value = behavior
+
+    with pytest.raises(
+        ActiveCompetitionError,
+        match="No se puede realizar esta acción mientras se participe en un partido o competencia activa.",
+    ):
+        delete_behavior(db=db, user_id=1, behavior_id=10)
+
+    db.commit.assert_not_called()
+    db.rollback.assert_called_once()
+
+
+@patch("app.services.behavior_service.behavior_repository.delete")
+@patch("app.services.behavior_service._unassign_behavior_from_rosters")
+@patch("app.services.behavior_service._has_active_friendly_game", return_value=False)
+@patch("app.services.behavior_service._has_active_league", return_value=False)
+@patch("app.services.behavior_service.is_club_in_active_match", return_value=False)
+@patch("app.services.behavior_service.behavior_repository.get_available_by_id")
+@patch("app.services.behavior_service.club_repository.get_by_user_id")
+def test_delete_behavior_exception_rolls_back(
+    mock_get_club,
+    mock_get_behavior,
+    mock_active_match,
+    mock_active_league,
+    mock_active_friendly,
+    mock_unassign,
+    mock_delete,
+):
+    db = MagicMock()
+    club = MagicMock()
+    club.id = 5
+    mock_get_club.return_value = club
+
+    behavior = MagicMock()
+    behavior.id = 10
+    behavior.is_default = False
+    mock_get_behavior.return_value = behavior
+
+    mock_delete.side_effect = Exception("DB error")
+
+    with pytest.raises(Exception, match="DB error"):
+        delete_behavior(db=db, user_id=1, behavior_id=10)
+
+    db.commit.assert_not_called()
+    db.rollback.assert_called_once()
+
+
+def test_has_active_league():
+    from app.services.behavior_service import _has_active_league
+    db = MagicMock()
+    db.scalar.return_value = 1
+    assert _has_active_league(db, 5) is True
+    db.scalar.return_value = None
+    assert _has_active_league(db, 5) is False
+
+
+def test_has_active_friendly_game():
+    from app.services.behavior_service import _has_active_friendly_game
+    db = MagicMock()
+    db.scalar.return_value = 1
+    assert _has_active_friendly_game(db, 5) is True
+    db.scalar.return_value = None
+    assert _has_active_friendly_game(db, 5) is False
+
+
+def test_unassign_behavior_from_rosters():
+    from app.services.behavior_service import _unassign_behavior_from_rosters
+    db = MagicMock()
+    _unassign_behavior_from_rosters(db, 10)
+    db.execute.assert_called_once()
+
+
 
