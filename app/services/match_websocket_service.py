@@ -1,5 +1,6 @@
 from fastapi import WebSocket
 
+from app.game.active_matches import get_match
 from app.game.models.match import MatchSnapshot, Match
 from app.schemas.match_websocket import (
     MatchPlayerState,
@@ -18,9 +19,15 @@ class MatchConnectionManager:
     def __init__(self):
         # we relate the match_id with the connections it can have
         self.active_connections: dict[int, list[WebSocket]] = {}
+        self.connection_clubs: dict[WebSocket, int | None] = {}
 
     # since most WS operations use the network, we use await in case it takes a while
-    async def connect(self, match_id: int, websocket: WebSocket) -> None:
+    async def connect(
+        self,
+        match_id: int,
+        websocket: WebSocket,
+        client_club_id: int | None = None,
+    ) -> None:
         # accept de ws conection
         await websocket.accept()
 
@@ -30,9 +37,22 @@ class MatchConnectionManager:
 
         # We save the connection in the respective match_id
         self.active_connections[match_id].append(websocket)
+        self.connection_clubs[websocket] = client_club_id
+
+        # Si el partido está registrado y activo, enviar match_info y estado_partido inicial
+        match = get_match(match_id)
+        if match is not None:
+            match_info = build_match_info_message(match, my_club_id=client_club_id)
+            await websocket.send_json(match_info.model_dump())
+
+            initial_snapshot = match.snapshot()
+            initial_state = build_match_state_message(initial_snapshot)
+            await websocket.send_json(initial_state.model_dump())
 
     # given a WS connection and a match_id, we want to disconnect it from it
     def disconnect(self, match_id: int, websocket: WebSocket) -> None:
+        self.connection_clubs.pop(websocket, None)
+
         # we get the ws connections from that match_id
         connections = self.active_connections.get(match_id, [])
 
@@ -77,6 +97,7 @@ class MatchConnectionManager:
         self.active_connections.pop(match_id, None)
 
         for websocket in connections:
+            self.connection_clubs.pop(websocket, None)
             try:    
                 await websocket.close()
 
