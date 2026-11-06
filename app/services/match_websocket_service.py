@@ -47,7 +47,13 @@ class MatchConnectionManager:
 
             initial_snapshot = match.snapshot()
             initial_state = build_match_state_message(initial_snapshot)
-            await websocket.send_json(initial_state.model_dump())
+            filtered_initial_state = filter_match_state_for_client(
+                initial_state,
+                client_club_id=client_club_id,
+                club_a_id=match.participation_a.club_id,
+                club_b_id=match.participation_b.club_id,
+            )
+            await websocket.send_json(filtered_initial_state.model_dump())
 
     # given a WS connection and a match_id, we want to disconnect it from it
     def disconnect(self, match_id: int, websocket: WebSocket) -> None:
@@ -70,22 +76,40 @@ class MatchConnectionManager:
         self,
         match_id: int,
         message: (
-        MatchStateMessage
-        | MatchPauseStartedMessage
-        | MatchSubstitutionWindowClosedMessage
-        | MatchPauseFinishedMessage
-    ),
+            MatchStateMessage
+            | MatchPauseStartedMessage
+            | MatchSubstitutionWindowClosedMessage
+            | MatchPauseFinishedMessage
+        ),
     ) -> None:
 
         connections = (self.active_connections.get(match_id, [])).copy()
 
         disconnected: list[WebSocket] = []
-        # sent the status for everyone
-        for websocket in connections:
-            try:
-                await websocket.send_json(message.model_dump())
-            except Exception:
-                disconnected.append(websocket)
+
+        if isinstance(message, MatchStateMessage):
+            match = get_match(match_id)
+            club_a_id = match.participation_a.club_id if match is not None else None
+            club_b_id = match.participation_b.club_id if match is not None else None
+
+            for websocket in connections:
+                client_club_id = self.connection_clubs.get(websocket)
+                filtered_msg = filter_match_state_for_client(
+                    message,
+                    client_club_id=client_club_id,
+                    club_a_id=club_a_id,
+                    club_b_id=club_b_id,
+                )
+                try:
+                    await websocket.send_json(filtered_msg.model_dump())
+                except Exception:
+                    disconnected.append(websocket)
+        else:
+            for websocket in connections:
+                try:
+                    await websocket.send_json(message.model_dump())
+                except Exception:
+                    disconnected.append(websocket)
 
         for websocket in disconnected:
             self.disconnect(match_id, websocket)
@@ -159,6 +183,42 @@ def build_match_state_message(
         ),
         players=players,
     )
+
+
+def filter_match_state_for_client(
+    message: MatchStateMessage,
+    client_club_id: int | None,
+    club_a_id: int | None,
+    club_b_id: int | None,
+) -> MatchStateMessage:
+    """
+    Oculta current_behavior_id y current_behavior_name de los jugadores rivales
+    o de ambos equipos si el cliente es un espectador.
+    """
+    filtered_players: list[MatchPlayerState] = []
+
+    for player in message.players:
+        is_own = (
+            client_club_id is not None
+            and (
+                (player.team == "A" and client_club_id == club_a_id)
+                or (player.team == "B" and client_club_id == club_b_id)
+            )
+        )
+
+        if is_own:
+            filtered_players.append(player)
+        else:
+            filtered_players.append(
+                player.model_copy(
+                    update={
+                        "current_behavior_id": None,
+                        "current_behavior_name": None,
+                    }
+                )
+            )
+
+    return message.model_copy(update={"players": filtered_players})
 
 
 def build_pause_started_message(
