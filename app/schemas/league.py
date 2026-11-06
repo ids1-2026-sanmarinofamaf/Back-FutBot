@@ -138,3 +138,7 @@ class LeagueDetail(BaseModel):
     active_round: int | None = Field(default=None, ge=1)
     active_match_ids: list[int] = Field(default_factory=list)
     break_ends_at: AwareDatetime | None = None
+
+
+class MyLeaguesResponse(BaseModel):
+    league_ids: list[int]

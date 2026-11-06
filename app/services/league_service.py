@@ -591,3 +591,14 @@ def get_league_detail(db: Session, league_id: int) -> LeagueDetail:
         active_round=active_round,
         active_match_ids=active_match_ids,
     )
+
+def get_my_league_ids(
+    db: Session,
+    user_id: int,
+) -> list[int]:
+    club = club_repository.get_by_user_id(db, user_id)
+
+    if club is None:
+        return []
+
+    return league_repository.get_active_league_ids_by_club(db, club.id)
