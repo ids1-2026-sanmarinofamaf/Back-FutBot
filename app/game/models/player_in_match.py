@@ -45,6 +45,8 @@ class PlayerInMatch:
     kick_cooldown_remaining: int = 0     # Remaining ticks for temporary restrictions applied to the player during the match     
     forced_wait_remaining: int = 0
     collision_penalty_remaining: int = 0
+    name: str
+    shirt_number: int
 
     def snapshot(self) -> PlayerInMatchSnapshot:
             return PlayerInMatchSnapshot(

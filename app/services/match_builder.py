@@ -2,7 +2,7 @@ from sqlalchemy.orm import Session
 
 from app.models.roster import Roster, Formation
 from app.models.player_on_roster import PlayerOnRoster
-from app.repositories import player_repository
+from app.repositories import player_repository, club_repository
 
 from app.game.models.player_in_match import PlayerInMatch
 from app.game.models.match_participation import MatchParticipation
@@ -15,6 +15,7 @@ def _create_player_in_match(
     player_on_roster: PlayerOnRoster,
     formation: Formation,
     mirror_position: bool,
+    shirt_number: int
 ) -> PlayerInMatch:
     player = player_repository.get_by_id(
         db,
@@ -55,6 +56,8 @@ def _create_player_in_match(
             else None
         ),
         is_on_field=player_on_roster.is_starter,
+        name=player.name,
+        shirt_number=shirt_number,
     )
 
 
@@ -66,18 +69,31 @@ def create_match_participation(
     """
     Build a runtime participation from a persisted roster.
     """
+    # assign number to players
     players = [
         _create_player_in_match(
             db=db,
             player_on_roster=player_on_roster,
             formation=roster.formation,
             mirror_position=mirror_position,
+            shirt_number=i,
         )
-        for player_on_roster in roster.players
+        for i, player_on_roster in enumerate(
+            roster.players, start=1
+        )
     ]
+
+    club = club_repository.get_by_id(
+        db,
+        roster.club_id,
+    )
+
+    if club is None:
+        raise ValueError("Club does not exist")
 
     return MatchParticipation(
         club_id=roster.club_id,
         roster_id=roster.id,
+        club_name=club.name,
         players=players,
     )

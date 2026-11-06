@@ -9,7 +9,7 @@ from app.game.types import Period
 class MatchParticipation:
     club_id: int  # ID of the club to which that participation belongs
     roster_id: int  # ID of the roster to which that participation belongs
-
+    club_name: str
     players: list[PlayerInMatch]  # starting players and substitutes selected for this match
 
     goals: int = 0
@@ -18,6 +18,7 @@ class MatchParticipation:
     pending_substitution: PendingSubstitution | None = None
     # ensure only one substitution in one period
     last_substitution_period: Period | None = None
+    coach_behavior_name: str | None = None
 
     # validations
     def __post_init__(self):
