@@ -10,7 +10,6 @@ from fastapi import (
 from app.services.league_websocket_service import league_connection_manager
 from fastapi.concurrency import run_in_threadpool
 
-from fastapi.concurrency import run_in_threadpool
 from sqlalchemy.orm import Session
 
 from app.database import get_db
@@ -37,7 +36,9 @@ from app.services.league_service import (
     InsufficientLeagueParticipants,
     build_league_state,
     get_league_detail,
-    get_my_league_ids
+    get_my_league_ids,
+    update_league_roster,
+    get_league_roster,
 )
 from app.services.league_runner import start_league_runner
 
@@ -50,6 +51,7 @@ from app.schemas.league import (
     LeagueDetail,
     MyLeaguesResponse
 )
+from app.schemas.roster import RosterCreate, RosterDetail
 
 SEND_TIMEOUT_SECONDS = 5
 
@@ -300,5 +302,82 @@ async def get_by_id(
     except LeagueNotFound as error:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
+            detail=str(error),
+        ) from error
+
+
+@router.put(
+    "/{league_id}/users/me/roster",
+    status_code=status.HTTP_200_OK,
+)
+async def update_my_league_roster(
+    league_id: int,
+    data: RosterCreate,
+    db: Session = Depends(get_db),
+    current_user=Depends(get_current_user),
+):
+    try:
+        await run_in_threadpool(
+            update_league_roster,
+            db=db,
+            league_id=league_id,
+            user_id=current_user.id,
+            data=data,
+        )
+
+        return {"message": "Roster updated successfully"}
+
+    except LeagueNotFound as error:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=str(error),
+        ) from error
+
+    except LeagueForbidden as error:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=str(error),
+        ) from error
+
+    except InvalidLeagueState as error:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=str(error),
+        ) from error
+
+    except InvalidRoster as error:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(error),
+        ) from error
+
+# obtain the respective league particiátion roster
+@router.get(
+    "/{league_id}/users/me/roster",
+    response_model=RosterDetail,
+    status_code=status.HTTP_200_OK,
+)
+async def get_my_league_roster(
+    league_id: int,
+    db: Session = Depends(get_db),
+    current_user=Depends(get_current_user),
+):
+    try:
+        return await run_in_threadpool(
+            get_league_roster,
+            db=db,
+            league_id=league_id,
+            user_id=current_user.id,
+        )
+
+    except LeagueNotFound as error:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=str(error),
+        ) from error
+
+    except LeagueForbidden as error:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
             detail=str(error),
         ) from error
