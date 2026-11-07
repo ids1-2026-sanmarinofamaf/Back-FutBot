@@ -113,6 +113,13 @@ def initialize_worker_pool() -> None:
         )
 
 
+def get_worker_pool() -> BehaviorWorkerPool:
+    if _worker_pool is None:
+        raise RuntimeError("Behavior worker pool is not initialized")
+
+    return _worker_pool
+
+
 def shutdown_worker_pool() -> None:
     """
     Shut down the shared pool and release its resources.
@@ -302,8 +309,14 @@ def change_player_behavior(
     if behavior is None:
         raise LookupError("Behavior not available")
 
-    # applied at the beginning of the next tick, over the coach assignments
-    participation.plan_behavior_change(player_id, behavior_id)
+    # applied at the beginning of the next tick, over the coach assignments;
+    # the name is kept so the snapshot shows it once the change is applied
+    behavior_name = getattr(behavior, "name", None)
+    participation.plan_behavior_change(
+        player_id,
+        behavior_id,
+        behavior_name if isinstance(behavior_name, str) else None,
+    )
 
 
 async def stop_running_matches() -> None:

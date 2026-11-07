@@ -241,3 +241,24 @@ def test_default_behavior_cannot_belong_to_club(session, club):
 
     with pytest.raises(IntegrityError):
         session.commit()
+
+
+def test_behavior_repository_delete(session, club):
+    from app.repositories import behavior_repository
+
+    behavior = Behavior(
+        name="Para Borrar",
+        code=BEHAVIOR_CODE,
+        club=club,
+        is_default=False,
+    )
+    behavior_repository.save(session, behavior)
+    session.commit()
+
+    assert behavior.id is not None
+    assert behavior_repository.get_by_id(session, behavior.id) is not None
+
+    behavior_repository.delete(session, behavior)
+    session.commit()
+
+    assert behavior_repository.get_by_id(session, behavior.id) is None

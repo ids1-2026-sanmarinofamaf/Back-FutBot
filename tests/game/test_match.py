@@ -81,3 +81,38 @@ def test_complete_match_runtime_state(six_players):
     assert match.duration_ticks == 1000
     assert match.current_tick == 0
     assert match.state == MatchState.NOT_STARTED
+
+
+def test_is_club_in_active_match(six_players):
+    from app.game.active_matches import (
+        active_matches,
+        register_match,
+        remove_match,
+        is_club_in_active_match,
+    )
+
+    active_matches.clear()
+
+    assert not is_club_in_active_match(1)
+    assert not is_club_in_active_match(2)
+
+    participation_a = MatchParticipation(club_id=1, roster_id=1, players=six_players)
+    participation_b = MatchParticipation(club_id=2, roster_id=2, players=six_players)
+    match = Match(
+        match_id=10,
+        participation_a=participation_a,
+        participation_b=participation_b,
+        ball=Ball(position=(20.0, 10.0), velocity=(0.0, 0.0)),
+        duration_ticks=100,
+    )
+
+    register_match(match)
+
+    assert is_club_in_active_match(1)
+    assert is_club_in_active_match(2)
+    assert not is_club_in_active_match(3)
+
+    remove_match(10)
+
+    assert not is_club_in_active_match(1)
+    assert not is_club_in_active_match(2)

@@ -189,6 +189,9 @@ class MatchRunner:
         planning_deadline = pause_start + planning_duration
         pause_deadline = pause_start + total_duration
 
+        match.is_paused = True
+        match.pause_type = pause_type
+
         await match_connection_manager.broadcast(
             match.match_id,
             build_pause_started_message(
@@ -231,6 +234,9 @@ class MatchRunner:
         next_period = Period(finished_period.value + 1)
 
         match.start_next_period(next_period)
+
+        match.is_paused = False
+        match.pause_type = None
 
         # the coaches run before the first tick of the period, so their
         # assignments apply from that tick (same as the first period)

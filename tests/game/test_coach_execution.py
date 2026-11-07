@@ -593,6 +593,20 @@ def test_apply_pending_changes_empties_queues(match):
     assert match.participation_a.pending_behavior_changes == {}
 
 
+def test_applied_changes_update_the_behavior_name(match):
+    match.participation_a.pending_coach_assignments = [(1, "Defender")]
+    match.participation_a.plan_behavior_change(2, 1, "Attacker")
+
+    # nothing changes until the queue is applied
+    assert match.participation_a.get_player(2).current_behavior_name is None
+
+    match.apply_pending_behavior_changes()
+
+    assert match.participation_a.get_player(1).current_behavior_name == "Defender"
+    assert match.participation_a.get_player(2).current_behavior_name == "Attacker"
+    assert match.participation_a.pending_behavior_names == {}
+
+
 def test_manual_change_wins_over_coach_in_the_same_tick(match):
     match.participation_a.pending_coach_assignments = [(1, "Defender")]
     match.participation_a.plan_behavior_change(1, 1)

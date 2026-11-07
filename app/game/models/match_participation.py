@@ -9,8 +9,8 @@ from app.game.types import Period, Assignment
 class MatchParticipation:
     club_id: int  # ID of the club to which that participation belongs
     roster_id: int  # ID of the roster to which that participation belongs
-
     players: list[PlayerInMatch]  # starting players and substitutes selected for this match
+    club_name: str = ""
 
     coach_behavior_id: int | None = None  # coach (DT) behavior chosen in the roster, if any
 
@@ -20,6 +20,8 @@ class MatchParticipation:
     # behavior changes waiting to be applied at the beginning of the next tick:
     # manual ones (player_id -> behavior_id) and the ones returned by the coach
     pending_behavior_changes: dict[int, int] = field(default_factory=dict)
+    # names of the manual changes, so the snapshot can show them once applied
+    pending_behavior_names: dict[int, str] = field(default_factory=dict)
     pending_coach_assignments: list[Assignment] = field(default_factory=list)
 
     goals: int = 0
@@ -28,6 +30,7 @@ class MatchParticipation:
     pending_substitution: PendingSubstitution | None = None
     # ensure only one substitution in one period
     last_substitution_period: Period | None = None
+    coach_behavior_name: str | None = None
 
     # validations
     def __post_init__(self):
@@ -125,13 +128,24 @@ class MatchParticipation:
 
     # the manual change is not applied right away, so it can win over
     # the coach assignments of the same tick
-    def plan_behavior_change(self, player_id: int, behavior_id: int) -> None:
+    def plan_behavior_change(
+        self,
+        player_id: int,
+        behavior_id: int,
+        behavior_name: str | None = None,
+    ) -> None:
         self.pending_behavior_changes[player_id] = behavior_id
+
+        if behavior_name is not None:
+            self.pending_behavior_names[player_id] = behavior_name
+        else:
+            self.pending_behavior_names.pop(player_id, None)
 
     # called at the beginning of each tick; returns the coach assignments applied
     def apply_pending_behavior_changes(self) -> list[Assignment]:
 
         changes: dict[int, int] = {}
+        names: dict[int, str | None] = {}
         applied_coach_assignments: dict[int, str] = {}
 
         # coach assignments: discard rivals, substitutes and unknown names
@@ -148,6 +162,7 @@ class MatchParticipation:
 
             # if the coach assigns the same player twice, the last one wins
             changes[player_id] = behavior_id
+            names[player_id] = behavior_name
             applied_coach_assignments[player_id] = behavior_name
 
         # manual changes go after, so they overwrite the coach
@@ -159,12 +174,16 @@ class MatchParticipation:
                 continue
 
             changes[player_id] = behavior_id
+            names[player_id] = self.pending_behavior_names.get(player_id)
             applied_coach_assignments.pop(player_id, None)
 
         for player_id, behavior_id in changes.items():
-            self.get_player(player_id).current_behavior_id = behavior_id
+            player = self.get_player(player_id)
+            player.current_behavior_id = behavior_id
+            player.current_behavior_name = names[player_id]
 
         self.pending_behavior_changes = {}
+        self.pending_behavior_names = {}
         self.pending_coach_assignments = []
 
         return list(applied_coach_assignments.items())
@@ -196,6 +215,7 @@ class MatchParticipation:
 
         # inherit the current behavior from the outgoing player.
         incoming.current_behavior_id = outgoing.current_behavior_id
+        incoming.current_behavior_name = outgoing.current_behavior_name
 
         # reset alll the temporary restrictions.
         incoming.kick_cooldown_remaining = 0
@@ -207,6 +227,7 @@ class MatchParticipation:
         incoming.is_on_field = True
 
         outgoing.current_behavior_id = None
+        outgoing.current_behavior_name = None
 
         # mark the period as used and remove the pending request.
         self.last_substitution_period = period

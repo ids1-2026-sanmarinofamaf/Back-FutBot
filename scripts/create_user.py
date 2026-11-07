@@ -15,6 +15,7 @@ import argparse
 from app.core.security import get_password_hash
 from app.database import SessionLocal
 from app.models.club import Club
+from app.models.club_statistics import ClubStatistics
 from app.models.player import Player
 from app.models.user import User
 from app.repositories import user_repository
@@ -22,6 +23,7 @@ from app.repositories import user_repository
 DEFAULT_PLAYERS_BY_EMAIL = {
     "test@futbot.com": ["Andy", "Santiago", "Santino", "Lotu", "Joaco", "Luca"],
     "rival@futbot.com": ["Santi", "Julio", "Lean", "Chun", "Gonzalo", "Diego"],
+    "argentina@futbot.com": ["Messi", "De Paul", "Paredes", "Di Maria", "Alvarez", "Dibu"],
 }
 
 DEFAULT_PACSS_VALUE = 60
@@ -62,13 +64,18 @@ def main():
         existing_user = user_repository.get_by_email(db, args.email)
         if existing_user is not None:
             if existing_user.club:
+                stats_added = False
+                if existing_user.club.statistics is None:
+                    existing_user.club.statistics = ClubStatistics()
+                    stats_added = True
+
                 existing_names = {p.name for p in existing_user.club.players}
                 added = 0
                 for name in player_names:
                     if name not in existing_names:
                         existing_user.club.players.append(create_player_instance(name))
                         added += 1
-                if added > 0:
+                if added > 0 or stats_added:
                     db.commit()
                     print(
                         f"Usuario {args.email} ya existía: se agregaron {added} jugadores a '{existing_user.club.name}'."
@@ -81,7 +88,7 @@ def main():
                 print(f"Ya existe un usuario con email {args.email} sin club asociado.")
             return
 
-        club = Club(name=args.club)
+        club = Club(name=args.club, statistics=ClubStatistics())
         for name in player_names:
             club.players.append(create_player_instance(name))
 

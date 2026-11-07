@@ -1,5 +1,11 @@
 
-from pydantic import BaseModel, Field, field_validator, model_validator
+from pydantic import (
+    BaseModel,
+    Field,
+    field_validator,
+    model_validator,
+    AwareDatetime,
+)
 
 from app.models.league import LeagueState, LeaguePrivacy
 from app.models.match import MatchState
@@ -76,9 +82,15 @@ class LeagueSessionItem(BaseModel):
 class LeaguesSessionPayload(BaseModel):
     leagues: list[LeagueSessionItem]
 
+
 class FixtureClub(BaseModel):
     club_id: int
     name: str
+
+
+class MatchScore(BaseModel):
+    local: int = Field(ge=0)
+    visitante: int = Field(ge=0)
 
 
 class FixtureMatchItem(BaseModel):
@@ -88,6 +100,7 @@ class FixtureMatchItem(BaseModel):
     state: MatchState
     local: FixtureClub
     visitante: FixtureClub
+    score: MatchScore | None = None
 
 
 class StandingRow(BaseModel):
@@ -118,7 +131,14 @@ class LeagueDetail(BaseModel):
     privacy: LeaguePrivacy
     current_participants: int
     capacity: int
-    # only filled when the league is INICIADA
+    # only filled when the league is INICIADA and FINALIZADA
     fixture: list[FixtureMatchItem] | None = None
     standings: list[StandingRow] | None = None
+    last_completed_round: int = Field(default=0, ge=0)
+    active_round: int | None = Field(default=None, ge=1)
+    active_match_ids: list[int] = Field(default_factory=list)
+    break_ends_at: AwareDatetime | None = None
 
+
+class MyLeaguesResponse(BaseModel):
+    league_ids: list[int]

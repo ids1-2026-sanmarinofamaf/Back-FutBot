@@ -668,3 +668,297 @@ def test_update_behavior_user_without_club_returns_400(user, db):
     assert response.json()["detail"] == "User does not have a club"
 
 
+def test_delete_behavior_requires_auth():
+    response = client.delete("/clubes/me/behaviors/1")
+    assert response.status_code == 401
+
+
+def test_delete_behavior_success(user, db):
+    from app.models.player import Player
+    from app.models.roster import Roster, Formation
+    from app.models.player_on_roster import PlayerOnRoster, RosterSlot
+
+    behavior = Behavior(
+        club_id=user.club.id,
+        name="Para Borrar",
+        code=CODE,
+        is_default=False,
+    )
+    db.add(behavior)
+    db.commit()
+    db.refresh(behavior)
+    behavior_id = behavior.id
+
+    player = Player(
+        name="Jugador Test",
+        club_id=user.club.id,
+        power=50,
+        agility=50,
+        control=50,
+        speed=50,
+        strength=50,
+    )
+    db.add(player)
+    db.commit()
+    roster = Roster(club_id=user.club.id, formation=Formation.DEFENSIVE)
+    db.add(roster)
+    db.commit()
+    por = PlayerOnRoster(
+        roster_id=roster.id,
+        player_id=player.id,
+        is_starter=True,
+        slot=RosterSlot.CENTER,
+        initial_behavior_id=behavior_id,
+    )
+    db.add(por)
+    db.commit()
+
+    player_id = player.id
+    roster_id = roster.id
+    por_id = por.id
+
+    try:
+        response = client.delete(
+            f"/clubes/me/behaviors/{behavior_id}",
+            headers=auth_header(login()),
+        )
+
+        assert response.status_code == 204
+        db.expire_all()
+        reloaded_por = db.query(PlayerOnRoster).filter(PlayerOnRoster.id == por_id).first()
+        assert reloaded_por is not None
+        assert reloaded_por.initial_behavior_id is None
+        assert db.query(Behavior).filter(Behavior.id == behavior_id).first() is None
+    finally:
+        db.query(PlayerOnRoster).filter(PlayerOnRoster.id == por_id).delete()
+        db.query(Roster).filter(Roster.id == roster_id).delete()
+        db.query(Player).filter(Player.id == player_id).delete()
+        db.commit()
+
+
+def test_deleted_behavior_not_in_db_nor_in_get_behaviors_list(user, db):
+    behavior = Behavior(
+        club_id=user.club.id,
+        name="Comportamiento a Eliminar",
+        code=CODE,
+        is_default=False,
+    )
+    db.add(behavior)
+    db.commit()
+    db.refresh(behavior)
+    behavior_id = behavior.id
+
+    headers = auth_header(login())
+
+    # Antes de eliminar figura en el listado GET /clubes/me/behaviors
+    initial_list = client.get("/clubes/me/behaviors", headers=headers)
+    assert initial_list.status_code == 200
+    assert behavior_id in {b["behavior_id"] for b in initial_list.json()}
+
+    delete_response = client.delete(
+        f"/clubes/me/behaviors/{behavior_id}",
+        headers=headers,
+    )
+    assert delete_response.status_code == 204
+
+    # Ya no figura en la base de datos
+    db.expire_all()
+    assert db.get(Behavior, behavior_id) is None
+
+    # Ya no figura en el listado GET /clubes/me/behaviors
+    after_list = client.get("/clubes/me/behaviors", headers=headers)
+    assert after_list.status_code == 200
+    assert behavior_id not in {b["behavior_id"] for b in after_list.json()}
+
+
+def test_delete_behavior_not_found_returns_404(user, db):
+    response = client.delete(
+        "/clubes/me/behaviors/99999",
+        headers=auth_header(login()),
+    )
+    assert response.status_code == 404
+    assert response.json()["detail"] == "Behavior not found"
+
+
+def test_delete_behavior_other_club_returns_404(user, other_club, db):
+    behavior = Behavior(
+        club_id=other_club.id,
+        name="Comportamiento Ajeno",
+        code=CODE,
+        is_default=False,
+    )
+    db.add(behavior)
+    db.commit()
+    db.refresh(behavior)
+
+    response = client.delete(
+        f"/clubes/me/behaviors/{behavior.id}",
+        headers=auth_header(login()),
+    )
+    assert response.status_code == 404
+    assert response.json()["detail"] == "Behavior not found"
+
+
+def test_delete_default_behavior_returns_403(user, db):
+    default_b = db.query(Behavior).filter(Behavior.is_default.is_(True)).first()
+    assert default_b is not None
+
+    response = client.delete(
+        f"/clubes/me/behaviors/{default_b.id}",
+        headers=auth_header(login()),
+    )
+    assert response.status_code == 403
+    assert response.json()["detail"] == "Default behaviors cannot be modified"
+
+
+def test_delete_behavior_active_match_returns_403(user, db):
+    from unittest.mock import patch
+
+    behavior = Behavior(
+        club_id=user.club.id,
+        name="Durante Partido",
+        code=CODE,
+        is_default=False,
+    )
+    db.add(behavior)
+    db.commit()
+    db.refresh(behavior)
+
+    with patch("app.services.behavior_service.is_club_in_active_match", return_value=True):
+        response = client.delete(
+            f"/clubes/me/behaviors/{behavior.id}",
+            headers=auth_header(login()),
+        )
+
+    assert response.status_code == 403
+    assert (
+        response.json()["detail"]
+        == "No se puede realizar esta acción mientras se participe en un partido o competencia activa."
+    )
+
+
+def test_delete_behavior_active_league_returns_403(user, db):
+    from app.models.league import League, LeagueState, LeaguePrivacy
+    from app.models.league_participation import LeagueParticipation
+    from app.models.roster import Roster, Formation
+
+    behavior = Behavior(
+        club_id=user.club.id,
+        name="Durante Liga",
+        code=CODE,
+        is_default=False,
+    )
+    db.add(behavior)
+    roster = Roster(club_id=user.club.id, formation=Formation.DEFENSIVE)
+    db.add(roster)
+    db.commit()
+    db.refresh(behavior)
+    db.refresh(roster)
+
+    league = League(
+        name="Liga Activa Test",
+        match_duration=1000,
+        max_clubs=4,
+        privacy=LeaguePrivacy.PUBLICA,
+        creator_id=user.club.id,
+        state=LeagueState.POR_COMENZAR,
+    )
+    db.add(league)
+    db.commit()
+    db.refresh(league)
+
+    participation = LeagueParticipation(
+        league_id=league.id,
+        club_id=user.club.id,
+        roster_id=roster.id,
+    )
+    db.add(participation)
+    db.commit()
+
+    try:
+        response = client.delete(
+            f"/clubes/me/behaviors/{behavior.id}",
+            headers=auth_header(login()),
+        )
+        assert response.status_code == 403
+        assert (
+            response.json()["detail"]
+            == "No se puede realizar esta acción mientras se participe en un partido o competencia activa."
+        )
+    finally:
+        db.delete(participation)
+        db.delete(league)
+        db.delete(roster)
+        db.commit()
+
+
+def test_delete_behavior_active_friendly_game_returns_403(user, db):
+    from app.models.friendly_game import FriendlyGame, FriendlyGameState
+    from app.models.friendly_game_participation import (
+        FriendlyGameParticipation,
+        FriendlyGameRole,
+    )
+    from app.models.roster import Roster, Formation
+
+    behavior = Behavior(
+        club_id=user.club.id,
+        name="Durante Amistoso",
+        code=CODE,
+        is_default=False,
+    )
+    db.add(behavior)
+    roster = Roster(club_id=user.club.id, formation=Formation.DEFENSIVE)
+    db.add(roster)
+    db.commit()
+    db.refresh(behavior)
+    db.refresh(roster)
+
+    fg = FriendlyGame(
+        duration=1000,
+        creator_id=user.club.id,
+        state=FriendlyGameState.POR_COMENZAR,
+    )
+    db.add(fg)
+    db.commit()
+    db.refresh(fg)
+
+    part = FriendlyGameParticipation(
+        friendly_game_id=fg.id,
+        club_id=user.club.id,
+        roster_id=roster.id,
+        role=FriendlyGameRole.CREATOR,
+    )
+    db.add(part)
+    db.commit()
+
+    try:
+        response = client.delete(
+            f"/clubes/me/behaviors/{behavior.id}",
+            headers=auth_header(login()),
+        )
+        assert response.status_code == 403
+        assert (
+            response.json()["detail"]
+            == "No se puede realizar esta acción mientras se participe en un partido o competencia activa."
+        )
+    finally:
+        db.delete(part)
+        db.delete(fg)
+        db.delete(roster)
+        db.commit()
+
+
+def test_delete_behavior_user_without_club_returns_400(user, db):
+    db.add(User(email=NO_CLUB_EMAIL, hash_passwd=get_password_hash(PASSWORD)))
+    db.commit()
+
+    response = client.delete(
+        "/clubes/me/behaviors/1",
+        headers=auth_header(login(NO_CLUB_EMAIL)),
+    )
+
+    assert response.status_code == 400
+    assert response.json()["detail"] == "User does not have a club"
+
+
+
