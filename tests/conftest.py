@@ -529,3 +529,12 @@ def substitute_player_snapshot():
         current_behavior_id=None,
         is_on_field=False,
     )
+
+
+@pytest.fixture
+def isolated_active_rounds(monkeypatch):
+    from app.game import active_league_rounds
+
+    monkeypatch.setattr(active_league_rounds, "_active_rounds", {})
+
+    return active_league_rounds

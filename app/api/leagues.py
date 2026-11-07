@@ -1,3 +1,5 @@
+import logging
+import asyncio
 
 from fastapi import (
     APIRouter,
@@ -49,8 +51,11 @@ from app.schemas.league import (
     MyLeaguesResponse
 )
 
+SEND_TIMEOUT_SECONDS = 5
+
 
 router = APIRouter(prefix="/leagues",tags=["Leagues"])
+logger = logging.getLogger(__name__)
 
 
 @router.post("", status_code=status.HTTP_201_CREATED)
@@ -194,7 +199,6 @@ async def start(
     current_user=Depends(get_current_user),
 ):
     try:
-        # avoid blocking the event loop with synchronous database operations
         await run_in_threadpool(
             start_league,
             db=db,
@@ -203,35 +207,17 @@ async def start(
             requested_state=data.state,
         )
 
-        start_league_runner(league_id)
-
-        # send the broadcast start league  in ws session
-        await session_websocket_service.broadcast_leagues(db)
-
-        # league expires after commit so we call back
-        league  = league_repository.get_by_id(db, league_id)
-
-        fixture, standings = build_league_state(db, league)
-        
-        # Event create
-        start_league_event = LeagueStartedEvent(
-            league_id=league_id,
-            fixture=fixture,
-            standings=standings,
-        )
-        await league_connection_manager.broadcast(league_id, start_league_event)
-
     except LeagueNotFound as error:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=str(error),
-        )
+        ) from error
 
     except LeagueForbidden as error:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail=str(error),
-        )
+        ) from error
 
     except (
         LeagueAlreadyStarted,
@@ -241,7 +227,56 @@ async def start(
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail=str(error),
+        ) from error
+
+    # League start and fixture are confirmed
+    try:
+        try:
+
+            league = league_repository.get_by_id(db, league_id)
+            fixture, standings = build_league_state(db, league)
+
+            start_league_event = LeagueStartedEvent(
+                league_id=league_id,
+                fixture=fixture,
+                standings=standings,
+            )
+
+            payload = session_websocket_service.build_leagues_payload(db)
+        
+        finally:
+            db.close()
+
+        async with asyncio.timeout(SEND_TIMEOUT_SECONDS):
+            await league_connection_manager.broadcast(
+                league_id,
+                start_league_event,
+            )
+
+            await session_websocket_service.broadcast_leagues_payload(payload)
+
+    except Exception:
+        logger.exception(
+            "Failed to notify clients about league %s startup",
+            league_id,
         )
+
+    finally:
+        start_league_runner(league_id)
+
+
+@router.get("/me", response_model=MyLeaguesResponse)
+async def get_my_leagues(
+    db: Session = Depends(get_db),
+    current_user=Depends(get_current_user),
+):
+    league_ids = await run_in_threadpool(
+        get_my_league_ids,
+        db,
+        current_user.id,
+    )
+
+    return MyLeaguesResponse(league_ids=league_ids)
 
 
 @router.get(
@@ -267,16 +302,3 @@ async def get_by_id(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=str(error),
         ) from error
-
-@router.get("/me", response_model=MyLeaguesResponse)
-async def get_my_leagues(
-    db: Session = Depends(get_db),
-    current_user=Depends(get_current_user),
-):
-    league_ids = await run_in_threadpool(
-        get_my_league_ids,
-        db,
-        current_user.id,
-    )
-
-    return MyLeaguesResponse(league_ids=league_ids)
