@@ -1,12 +1,19 @@
+from sqlalchemy import select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.models.behavior import Behavior
+from app.models.friendly_game import FriendlyGame, FriendlyGameState
+from app.models.friendly_game_participation import FriendlyGameParticipation
+from app.models.league import League, LeagueState
+from app.models.league_participation import LeagueParticipation
+from app.models.player_on_roster import PlayerOnRoster
 from app.repositories import (
     behavior_repository,
     club_repository
 )
 from app.schemas.behavior import BehaviorIn
+from app.game.active_matches import is_club_in_active_match
 from app.game.behavior_validator import (
     BehaviorValidationError, # useful for api/behaviors.py
     validate_behavior_code
@@ -14,6 +21,11 @@ from app.game.behavior_validator import (
 
 class DefaultBehaviorModificationError(Exception):
     """Raised when a user attempts to modify a read-only default behavior."""
+
+
+class ActiveCompetitionError(Exception):
+    """Raised when an operation cannot be performed because the club has an active match or competition."""
+
 
 def _validate_behavior_name(name: str) -> str:
     """
@@ -189,4 +201,99 @@ def update_behavior(
     except Exception:
         db.rollback()
         raise
+
+
+def _has_active_league(db: Session, club_id: int) -> bool:
+    stmt = (
+        select(LeagueParticipation.league_id)
+        .join(League, LeagueParticipation.league_id == League.id)
+        .where(
+            LeagueParticipation.club_id == club_id,
+            League.state.in_([LeagueState.POR_COMENZAR, LeagueState.INICIADA]),
+        )
+    )
+    return db.scalar(stmt) is not None
+
+
+def _has_active_friendly_game(db: Session, club_id: int) -> bool:
+    stmt = (
+        select(FriendlyGameParticipation.id)
+        .join(FriendlyGame, FriendlyGameParticipation.friendly_game_id == FriendlyGame.id)
+        .where(
+            FriendlyGameParticipation.club_id == club_id,
+            FriendlyGame.state.in_([FriendlyGameState.POR_COMENZAR, FriendlyGameState.JUGANDO]),
+        )
+    )
+    return db.scalar(stmt) is not None
+
+
+def _unassign_behavior_from_rosters(db: Session, behavior_id: int) -> None:
+    stmt = (
+        update(PlayerOnRoster)
+        .where(PlayerOnRoster.initial_behavior_id == behavior_id)
+        .values(initial_behavior_id=None)
+    )
+    db.execute(stmt)
+
+
+def delete_behavior(
+    db: Session,
+    user_id: int,
+    behavior_id: int,
+) -> None:
+    """
+    Delete a custom behavior owned by the authenticated user's club.
+
+    Args:
+        db: Active SQLAlchemy database session.
+        user_id: Authenticated user identifier.
+        behavior_id: Identifier of the behavior to delete.
+
+    Raises:
+        ValueError: If the user does not have an associated club.
+        LookupError: If the behavior does not exist or belongs to another club.
+        DefaultBehaviorModificationError: If attempting to delete a system default behavior.
+        ActiveCompetitionError: If the club is in an active match, league, or friendly game.
+    """
+    try:
+        club = club_repository.get_by_user_id(db, user_id)
+        if club is None:
+            raise ValueError("User does not have a club")
+
+        behavior = behavior_repository.get_available_by_id(
+            db=db,
+            club_id=club.id,
+            behavior_id=behavior_id,
+        )
+
+        if behavior is None:
+            raise LookupError("Behavior not found")
+
+        if behavior.is_default:
+            raise DefaultBehaviorModificationError(
+                "Default behaviors cannot be modified"
+            )
+
+        if is_club_in_active_match(club.id):
+            raise ActiveCompetitionError(
+                "No se puede realizar esta acción mientras se participe en un partido o competencia activa."
+            )
+
+        if _has_active_league(db, club.id):
+            raise ActiveCompetitionError(
+                "No se puede realizar esta acción mientras se participe en un partido o competencia activa."
+            )
+
+        if _has_active_friendly_game(db, club.id):
+            raise ActiveCompetitionError(
+                "No se puede realizar esta acción mientras se participe en un partido o competencia activa."
+            )
+
+        _unassign_behavior_from_rosters(db, behavior.id)
+        behavior_repository.delete(db, behavior)
+        db.commit()
+    except Exception:
+        db.rollback()
+        raise
+
         
