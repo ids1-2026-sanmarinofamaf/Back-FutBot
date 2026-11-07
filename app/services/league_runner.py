@@ -44,6 +44,7 @@ from app.schemas.league_websocket import (
     LeagueFinishedEvent,
     LeagueMatchResult,
 )
+from app.game.match_result import resolve_match_winner
 
 
 ROUND_BREAK_SECONDS = 60
@@ -205,8 +206,21 @@ def _apply_round_results(
         home = runtime.participation_a
         away = runtime.participation_b
 
+        resolve_winner_id = resolve_match_winner(
+            (home.club_id, home.goals),
+            (away.club_id, away.goals),
+            runtime.winner_club_id,
+        )
+
+        if (
+            league.penalties_enabled
+            and resolve_winner_id is None
+        ):
+            raise ValueError("Match must have a winner")
+
         persisted.home_goals = home.goals
         persisted.away_goals = away.goals
+        persisted.winner_club_id = resolve_winner_id
         persisted.state = PersistedMatchState.FINALIZADO
 
         update_standings(
@@ -216,6 +230,7 @@ def _apply_round_results(
             visitante_club_id=away.club_id,
             local_goals=home.goals,
             visitante_goals=away.goals,
+            winner_club_id=resolve_winner_id,
         )
 
         update_statistics(
@@ -225,6 +240,7 @@ def _apply_round_results(
             club_b_id=away.club_id,
             goals_a=home.goals,
             goals_b=away.goals,
+            winner_club_id=resolve_winner_id,
         )
 
 

@@ -662,12 +662,14 @@ def make_completed_matches(case):
             state=RuntimeMatchState.FINISHED,
             participation_a=SimpleNamespace(club_id=ids[0], goals=2),
             participation_b=SimpleNamespace(club_id=ids[1], goals=1),
+            winner_club_id=ids[0],
         ),
         SimpleNamespace(
             match_id=1002,
             state=RuntimeMatchState.FINISHED,
             participation_a=SimpleNamespace(club_id=ids[2], goals=0),
             participation_b=SimpleNamespace(club_id=ids[3], goals=0),
+            winner_club_id=None,
         ),
     ]
 
@@ -683,6 +685,7 @@ def assert_round_unmodified(db, case):
         assert match.state == MatchState.POR_COMENZAR
         assert match.home_goals is None
         assert match.away_goals is None
+        assert match.winner_club_id is None
 
     for club_id in case.club_ids:
         participation = db.get(
@@ -711,6 +714,9 @@ def test_complete_round_persists_results_and_standings(
 
     first = round_db.get(PersistedMatch, 1001)
     second = round_db.get(PersistedMatch, 1002)
+
+    assert first.winner_club_id == round_case.club_ids[0]
+    assert second.winner_club_id is None
 
     assert (first.home_goals, first.away_goals) == (2, 1)
     assert (second.home_goals, second.away_goals) == (0, 0)
@@ -979,6 +985,7 @@ def make_second_round_matches(case):
                 club_id=case.club_ids[2],
                 goals=2,
             ),
+            winner_club_id=case.club_ids[2],
         ),
     ]
 
@@ -1347,3 +1354,105 @@ async def test_runner_updates_session_only_after_finalization(
     await league_runner.run_league(round_case.league_id)
 
     session_notification.assert_awaited_once_with()
+
+
+@pytest.mark.parametrize("winner_index", [2, 3])
+def test_complete_round_persists_tiebreak_winner(
+    round_db,
+    round_case,
+    winner_index,
+):
+    league = round_db.get(League, round_case.league_id)
+    league.penalties_enabled = True
+    round_db.commit()
+
+    matches = make_completed_matches(round_case)
+    tied_match = matches[1]
+
+    tied_match.participation_a.goals = 1
+    tied_match.participation_b.goals = 1
+
+    winner_id = round_case.club_ids[winner_index]
+    loser_index = 3 if winner_index == 2 else 2
+    loser_id = round_case.club_ids[loser_index]
+
+    tied_match.winner_club_id = winner_id
+
+    complete_round(
+        db=round_db,
+        league_id=round_case.league_id,
+        round_number=1,
+        matches=matches,
+        is_last_round=False,
+    )
+
+    round_db.expire_all()
+
+    saved = round_db.get(PersistedMatch, tied_match.match_id)
+
+    assert saved.state == MatchState.FINALIZADO
+    assert saved.winner_club_id == winner_id
+    assert (saved.home_goals, saved.away_goals) == (1, 1)
+
+    for club_id, points, won, lost in [
+        (winner_id, 3, 1, 0),
+        (loser_id, 0, 0, 1),
+    ]:
+        participation = round_db.get(
+            LeagueParticipation,
+            (round_case.league_id, club_id),
+        )
+        statistics = round_db.get(ClubStatistics, club_id)
+
+        assert participation.points == points
+        assert participation.matches_played == 1
+        assert participation.matches_won == won
+        assert participation.matches_lost == lost
+        assert participation.matches_drawn == 0
+        assert participation.goals_for == 1
+        assert participation.goals_against == 1
+
+        assert statistics.total_points == points
+        assert statistics.matches_played == 1
+        assert statistics.matches_won == won
+        assert statistics.matches_lost == lost
+        assert statistics.matches_drawn == 0
+        assert statistics.goals_for == 1
+        assert statistics.goals_against == 1
+
+
+def test_complete_round_rolls_back_when_tiebreak_has_no_winner(
+    round_db,
+    round_case,
+):
+    league = round_db.get(League, round_case.league_id)
+    league.penalties_enabled = True
+    round_db.commit()
+
+    matches = make_completed_matches(round_case)
+
+    # El primer partido tiene ganador; el segundo empata sin resolver.
+    assert matches[0].winner_club_id is not None
+    assert matches[1].winner_club_id is None
+
+    with pytest.raises(ValueError, match="Match must have a winner"):
+        complete_round(
+            db=round_db,
+            league_id=round_case.league_id,
+            round_number=1,
+            matches=matches,
+            is_last_round=False,
+        )
+
+    assert_round_unmodified(round_db, round_case)
+
+    for club_id in round_case.club_ids:
+        statistics = round_db.get(ClubStatistics, club_id)
+
+        assert statistics.matches_played == 0
+        assert statistics.total_points == 0
+        assert statistics.matches_won == 0
+        assert statistics.matches_drawn == 0
+        assert statistics.matches_lost == 0
+        assert statistics.goals_for == 0
+        assert statistics.goals_against == 0
