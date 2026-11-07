@@ -13,14 +13,16 @@ from app.schemas.behavior import (
     BehaviorValidateOut,
 )
 from app.services.behavior_service import (
-    list_behaviors,
-    get_behavior,
-    get_behavior_by_name,
-    validate_behavior,
-    create_behavior,
-    update_behavior,
+    ActiveCompetitionError,
     BehaviorValidationError,
     DefaultBehaviorModificationError,
+    create_behavior,
+    delete_behavior,
+    get_behavior,
+    get_behavior_by_name,
+    list_behaviors,
+    update_behavior,
+    validate_behavior,
 )
 
 
@@ -147,6 +149,55 @@ def update_behavior_endpoint(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=str(error),
         )
+
+
+@router.delete(
+    "/{behavior_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+)
+def delete_behavior_endpoint(
+    behavior_id: int,
+    current_user=Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """
+    Delete an existing custom behavior belonging to the authenticated user's club.
+
+    Args:
+        behavior_id: Identifier of the behavior to delete.
+        current_user: Currently authenticated user injected by dependency.
+        db: Active SQLAlchemy database session.
+
+    Returns:
+        Empty 204 No Content response.
+
+    Raises:
+        HTTPException: 400 if user has no club, 403 if default behavior or club in active competition,
+            or 404 if behavior not found.
+    """
+    try:
+        delete_behavior(
+            db=db,
+            user_id=current_user.id,
+            behavior_id=behavior_id,
+        )
+        return Response(status_code=status.HTTP_204_NO_CONTENT)
+    except ValueError as error:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(error),
+        )
+    except (DefaultBehaviorModificationError, ActiveCompetitionError) as error:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=str(error),
+        )
+    except LookupError as error:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=str(error),
+        )
+
 
 @router.get("", response_model=list[BehaviorOut] | BehaviorCodeOut)
 def get_behaviors(
