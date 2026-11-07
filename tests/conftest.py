@@ -35,7 +35,6 @@ def make_player(player_id: int, is_on_field: bool) -> PlayerInMatch:
         # nor an initial behavior.
         player_id=player_id,
         position=(0.0, 0.0),
-        velocity=(0.0, 0.0),
         starting_position=(8.0, 5.0) if is_on_field else None,
         power=60,
         agility=60,
@@ -241,7 +240,6 @@ def failing_behavior():
 class PlayerSnapshotStub:
     player_id: int
     position: Position
-    velocity: Velocity
     starting_position: Position | None
 
     power: int
@@ -289,7 +287,6 @@ def player_a_snapshot():
     return PlayerSnapshotStub(
         player_id=1,
         position=(5.0, 4.0),
-        velocity=(0.0, 0.0),
         starting_position=(3.0, 3.0),
 
         # Total PACSS = 300
@@ -311,7 +308,6 @@ def player_b_snapshot():
     return PlayerSnapshotStub(
         player_id=7,
         position=(30.0, 10.0),
-        velocity=(0.0, 0.0),
         starting_position=(35.0, 10.0),
 
         # Total PACSS = 300
@@ -337,7 +333,6 @@ def match_snapshot(
     teammate_a_1 = PlayerSnapshotStub(
         player_id=2,
         position=(6.0, 4.0),
-        velocity=(0.0, 0.0),
         starting_position=(4.0, 5.0),
         power=60,
         agility=60,
@@ -351,7 +346,6 @@ def match_snapshot(
     teammate_a_2 = PlayerSnapshotStub(
         player_id=3,
         position=(7.0, 5.0),
-        velocity=(0.0, 0.0),
         starting_position=(4.0, 7.0),
         power=60,
         agility=60,
@@ -366,7 +360,6 @@ def match_snapshot(
     substitute_a_1 = PlayerSnapshotStub(
         player_id=4,
         position=(0.0, 0.0),
-        velocity=(0.0, 0.0),
         starting_position=None,
         power=60,
         agility=60,
@@ -380,7 +373,6 @@ def match_snapshot(
     substitute_a_2 = PlayerSnapshotStub(
         player_id=5,
         position=(0.0, 0.0),
-        velocity=(0.0, 0.0),
         starting_position=None,
         power=60,
         agility=60,
@@ -394,7 +386,6 @@ def match_snapshot(
     substitute_a_3 = PlayerSnapshotStub(
         player_id=6,
         position=(0.0, 0.0),
-        velocity=(0.0, 0.0),
         starting_position=None,
         power=60,
         agility=60,
@@ -409,7 +400,6 @@ def match_snapshot(
     teammate_b_1 = PlayerSnapshotStub(
         player_id=8,
         position=(31.0, 8.0),
-        velocity=(0.0, 0.0),
         starting_position=(35.0, 8.0),
         power=60,
         agility=60,
@@ -423,7 +413,6 @@ def match_snapshot(
     teammate_b_2 = PlayerSnapshotStub(
         player_id=9,
         position=(32.0, 6.0),
-        velocity=(0.0, 0.0),
         starting_position=(35.0, 6.0),
         power=60,
         agility=60,
@@ -438,7 +427,6 @@ def match_snapshot(
     substitute_b_1 = PlayerSnapshotStub(
         player_id=10,
         position=(0.0, 0.0),
-        velocity=(0.0, 0.0),
         starting_position=None,
         power=60,
         agility=60,
@@ -452,7 +440,6 @@ def match_snapshot(
     substitute_b_2 = PlayerSnapshotStub(
         player_id=11,
         position=(0.0, 0.0),
-        velocity=(0.0, 0.0),
         starting_position=None,
         power=60,
         agility=60,
@@ -466,7 +453,6 @@ def match_snapshot(
     substitute_b_3 = PlayerSnapshotStub(
         player_id=12,
         position=(0.0, 0.0),
-        velocity=(0.0, 0.0),
         starting_position=None,
         power=60,
         agility=60,
@@ -519,7 +505,6 @@ def substitute_player_snapshot():
     return PlayerSnapshotStub(
         player_id=100,
         position=(0.0, 0.0),
-        velocity=(0.0, 0.0),
         starting_position=None,
         power=60,
         agility=60,
