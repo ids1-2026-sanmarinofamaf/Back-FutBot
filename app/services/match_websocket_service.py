@@ -111,6 +111,22 @@ class MatchConnectionManager:
                     await websocket.send_json(filtered_msg.model_dump())
                 except Exception:
                     disconnected.append(websocket)
+        elif isinstance(message, MatchCoachChangesMessage):
+            # each club only learns what its own coach assigned
+            for websocket in connections:
+                client_club_id = self.connection_clubs.get(websocket)
+                filtered_msg = filter_coach_changes_for_client(
+                    message,
+                    client_club_id=client_club_id,
+                )
+
+                if filtered_msg is None:
+                    continue
+
+                try:
+                    await websocket.send_json(filtered_msg.model_dump())
+                except Exception:
+                    disconnected.append(websocket)
         else:
             for websocket in connections:
                 try:
@@ -229,6 +245,31 @@ def build_coach_substitutions_message(
             for club_id, substitution in executed_substitutions
         ],
     )
+
+
+def filter_coach_changes_for_client(
+    message: MatchCoachChangesMessage,
+    client_club_id: int | None,
+) -> MatchCoachChangesMessage | None:
+    """
+    Keep only the coach changes of the client's own club.
+
+    Returns None when nothing is left (rival changes only, or a spectator),
+    so the client does not receive an empty event.
+    """
+    if client_club_id is None:
+        return None
+
+    own_changes = [
+        change
+        for change in message.changes
+        if change.club_id == client_club_id
+    ]
+
+    if not own_changes:
+        return None
+
+    return message.model_copy(update={"changes": own_changes})
 
 
 def filter_match_state_for_client(
