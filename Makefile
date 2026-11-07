@@ -77,6 +77,8 @@ seed:
 	$(PYTHON) -m scripts.create_user --email test@futbot.com --password test1234 --club "Test FC"
 	$(PYTHON) -m scripts.create_user --email rival@futbot.com --password rival1234 --club "Rival FC"
 	$(PYTHON) -m scripts.create_user --email argentina@futbot.com --password argentina1234 --club "Argentina FC"
+
+db-shell:
 	docker compose exec db psql -U futbot -d futbot
 
 logs:
