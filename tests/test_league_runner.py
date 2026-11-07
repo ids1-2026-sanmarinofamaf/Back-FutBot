@@ -290,7 +290,27 @@ def test_load_round_matches_returns_empty_list():
     assert result == []
 
 
-def test_build_round_matches(monkeypatch):
+@pytest.mark.parametrize(
+    "options, expected_penalties",
+    [
+        pytest.param({}, False, id="default"),
+        pytest.param(
+            {"penalties_enabled": False},
+            False,
+            id="disabled",
+        ),
+        pytest.param(
+            {"penalties_enabled": True},
+            True,
+            id="enabled",
+        ),
+    ],
+)
+def test_build_round_matches(
+    monkeypatch,
+    options,
+    expected_penalties,
+):
     db = Mock()
 
     home_roster = SimpleNamespace(id=10, club_id=1)
@@ -325,11 +345,14 @@ def test_build_round_matches(monkeypatch):
         db=db,
         matches=[persisted_match],
         duration_seconds=90,
+        **options,
     )
 
     assert len(result) == 1
 
     match = result[0]
+
+    assert match.penalties_enabled is expected_penalties
 
     assert match.match_id == 100
     assert match.participation_a.club_id == 1
@@ -1517,3 +1540,39 @@ async def test_tiebreak_winner_reaches_fixture_and_round_event(
 
     assert result["winner_club_id"] == winner_id
     assert result["score"] == {"local": 1, "visitante": 1}
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "penalties_enabled",
+    [False, True],
+    ids=["disabled", "enabled"],
+)
+async def test_run_league_passes_penalties_option_to_each_round(
+    round_db,
+    round_case,
+    runner_event_setup,
+    penalties_enabled,
+):
+    league = round_db.get(League, round_case.league_id)
+    league.penalties_enabled = penalties_enabled
+    round_db.commit()
+
+    first_round = make_completed_matches(round_case)
+    second_round = make_second_round_matches(round_case)
+
+    if penalties_enabled:
+        # La liga exige un ganador también en el partido empatado.
+        first_round[1].winner_club_id = (
+            first_round[1].participation_a.club_id
+        )
+
+    build = league_runner.build_round_matches
+    build.side_effect = [first_round, second_round]
+
+    await league_runner.run_league(round_case.league_id)
+
+    assert build.call_count == 2
+
+    for build_call in build.call_args_list:
+        assert build_call.args[3] is penalties_enabled

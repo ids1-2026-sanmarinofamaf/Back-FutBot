@@ -67,6 +67,9 @@ class Match:
 
     winner_club_id: int | None = None
 
+    penalties_enabled: bool = False
+
+
     def snapshot(self) -> MatchSnapshot:  # returns a copy of match in the state it was in when made
         return MatchSnapshot(
             # we get the status of the players from each team at a certain tick

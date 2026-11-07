@@ -87,6 +87,7 @@ def build_round_matches(
     db: Session,
     matches: list[PersistedMatch],
     duration_seconds: int,
+    penalties_enabled: bool = False
 ) -> list[RuntimeMatch]:
     """
     Build runtime matches using the current rosters of a league round.
@@ -127,6 +128,7 @@ def build_round_matches(
                 velocity=(0.0, 0.0),
             ),
             duration_ticks=duration_seconds * TICS_PER_SECOND,
+            penalties_enabled=penalties_enabled,
         )
 
         runtime_matches.append(runtime_match)
@@ -350,6 +352,7 @@ async def run_league(league_id: int) -> None:
             round_number = league.last_completed_round + 1
             duration_seconds = league.match_duration
             break_ends_at = league.break_ends_at
+            penalties_enabled = league.penalties_enabled
 
             last_round = db.scalar(
                 select(func.max(PersistedMatch.round))
@@ -377,11 +380,12 @@ async def run_league(league_id: int) -> None:
 
             if not persisted:
                 raise ValueError(f"No matches in round {round_number}")
-            
+
             matches = build_round_matches(
                 db,
                 persisted,
-                duration_seconds
+                duration_seconds,
+                penalties_enabled,
             )
 
             behaviors = {
