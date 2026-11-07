@@ -517,12 +517,15 @@ def build_league_state(db: Session, league: League) -> tuple[list[FixtureMatchIt
                     club_id=visitante.club_id,
                     name=visitante.club.name
                 ),
-                score=MatchScore(
-                    local=match.home_goals,
-                    visitante=match.away_goals,
-                )
-                if match.state == MatchState.FINALIZADO
-                else None
+                score=(
+                    MatchScore(
+                        local=match.home_goals,
+                        visitante=match.away_goals,
+                    )
+                    if match.state == MatchState.FINALIZADO
+                    else None
+                ),
+                winner_club_id=match.winner_club_id,
             )
         )
 

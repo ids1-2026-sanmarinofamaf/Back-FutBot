@@ -1456,3 +1456,64 @@ def test_complete_round_rolls_back_when_tiebreak_has_no_winner(
         assert statistics.matches_lost == 0
         assert statistics.goals_for == 0
         assert statistics.goals_against == 0
+
+
+@pytest.mark.asyncio
+async def test_tiebreak_winner_reaches_fixture_and_round_event(
+    monkeypatch,
+    round_db,
+    round_case,
+    runner_event_setup,
+):
+    league = round_db.get(League, round_case.league_id)
+    league.penalties_enabled = True
+    round_db.commit()
+
+    first_round = make_completed_matches(round_case)
+    tied_match = first_round[1]
+    winner_id = round_case.club_ids[3]
+
+    tied_match.participation_a.goals = 1
+    tied_match.participation_b.goals = 1
+    tied_match.winner_club_id = winner_id
+
+    monkeypatch.setattr(
+        league_runner,
+        "build_round_matches",
+        Mock(
+            side_effect=[
+                first_round,
+                make_second_round_matches(round_case),
+            ]
+        ),
+    )
+
+    await league_runner.run_league(round_case.league_id)
+
+    round_db.expire_all()
+    detail = league_runner.get_league_detail(
+        round_db,
+        round_case.league_id,
+    )
+
+    fixture_item = next(
+        item
+        for item in detail.fixture
+        if item.match_id == tied_match.match_id
+    )
+
+    assert fixture_item.winner_club_id == winner_id
+    assert fixture_item.score.local == 1
+    assert fixture_item.score.visitante == 1
+
+    round_event = runner_event_setup.probe.events[0]
+    assert round_event.type == "league_round_finished"
+
+    result = next(
+        item
+        for item in round_event.model_dump(mode="json")["results"]
+        if item["match_id"] == tied_match.match_id
+    )
+
+    assert result["winner_club_id"] == winner_id
+    assert result["score"] == {"local": 1, "visitante": 1}

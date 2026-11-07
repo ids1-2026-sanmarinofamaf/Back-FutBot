@@ -422,6 +422,7 @@ async def run_league(league_id: int) -> None:
                         LeagueMatchResult(
                             match_id=match.match_id,
                             score=match.score,
+                            winner_club_id=match.winner_club_id,
                         )
                         for match in detail.fixture
                         if match.round == round_number

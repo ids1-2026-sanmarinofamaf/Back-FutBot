@@ -102,6 +102,7 @@ class FixtureMatchItem(BaseModel):
     local: FixtureClub
     visitante: FixtureClub
     score: MatchScore | None = None
+    winner_club_id: int | None = None
 
 
 class StandingRow(BaseModel):
