@@ -6,7 +6,7 @@ from datetime import datetime
 from enum import Enum
 
 from sqlalchemy import Enum as SAEnum
-from sqlalchemy import String, ForeignKey, CheckConstraint, DateTime
+from sqlalchemy import String, ForeignKey, CheckConstraint, DateTime, false
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.database import Base
@@ -74,3 +74,8 @@ class League(Base):
     creator: Mapped["Club"] = relationship("Club")
     league_participations: Mapped[list["LeagueParticipation"]] = relationship(back_populates="league", cascade="all, delete-orphan", passive_deletes=True,)
     matches: Mapped[list["Match"]] = relationship(back_populates="league", cascade="all, delete-orphan", passive_deletes=True, order_by="Match.match_order")
+    penalties_enabled: Mapped[bool] = mapped_column(
+        nullable=False,
+        default=False,
+        server_default=false(),
+    )
