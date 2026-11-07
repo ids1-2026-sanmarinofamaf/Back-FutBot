@@ -70,6 +70,19 @@ def get_available_by_name(db: Session, club_id: int, name: str) -> Behavior | No
         .order_by(Behavior.is_default.asc())
     ).first()
 
+
+def get_default_behaviors(db: Session) -> list[Behavior]:
+    """
+    Return all default behaviors.
+    """
+    return list(
+        db.scalars(
+            select(Behavior)
+            .where(Behavior.is_default.is_(True))
+        ).all()
+    )
+
+
 def save(db: Session, behavior: Behavior) -> Behavior:
     """
     Stage a new or updated Behavior instance in the current session.

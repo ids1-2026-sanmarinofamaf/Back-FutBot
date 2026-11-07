@@ -82,7 +82,7 @@ def test_get_my_leagues_invalid_token():
 # service tests
 @patch(
     "app.services.league_service."
-    "league_participation_repository.get_active_league_ids_by_club"
+    "league_repository.get_active_league_ids_by_club"
 )
 @patch(
     "app.services.league_service."
@@ -107,7 +107,7 @@ def test_service_returns_league_ids(
 
 @patch(
     "app.services.league_service."
-    "league_participation_repository.get_active_league_ids_by_club"
+    "league_repository.get_active_league_ids_by_club"
 )
 @patch(
     "app.services.league_service."
@@ -129,7 +129,7 @@ def test_service_without_club(
 
 @patch(
     "app.services.league_service."
-    "league_participation_repository.get_active_league_ids_by_club"
+    "league_repository.get_active_league_ids_by_club"
 )
 @patch(
     "app.services.league_service."

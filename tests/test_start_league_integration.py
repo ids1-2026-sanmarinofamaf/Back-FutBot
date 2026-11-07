@@ -4,6 +4,10 @@ import pytest
 from sqlalchemy import select, func
 from sqlalchemy.orm import Session
 
+from types import SimpleNamespace
+from unittest.mock import Mock
+from datetime import datetime, timezone
+
 from app.database import engine
 from app.models.user import User
 from app.models.club import Club
@@ -14,11 +18,14 @@ from app.models.match import Match, MatchState
 from app.models.match_participation import MatchParticipation, MatchRole
 from app.repositories import match_repository
 from app.services.fixture_service import generate_fixture
+from app.services import league_service
 from app.services.league_service import (
     start_league,
     get_league_detail,
     InsufficientLeagueParticipants,
+    update_standings,
 )
+from app.game.models.match import MatchState as RunningMatchState
 
 
 SEED = 42
@@ -341,3 +348,260 @@ def test_persisted_rounds_follow_the_drawn_fechas(db, n):
         for _ in fecha
     ]
     assert [match.round for match in get_matches(db, league.id)] == expected
+
+
+def test_league_detail_shows_running_match_without_persisting_state(
+    db,
+    monkeypatch,
+    isolated_active_rounds,
+):
+    league, _, creator_user_id = create_league(db, 4)
+
+    start_league(
+        db=db,
+        league_id=league.id,
+        user_id=creator_user_id,
+        requested_state=LeagueState.INICIADA,
+        seed=SEED,
+    )
+
+    matches = get_matches(db, league.id)
+    running_match = matches[0]
+    match_id = running_match.id
+    round_number = running_match.round
+
+    isolated_active_rounds.register_round(
+        league.id,
+        round_number,
+    )
+
+    runtime_match = SimpleNamespace(
+        state=RunningMatchState.IN_PROGRESS,
+    )
+    get_active_match = Mock(
+        side_effect={match_id: runtime_match}.get,
+    )
+    monkeypatch.setattr(
+        league_service,
+        "get_match",
+        get_active_match,
+    )
+
+    detail = get_league_detail(db, league.id)
+
+    fixture_by_id = {
+        item.match_id: item
+        for item in detail.fixture
+    }
+
+    assert detail.active_round == round_number
+    assert detail.active_match_ids == [match_id]
+    assert fixture_by_id[match_id].state == MatchState.JUGANDO
+    assert fixture_by_id[match_id].score is None
+
+    for match in matches:
+        expected_state = (
+            MatchState.JUGANDO
+            if match.round == round_number
+            else MatchState.POR_COMENZAR
+        )
+
+        assert fixture_by_id[match.id].state == expected_state
+        assert fixture_by_id[match.id].score is None
+
+    # Fuerza cualquier escritura pendiente y vuelve a leer desde la BD.
+    db.flush()
+    db.expire_all()
+
+    for persisted in get_matches(db, league.id):
+        assert persisted.state == MatchState.POR_COMENZAR
+        assert persisted.home_goals is None
+        assert persisted.away_goals is None
+
+
+def test_finished_league_detail_returns_scores_and_standings(db):
+    league, _, creator_user_id = create_league(db, 4)
+
+    start_league(
+        db=db,
+        league_id=league.id,
+        user_id=creator_user_id,
+        requested_state=LeagueState.INICIADA,
+        seed=SEED,
+    )
+
+    matches = get_matches(db, league.id)
+
+    for match in matches:
+        match.state = MatchState.FINALIZADO
+        match.home_goals = 0
+        match.away_goals = 0
+
+        clubs_by_role = {
+            participation.role: participation.club_id
+            for participation in match.participations
+        }
+        update_standings(
+            db=db,
+            league_id=league.id,
+            local_club_id=clubs_by_role[MatchRole.LOCAL],
+            visitante_club_id=clubs_by_role[MatchRole.VISITANTE],
+            local_goals=0,
+            visitante_goals=0,
+        )
+
+    league.state = LeagueState.FINALIZADA
+    league.last_completed_round = max(match.round for match in matches)
+    league.break_ends_at = None
+    league_id = league.id
+
+    db.flush()
+    db.expire_all()
+
+    detail = get_league_detail(db, league_id)
+
+    assert detail.state == LeagueState.FINALIZADA
+    assert detail.last_completed_round == 3
+    assert detail.break_ends_at is None
+    assert detail.active_round is None
+    assert detail.active_match_ids == []
+    assert len(detail.fixture) == 6
+
+    for item in detail.fixture:
+        assert item.state == MatchState.FINALIZADO
+        assert item.score is not None
+        assert item.score.local == 0
+        assert item.score.visitante == 0
+
+    assert len(detail.standings) == 4
+    for row in detail.standings:
+        assert row.matches_played == 3
+        assert row.matches_drawn == 3
+        assert row.points == 3
+
+
+def test_league_detail_normalizes_break_and_has_no_active_matches(
+    db,
+    monkeypatch,
+):
+    league, _, creator_user_id = create_league(db, 4)
+
+    start_league(
+        db=db,
+        league_id=league.id,
+        user_id=creator_user_id,
+        requested_state=LeagueState.INICIADA,
+        seed=SEED,
+    )
+
+    matches = get_matches(db, league.id)
+
+    for match in matches:
+        if match.round != 1:
+            continue
+
+        match.state = MatchState.FINALIZADO
+        match.home_goals = 0
+        match.away_goals = 0
+
+    league.last_completed_round = 1
+    league.break_ends_at = datetime(2026, 11, 4, 12, 0)
+    league_id = league.id
+
+    db.flush()
+    db.expire_all()
+
+    get_active_match = Mock(return_value=None)
+    monkeypatch.setattr(
+        league_service,
+        "get_match",
+        get_active_match,
+    )
+
+    detail = get_league_detail(db, league_id)
+
+    assert detail.state == LeagueState.INICIADA
+    assert detail.last_completed_round == 1
+    assert detail.break_ends_at == datetime(
+        2026, 11, 4, 12, 0, tzinfo=timezone.utc,
+    )
+    assert detail.active_round is None
+    assert detail.active_match_ids == []
+
+    pending = [
+        item for item in detail.fixture
+        if item.round > 1
+    ]
+
+    assert len(pending) == 4
+    assert all(item.state == MatchState.POR_COMENZAR for item in pending)
+    assert all(item.score is None for item in pending)
+
+
+@pytest.mark.parametrize(
+    "confirmed",
+    [False, True],
+    ids=["awaiting_confirmation", "already_confirmed"],
+)
+def test_league_detail_handles_registered_round_without_running_matches(
+    db,
+    monkeypatch,
+    isolated_active_rounds,
+    confirmed,
+):
+    league, _, creator_user_id = create_league(db, 4)
+
+    start_league(
+        db=db,
+        league_id=league.id,
+        user_id=creator_user_id,
+        requested_state=LeagueState.INICIADA,
+        seed=SEED,
+    )
+
+    isolated_active_rounds.register_round(league.id, 1)
+    matches = get_matches(db, league.id)
+
+    if confirmed:
+        for match in matches:
+            if match.round == 1:
+                match.state = MatchState.FINALIZADO
+                match.home_goals = 0
+                match.away_goals = 0
+
+        league.last_completed_round = 1
+        db.flush()
+
+    monkeypatch.setattr(
+        league_service,
+        "get_match",
+        Mock(return_value=None),
+    )
+
+    detail = get_league_detail(db, league.id)
+
+    assert detail.active_match_ids == []
+    assert detail.active_round == (None if confirmed else 1)
+
+    for item in detail.fixture:
+        if item.round != 1:
+            assert item.state == MatchState.POR_COMENZAR
+            assert item.score is None
+        elif confirmed:
+            assert item.state == MatchState.FINALIZADO
+            assert item.score.local == 0
+            assert item.score.visitante == 0
+        else:
+            assert item.state == MatchState.JUGANDO
+            assert item.score is None
+
+    db.flush()
+    db.expire_all()
+
+    for persisted in get_matches(db, league.id):
+        expected_state = (
+            MatchState.FINALIZADO
+            if confirmed and persisted.round == 1
+            else MatchState.POR_COMENZAR
+        )
+        assert persisted.state == expected_state

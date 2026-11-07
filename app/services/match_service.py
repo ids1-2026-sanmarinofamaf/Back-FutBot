@@ -59,6 +59,13 @@ def initialize_worker_pool() -> None:
         )
 
 
+def get_worker_pool() -> BehaviorWorkerPool:
+    if _worker_pool is None:
+        raise RuntimeError("Behavior worker pool is not initialized")
+
+    return _worker_pool
+
+
 def shutdown_worker_pool() -> None:
     """
     Shut down the shared pool and release its resources.
@@ -243,6 +250,9 @@ def change_player_behavior(
         raise LookupError("Behavior not available")
 
     player.current_behavior_id = behavior_id
+    behavior_name = getattr(behavior, "name", None)
+    if isinstance(behavior_name, str):
+        player.current_behavior_name = behavior_name
 
 
 async def stop_running_matches() -> None:

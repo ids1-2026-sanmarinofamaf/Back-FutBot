@@ -1,6 +1,6 @@
 from dataclasses import dataclass
 
-from app.game.types import Position, Velocity
+from app.game.types import Position
 
 # snapshot for playerInMatch because it's needed for matchsnapshot
 @dataclass(frozen=True)
@@ -8,7 +8,6 @@ class PlayerInMatchSnapshot:
     player_id: int
 
     position: Position
-    velocity: Velocity
     starting_position: Position | None
 
     power: int
@@ -24,12 +23,15 @@ class PlayerInMatchSnapshot:
     forced_wait_remaining: int
     collision_penalty_remaining: int
 
+    name: str = ""
+    shirt_number: int = 1
+    current_behavior_name: str | None = None
+
 @dataclass     # non-persistent class
 class PlayerInMatch:
     player_id: int  # we don't use a player to build it, since it would increase coupling too much, because player uses a database
 
     position: Position
-    velocity: Velocity
     starting_position: Position | None
 
     power: int      # repeat PACSS so we don't have to go fetch them from databases when we need them during the match
@@ -45,12 +47,14 @@ class PlayerInMatch:
     kick_cooldown_remaining: int = 0     # Remaining ticks for temporary restrictions applied to the player during the match     
     forced_wait_remaining: int = 0
     collision_penalty_remaining: int = 0
+    name: str = ""
+    shirt_number: int = 1
+    current_behavior_name: str | None = None
 
     def snapshot(self) -> PlayerInMatchSnapshot:
             return PlayerInMatchSnapshot(
                     player_id=self.player_id,
                     position=self.position,
-                    velocity=self.velocity,
                     starting_position=self.starting_position,
                     power=self.power,
                     agility=self.agility,
@@ -62,4 +66,7 @@ class PlayerInMatch:
                     kick_cooldown_remaining=self.kick_cooldown_remaining,
                     forced_wait_remaining=self.forced_wait_remaining,
                     collision_penalty_remaining=self.collision_penalty_remaining,
+                    name=self.name,
+                    shirt_number=self.shirt_number,
+                    current_behavior_name=self.current_behavior_name,
                 )

@@ -39,7 +39,6 @@ def _make_player(
     return PlayerInMatch(
         player_id=player_id,
         position=position,
-        velocity=(0.0, 0.0),
         starting_position=(0.0, 0.0) if is_on_field else None,
         power=60,
         agility=60,

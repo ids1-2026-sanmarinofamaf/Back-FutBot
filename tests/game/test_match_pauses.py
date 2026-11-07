@@ -202,7 +202,6 @@ async def test_positions_reset_after_hydration(match, coordinator, websocket_man
 
     # move a player and the ball away from their starting positions
     player.position = (15.0, 8.0)
-    player.velocity = (1.0, 0.0)
 
     match.ball.position = (10.0, 4.0)
     match.ball.velocity = (2.0, 1.0)
@@ -216,7 +215,6 @@ async def test_positions_reset_after_hydration(match, coordinator, websocket_man
         for player in participation.players:
             if player.is_on_field:
                 assert player.position == player.starting_position
-                assert player.velocity == (0.0, 0.0)
 
     assert match.ball.position == FIELD_CENTER
     assert match.ball.velocity == (0.0, 0.0)

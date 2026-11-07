@@ -1,4 +1,6 @@
 from sqlalchemy.orm import Session
+from datetime import timezone
+
 from app.core.security import get_password_hash, verify_password
 from app.models.league import League, LeagueState, LeaguePrivacy
 from app.models.league_participation import LeagueParticipation
@@ -15,6 +17,8 @@ from app.repositories import (
     behavior_repository,
     match_repository,
 )
+from app.schemas.roster import RosterCreate, RosterDetail
+from app.models.player_on_roster import PlayerOnRoster
 
 from app.services.fixture_service import generate_fixture
 
@@ -25,12 +29,16 @@ from app.schemas.league import (
     FixtureMatchItem,
     StandingRow,
     LeagueDetail,
+    MatchScore,
 )
 from app.services.league_websocket_service import (
     league_connection_manager,
     build_league_user_event,
 )
 
+from app.game.active_matches import get_match
+from app.game.active_league_rounds import get_active_round
+from app.game.models.match import MatchState as RunningMatchState
 
 # add this classes in order to distinguish the errors
 
@@ -481,8 +489,20 @@ def build_league_state(db: Session, league: League) -> tuple[list[FixtureMatchIt
                 match_order=match.match_order,
                 round=match.round,
                 state=match.state,
-                local=FixtureClub(club_id=local.club_id, name=local.club.name),
-                visitante=FixtureClub(club_id=visitante.club_id, name=visitante.club.name),
+                local=FixtureClub(
+                    club_id=local.club_id,
+                    name=local.club.name
+                ),
+                visitante=FixtureClub(
+                    club_id=visitante.club_id,
+                    name=visitante.club.name
+                ),
+                score=MatchScore(
+                    local=match.home_goals,
+                    visitante=match.away_goals,
+                )
+                if match.state == MatchState.FINALIZADO
+                else None
             )
         )
 
@@ -521,8 +541,43 @@ def get_league_detail(db: Session, league_id: int) -> LeagueDetail:
     standings = None
 
     # the fixture only exists after the league started
-    if league.state == LeagueState.INICIADA:
+    if (league.state == LeagueState.INICIADA
+        or league.state == LeagueState.FINALIZADA    
+    ):
         fixture, standings = build_league_state(db, league)
+
+    break_ends_at = league.break_ends_at
+
+    if break_ends_at is not None:
+        if break_ends_at.tzinfo is None:
+            break_ends_at = break_ends_at.replace(tzinfo=timezone.utc)
+
+    active_round = None
+    active_match_ids = []
+
+    if (league.state == LeagueState.INICIADA):
+        registered_round = get_active_round(league_id)
+
+        if registered_round == league.last_completed_round + 1:
+            active_round = registered_round
+
+        for match_item in fixture:
+            if (
+                match_item.round != active_round
+                or match_item.state == MatchState.FINALIZADO
+            ):
+                continue
+
+            match_item.state = MatchState.JUGANDO
+
+            match = get_match(match_item.match_id)
+
+            if (
+                match is not None
+                and match.state == RunningMatchState.IN_PROGRESS
+            ):
+                active_match_ids.append(match_item.match_id)
+
 
     return LeagueDetail(
         league_id=league.id,
@@ -533,6 +588,10 @@ def get_league_detail(db: Session, league_id: int) -> LeagueDetail:
         capacity=league.max_clubs,
         fixture=fixture,
         standings=standings,
+        last_completed_round=league.last_completed_round,
+        break_ends_at=break_ends_at,
+        active_round=active_round,
+        active_match_ids=active_match_ids,
     )
 
 def get_my_league_ids(
@@ -544,4 +603,153 @@ def get_my_league_ids(
     if club is None:
         return []
 
-    return league_participation_repository.get_active_league_ids_by_club(db, club.id)
+    return league_repository.get_active_league_ids_by_club(db, club.id)
+def update_league_roster(
+    db: Session,
+    league_id: int,
+    user_id: int,
+    data: RosterCreate,
+) -> None:
+    try:
+        #get league
+        league = league_repository.get_by_id(db=db, league_id=league_id)
+
+        if league is None:
+            raise LeagueNotFound("League does not exist")
+
+        if league.state != LeagueState.INICIADA:
+            raise InvalidLeagueState("League is not in progress")
+
+        # get club
+        club = club_repository.get_by_user_id(db, user_id)
+
+        if club is None:
+            raise LeagueForbidden("User does not have a club")
+
+        # get the respective league participation
+        participation = (
+            league_participation_repository
+            .get_participation_by_club_and_league(
+                db=db,
+                league_id=league_id,
+                club_id=club.id,
+            )
+        )
+
+        if participation is None:
+            raise LeagueForbidden("User is not participating in this league")
+
+        # get the respective participation roster
+        roster = participation.roster
+
+        # build a temporary roster to compare the new and old players, and verify that they are the same players
+        new_players = [
+            PlayerOnRoster(
+                player_id=p.player_id,
+                is_starter=p.is_starter,
+                slot=p.slot,
+                initial_behavior_id=p.initial_behavior_id,
+            )
+            for p in data.players
+        ]
+        temporary_roster = Roster(club_id=club.id, formation=data.formation, players=new_players)
+
+        # validate roster
+        try:
+            temporary_roster.validate_roster()
+        except ValueError as error:
+            raise InvalidRoster(str(error)) from error
+
+        # verify new players are the same that the old players
+        current_ids = {p.player_id for p in roster.players}
+        new_ids = {p.player_id for p in new_players}
+
+        if current_ids != new_ids:
+            raise InvalidRoster("The roster must contain the samesix players selected for this league")
+
+        # validate behaviors
+        for p in data.players:
+            if p.initial_behavior_id is None:
+                continue
+
+            behavior = behavior_repository.get_by_id(db, p.initial_behavior_id)
+
+            if behavior is None:
+                raise InvalidRoster("Behavior does not exist")
+
+            if (not behavior.is_default and behavior.club_id != club.id):
+                raise InvalidRoster("Behavior does not belong to user's club")
+
+        # now, we can modify the actual roster
+        roster.formation = data.formation
+        roster.players = [
+            PlayerOnRoster(
+                player_id=p.player_id,
+                is_starter=p.is_starter,
+                slot=p.slot,
+                initial_behavior_id=p.initial_behavior_id,
+            )
+            for p in data.players
+        ]
+
+        # save changes
+        db.commit()
+
+    except Exception:
+        db.rollback()
+        raise
+
+# get the roster, so the frontend can only shows the original players
+def get_league_roster(
+    db: Session,
+    league_id: int,
+    user_id: int,
+) -> RosterDetail:
+
+    # get league
+    league = league_repository.get_by_id(
+        db=db,
+        league_id=league_id,
+    )
+
+    if league is None:
+        raise LeagueNotFound("League does not exist")
+
+    # get club
+    club = club_repository.get_by_user_id(db, user_id)
+
+    if club is None:
+        raise LeagueForbidden("User does not have a club")
+
+    # get the respective league participation
+    participation = (
+        league_participation_repository
+        .get_participation_by_club_and_league(
+            db=db,
+            league_id=league_id,
+            club_id=club.id,
+        )
+    )
+
+    if participation is None:
+        raise LeagueForbidden(
+            "User is not participating in this league"
+        )
+
+    # get the respective participation roster
+    roster = participation.roster
+
+    # return the roster information
+    return RosterDetail(
+        roster_id=roster.id,
+        formation=roster.formation,
+        players=[
+            {
+                "player_id": p.player_id,
+                "is_starter": p.is_starter,
+                "slot": p.slot,
+                "initial_behavior_id": p.initial_behavior_id,
+            }
+            for p in roster.players
+        ],
+    )

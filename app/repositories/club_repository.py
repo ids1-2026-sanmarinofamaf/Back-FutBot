@@ -8,3 +8,9 @@ def get_by_user_id(db: Session, user_id: int) -> Club | None:
     return db.scalar(
         select(Club).where(Club.user_id == user_id)
     )
+
+
+def get_by_id(db: Session, club_id: int) -> Club | None:
+    return db.scalar(
+        select(Club).where(Club.id == club_id)
+    )
