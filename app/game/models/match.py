@@ -5,7 +5,7 @@ from enum import Enum
 from app.game.models.ball import Ball, BallSnapshot
 from app.game.models.match_participation import MatchParticipation
 from app.game.models.player_in_match import PlayerInMatchSnapshot
-from app.game.types import Side, Period, CoachTrigger, Assignment
+from app.game.types import Side, Period, CoachTrigger, Assignment, Substitution
 
 class MatchState(str, Enum):
     NOT_STARTED = "not_started"
@@ -106,6 +106,7 @@ class Match:
         club_id: int,
         player_out_id: int,
         player_in_id: int,
+        from_coach: bool = False,
     ) -> None:
 
         # validations related to the match
@@ -127,24 +128,38 @@ class Match:
             player_out_id=player_out_id,
             player_in_id=player_in_id,
             period=self.current_period,
+            from_coach=from_coach,
         )
 
     # method designed to be called later by the process that sets up the breaks
-    def close_and_execute_substitutions(self) -> None:
+    # returns the executed coach substitutions, as (club_id, substitution)
+    def close_and_execute_substitutions(self) -> list[tuple[int, Substitution]]:
 
         if self.state != MatchState.IN_PROGRESS:
             raise ValueError("Match is not in progress")
 
         if not self.substitution_requests_open:
-            return
+            return []
 
         # when we are executing a substitution, we close de requests
         self.substitution_requests_open = False
 
         period = self.current_period
+        executed_coach_substitutions = []
+
         # execute the substitution
-        self.participation_a.execute_pending_substitution(period)
-        self.participation_b.execute_pending_substitution(period)
+        for participation in (self.participation_a, self.participation_b):
+            pending = participation.pending_substitution
+
+            if participation.execute_pending_substitution(period) and pending.from_coach:
+                executed_coach_substitutions.append(
+                    (
+                        participation.club_id,
+                        Substitution(pending.player_out_id, pending.player_in_id),
+                    )
+                )
+
+        return executed_coach_substitutions
 
     # method designed to be called later by the process that sets up the breaks
     def start_next_period(self, next_period: Period) -> None:

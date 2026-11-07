@@ -25,8 +25,16 @@ from app.game.models.coach_job import CoachJob
 from app.game.models.match import Match, MatchState
 from app.game.models.match_participation import MatchParticipation
 from app.game.models.runtime_behavior import RuntimeCoachBehavior
-from app.game.primitives import assign, trigger, current_behavior, available_behaviors
-from app.game.types import CoachTrigger, Period, Side
+from app.game.primitives import (
+    assign,
+    available_behaviors,
+    bench,
+    can_substitute,
+    current_behavior,
+    substitute,
+    trigger,
+)
+from app.game.types import CoachTrigger, Period, Side, Substitution
 from app.services.match_websocket_service import build_coach_changes_message
 
 
@@ -705,3 +713,291 @@ async def test_execute_tick_does_not_broadcast_coach_changes_without_changes(mat
     events = [call.args[1].event for call in broadcast.call_args_list]
 
     assert events == ["estado_partido"]
+
+
+# coach substitutions
+
+class _Broadcasts:
+    def __init__(self, monkeypatch):
+        self.messages = []
+        monkeypatch.setattr(
+            "app.game.match_runner.match_connection_manager.broadcast",
+            self._broadcast,
+        )
+        monkeypatch.setattr(
+            "app.game.match_runner.match_connection_manager.close_match_connection",
+            MagicMock(side_effect=lambda *args: _async_none()),
+        )
+
+    async def _broadcast(self, match_id, message):
+        self.messages.append(message)
+
+    def of_event(self, event):
+        return [
+            message
+            for message in self.messages
+            if getattr(message, "event", None) == event
+        ]
+
+
+def _runner_with_commands(commands_by_call):
+    coordinator = MagicMock()
+    coordinator.get_actions.return_value = {}
+    coordinator.get_coach_assignments.side_effect = commands_by_call
+
+    return MatchRunner(
+        coordinator,
+        MagicMock(),
+        hydration_duration=0,
+        halftime_duration=0,
+        execution_window=0,
+    )
+
+
+async def _run_coaches_with(match, commands):
+    match.pending_coach_triggers = [(1, CoachTrigger.GOAL_FOR)]
+    runner = _runner_with_commands([{1: commands}])
+    await runner._execute_coaches(match)
+
+
+def test_substitute_builds_a_request():
+    assert substitute(1, 4) == Substitution(1, 4)
+
+
+def test_coach_context_exposes_only_own_substitutes(match):
+    context = build_coach_context(
+        match,
+        match.participation_a,
+        CoachTrigger.GOAL_FOR,
+    )
+
+    assert context.bench == [4, 5, 6]
+    assert context.can_substitute is True
+
+
+def test_bench_and_can_substitute_primitives_read_coach_context(coach_context):
+    set_current_context(coach_context)
+
+    try:
+        assert bench() == [4, 5, 6]
+        assert can_substitute() is True
+    finally:
+        clear_current_context()
+
+
+def test_can_substitute_is_false_if_already_used_in_the_period(match):
+    match.participation_a.last_substitution_period = Period.FIRST_QUARTER
+
+    context = build_coach_context(match, match.participation_a, CoachTrigger.GOAL_FOR)
+
+    assert context.can_substitute is False
+
+
+def test_can_substitute_is_false_with_a_pending_manual_substitution(match):
+    match.plan_substitution(1, 1, 4)
+
+    context = build_coach_context(match, match.participation_a, CoachTrigger.GOAL_FOR)
+
+    assert context.can_substitute is False
+
+
+def test_can_substitute_stays_true_with_a_pending_coach_substitution(match):
+    match.plan_substitution(1, 1, 4, from_coach=True)
+
+    context = build_coach_context(match, match.participation_a, CoachTrigger.GOAL_FOR)
+
+    assert context.can_substitute is True
+
+
+def test_can_substitute_is_false_with_the_window_closed(match):
+    match.substitution_requests_open = False
+
+    context = build_coach_context(match, match.participation_a, CoachTrigger.GOAL_FOR)
+
+    assert context.can_substitute is False
+
+
+def test_execute_coach_behavior_keeps_substitutions_and_discards_plain_tuples(
+    coach_context,
+):
+    behavior = RuntimeCoachBehavior(
+        id=1,
+        coach=lambda: [Substitution(1, 4), (1, 4), (1, "Defender")],
+    )
+
+    assert execute_coach_behavior(coach_context, behavior) == [
+        Substitution(1, 4),
+        (1, "Defender"),
+    ]
+
+
+def test_pool_returns_substitutions_from_the_worker(pool, coach_context):
+    code = dedent(
+        """
+        def coach():
+            if can_substitute():
+                return [substitute(teammates()[0][0], bench()[0])]
+            return []
+        """
+    )
+    pool.register_match(1, [], [BehaviorDefinition(id=50, code=code)])
+
+    results = pool.execute_coach(
+        [CoachJob(club_id=1, coach_behavior_id=50, context=coach_context)],
+        match_id=1,
+    )
+
+    assert results == [[Substitution(1, 4)]]
+
+
+@pytest.mark.asyncio
+async def test_coach_substitution_is_planned_as_from_coach(match):
+    await _run_coaches_with(match, [Substitution(1, 4), (2, "Defender")])
+
+    pending = match.participation_a.pending_substitution
+
+    assert (pending.player_out_id, pending.player_in_id) == (1, 4)
+    assert pending.from_coach is True
+    assert match.participation_a.pending_coach_assignments == [(2, "Defender")]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "invalid",
+    [
+        Substitution(4, 5),   # outgoing is on the bench
+        Substitution(1, 2),   # incoming is on the field
+        Substitution(1, 10),  # incoming is a rival
+        Substitution(7, 4),   # outgoing is a rival
+        Substitution(1, 999),
+    ],
+)
+async def test_invalid_coach_substitution_is_discarded_and_the_rest_applies(
+    match,
+    invalid,
+):
+    await _run_coaches_with(match, [invalid, (2, "Defender")])
+
+    assert match.participation_a.pending_substitution is None
+    assert match.participation_a.pending_coach_assignments == [(2, "Defender")]
+
+
+@pytest.mark.asyncio
+async def test_last_valid_coach_substitution_wins(match):
+    await _run_coaches_with(
+        match,
+        [Substitution(1, 4), Substitution(2, 5), Substitution(4, 6)],
+    )
+
+    pending = match.participation_a.pending_substitution
+
+    assert (pending.player_out_id, pending.player_in_id) == (2, 5)
+
+
+@pytest.mark.asyncio
+async def test_coach_does_not_replace_a_manual_substitution(match):
+    match.plan_substitution(1, 1, 4)
+
+    await _run_coaches_with(match, [Substitution(2, 5)])
+
+    pending = match.participation_a.pending_substitution
+
+    assert (pending.player_out_id, pending.player_in_id) == (1, 4)
+    assert pending.from_coach is False
+
+
+@pytest.mark.asyncio
+async def test_manual_substitution_replaces_the_coach_one(match):
+    await _run_coaches_with(match, [Substitution(2, 5)])
+
+    match.plan_substitution(1, 1, 4)
+
+    pending = match.participation_a.pending_substitution
+
+    assert (pending.player_out_id, pending.player_in_id) == (1, 4)
+    assert pending.from_coach is False
+
+
+@pytest.mark.asyncio
+async def test_coach_substitution_is_discarded_in_the_fourth_period(match):
+    match.current_period = Period.FOURTH_QUARTER
+    match.substitution_requests_open = False
+
+    await _run_coaches_with(match, [Substitution(1, 4)])
+
+    assert match.participation_a.pending_substitution is None
+
+
+def test_close_returns_only_the_executed_coach_substitutions(match):
+    match.plan_substitution(1, 1, 4, from_coach=True)
+    match.plan_substitution(2, 7, 10)
+
+    executed = match.close_and_execute_substitutions()
+
+    assert executed == [(1, Substitution(1, 4))]
+    assert match.participation_a.get_player(4).is_on_field is True
+    assert match.participation_b.get_player(10).is_on_field is True
+
+
+@pytest.mark.asyncio
+async def test_coach_substitution_is_executed_and_notified_in_the_next_break(
+    match,
+    monkeypatch,
+):
+    broadcasts = _Broadcasts(monkeypatch)
+    monkeypatch.setattr("app.game.match_runner.TIC_DURATION", 0)
+
+    match.state = MatchState.NOT_STARTED
+    match.duration_ticks = 4
+
+    # first period start: the coach substitutes; later period starts: nothing
+    runner = _runner_with_commands(
+        [{1: [Substitution(1, 4)]}, {}, {}, {}]
+    )
+
+    await runner.run_match(match)
+
+    assert match.participation_a.get_player(1).is_on_field is False
+    assert match.participation_a.get_player(4).is_on_field is True
+    assert match.participation_a.last_substitution_period == Period.FIRST_QUARTER
+
+    messages = broadcasts.of_event("coach_substitutions")
+
+    assert len(messages) == 1
+    assert messages[0].changes[0].club_id == 1
+    assert messages[0].changes[0].player_out_id == 1
+    assert messages[0].changes[0].player_in_id == 4
+
+
+@pytest.mark.asyncio
+async def test_no_coach_substitutions_event_for_manual_substitutions(
+    match,
+    monkeypatch,
+):
+    broadcasts = _Broadcasts(monkeypatch)
+    monkeypatch.setattr("app.game.match_runner.TIC_DURATION", 0)
+
+    match.state = MatchState.NOT_STARTED
+    match.duration_ticks = 4
+
+    def manual_then_nothing(current_match, triggers):
+        if current_match.current_tick == 0:
+            current_match.plan_substitution(1, 1, 4)
+        return {}
+
+    coordinator = MagicMock()
+    coordinator.get_actions.return_value = {}
+    coordinator.get_coach_assignments.side_effect = manual_then_nothing
+
+    runner = MatchRunner(
+        coordinator,
+        MagicMock(),
+        hydration_duration=0,
+        halftime_duration=0,
+        execution_window=0,
+    )
+
+    await runner.run_match(match)
+
+    assert match.participation_a.get_player(4).is_on_field is True
+    assert broadcasts.of_event("coach_substitutions") == []

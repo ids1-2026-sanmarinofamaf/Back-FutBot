@@ -256,6 +256,18 @@ def build_coach_context(
         for player in on_field_teammates
     }
 
+    context_bench = [
+        player.player_id
+        for player in participation.players
+        if not player.is_on_field
+    ]
+
+    context_can_substitute = (
+        match.substitution_requests_open
+        and participation.last_substitution_period != match.current_period
+        and not participation.has_pending_manual_substitution()
+    )
+
     return CoachContext(
         teammates=context_teammates,
         opponents=context_opponents,
@@ -269,4 +281,6 @@ def build_coach_context(
         trigger=trigger,
         available_behaviors=list(participation.available_behaviors),
         current_behaviors=context_current_behaviors,
+        bench=context_bench,
+        can_substitute=context_can_substitute,
     )

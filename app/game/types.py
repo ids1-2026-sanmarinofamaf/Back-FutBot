@@ -1,6 +1,7 @@
 """
 Basic data types exposed by the Behavior API.
 """
+from dataclasses import dataclass
 from enum import Enum
 
 
@@ -21,6 +22,17 @@ BallState = tuple[Position, Velocity]
 
 # Data type representing a coach assignment of a behavior to a player
 Assignment = tuple[int, str]  # (player_id, behavior_name)
+
+
+# Data type representing a substitution requested by a coach
+@dataclass(frozen=True)
+class Substitution:
+    player_out_id: int
+    player_in_id: int
+
+
+# What a coach can return from coach()
+CoachCommand = Assignment | Substitution
 
 
 # Enum representing the periods of a match

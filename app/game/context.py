@@ -55,6 +55,11 @@ class CoachContext:
     # behavior name currently assigned to each on-field teammate
     current_behaviors: dict[int, str | None]
 
+    # ids of the club's substitutes
+    bench: list[int]
+    # whether a substitution requested now by the coach could be accepted
+    can_substitute: bool
+
 
 # Context-local storage for the BehaviorContext of the current play() execution.
 # It is kept private so the rest of the application only interacts through

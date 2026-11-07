@@ -42,6 +42,18 @@ class MatchCoachChangesMessage(BaseModel):
     from_tic: int  # first tic in which the changes are in effect
     changes: list[MatchCoachChange]
 
+
+class MatchCoachSubstitution(BaseModel):
+    club_id: int
+    player_out_id: int
+    player_in_id: int
+
+
+# substitutions requested by the coaches (DT) and executed in this break
+class MatchCoachSubstitutionsMessage(BaseModel):
+    event: Literal["coach_substitutions"] = "coach_substitutions"
+    changes: list[MatchCoachSubstitution]
+
 class MatchPauseStartedMessage(BaseModel):
     event: Literal["pause_started"] = "pause_started"
     pause_type: Literal["hydration", "halftime"]

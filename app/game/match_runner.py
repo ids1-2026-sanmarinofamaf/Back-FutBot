@@ -3,7 +3,7 @@ from typing import Protocol, Any
 import time, asyncio
 
 from app.game.models.match import Match, MatchState, MatchSnapshot
-from app.game.types import Assignment, CoachTrigger, Period
+from app.game.types import CoachCommand, CoachTrigger, Period, Substitution
 from app.game.constants import (
     TIC_DURATION,
     MATCH_PERIOD_COUNT,
@@ -15,6 +15,7 @@ from app.services.match_websocket_service import (
     match_connection_manager,
     build_match_state_message,
     build_coach_changes_message,
+    build_coach_substitutions_message,
     build_pause_started_message,
     build_substitution_window_closed_message,
     build_pause_finished_message,
@@ -29,7 +30,7 @@ class BehaviorCoordinatorProtocol(Protocol):
         self,
         match: Match,
         triggers: list[tuple[int, CoachTrigger]],
-    ) -> dict[int, list[Assignment]]:
+    ) -> dict[int, list[CoachCommand]]:
         ...
 
 class GameEngineProtocol(Protocol):
@@ -111,17 +112,38 @@ class MatchRunner:
 
         # in a thread, like get_actions, so waiting for the worker does not
         # block the event loop
-        assignments = await asyncio.to_thread(
+        commands = await asyncio.to_thread(
             self.behavior_coordinator.get_coach_assignments,
             match,
             triggers,
         )
 
-        # keep them for the next tick, where they are validated and applied
-        for club_id, club_assignments in assignments.items():
-            match.get_participation(club_id).pending_coach_assignments.extend(
-                club_assignments
+        for club_id, club_commands in commands.items():
+            participation = match.get_participation(club_id)
+
+            for command in club_commands:
+                if isinstance(command, Substitution):
+                    self._plan_coach_substitution(match, club_id, command)
+                else:
+                    # keep it for the next tick, where it is validated and applied
+                    participation.pending_coach_assignments.append(command)
+
+    @staticmethod
+    def _plan_coach_substitution(
+        match: Match,
+        club_id: int,
+        substitution: Substitution,
+    ) -> None:
+        # an invalid request is discarded without affecting the rest of the list
+        try:
+            match.plan_substitution(
+                club_id=club_id,
+                player_out_id=substitution.player_out_id,
+                player_in_id=substitution.player_in_id,
+                from_coach=True,
             )
+        except (ValueError, PermissionError):
+            pass
 
     @staticmethod
     def is_period_end(match: Match) -> bool:
@@ -181,7 +203,13 @@ class MatchRunner:
         if remaining > 0:
             await asyncio.sleep(remaining)
 
-        match.close_and_execute_substitutions()
+        coach_substitutions = match.close_and_execute_substitutions()
+
+        if coach_substitutions:
+            await match_connection_manager.broadcast(
+                match.match_id,
+                build_coach_substitutions_message(coach_substitutions),
+            )
 
         await match_connection_manager.broadcast(
             match.match_id,

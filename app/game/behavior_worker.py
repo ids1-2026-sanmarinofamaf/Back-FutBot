@@ -2,7 +2,7 @@ from app.game.models.runtime_behavior import RuntimeBehavior, RuntimeCoachBehavi
 from app.game.models.actions import MoveAction, KickAction, WaitAction
 from app.game.models.behavior_job import BehaviorJob
 from app.game.models.coach_job import CoachJob
-from app.game.types import Assignment
+from app.game.types import CoachCommand
 
 from app.game.behavior_executor import (
     execute_behavior_strict,
@@ -305,12 +305,12 @@ class BehaviorWorker:
         timeout_ms: int = COACH_EXECUTION_TIMEOUT_MS,
         *,
         match_id: int,
-    ) -> list[list[Assignment]]:
+    ) -> list[list[CoachCommand]]:
         """
         Execute coach behaviors sequentially with individual timeouts.
 
         A coach that is not registered, fails or exceeds its timeout
-        produces no assignments, without interrupting the batch.
+        produces no commands, without interrupting the batch.
 
         Args:
             jobs: Coach execution requests for the current tick.
@@ -318,7 +318,7 @@ class BehaviorWorker:
             match_id: Identifier of the match.
 
         Returns:
-            The assignments of each job, in the same order as the jobs.
+            The commands of each job, in the same order as the jobs.
 
         Raises:
             ValueError: If timeout_ms is less than or equal to zero.
@@ -337,7 +337,7 @@ class BehaviorWorker:
         job: CoachJob,
         timeout_ms: int,
         match_id: int,
-    ) -> list[Assignment]:
+    ) -> list[CoachCommand]:
         """
         Execute a club's coach behavior for a specific match.
 
@@ -347,7 +347,7 @@ class BehaviorWorker:
             match_id: Identifier of the match.
 
         Returns:
-            The coach assignments, or an empty list if execution fails.
+            The coach commands, or an empty list if execution fails.
         """
         key = (
             match_id,

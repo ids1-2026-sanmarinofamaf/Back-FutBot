@@ -7,7 +7,7 @@ from math import hypot
 from .constants import LEFT_GOAL, RIGHT_GOAL
 from .models.actions import MoveAction, KickAction, WaitAction
 from .context import get_current_context
-from .types import Direction, Position, PlayerState, BallState, Period, Side, CoachTrigger, Assignment
+from .types import Direction, Position, PlayerState, BallState, Period, Side, CoachTrigger, Assignment, Substitution
 from .physics import(
     calculate_max_move_distance,
     calculate_speed_factor,
@@ -417,6 +417,16 @@ def assign(player_id: int, behavior_name: str) -> Assignment:
     return (player_id, behavior_name)
 
 
+def substitute(player_out_id: int, player_in_id: int) -> Substitution:
+    """
+    Build a request to replace an on-field player with a substitute.
+
+    The substitution is only a request: it is validated by the match when
+    coach() ends, and it is executed in the next break.
+    """
+    return Substitution(player_out_id, player_in_id)
+
+
 def trigger() -> CoachTrigger:
     """
     Return the event that triggered the current coach() execution.
@@ -437,3 +447,17 @@ def available_behaviors() -> list[str]:
     Return the names of the behaviors the club can assign.
     """
     return list(get_current_context().available_behaviors)
+
+
+def bench() -> list[int]:
+    """
+    Return the ids of the club's substitutes.
+    """
+    return list(get_current_context().bench)
+
+
+def can_substitute() -> bool:
+    """
+    Return whether a substitution requested now could be accepted.
+    """
+    return get_current_context().can_substitute

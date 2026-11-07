@@ -10,7 +10,7 @@ from app.game.models.behavior_definition import BehaviorDefinition
 from app.game.models.actions import MoveAction, KickAction, WaitAction
 from app.game.models.behavior_job import BehaviorJob
 from app.game.models.coach_job import CoachJob
-from app.game.types import Assignment
+from app.game.types import CoachCommand
 
 from app.game.behavior_compiler import BehaviorCompiler, BehaviorCompilationError
 from app.game.behavior_worker import BehaviorWorker
@@ -688,7 +688,7 @@ class BehaviorWorkerPool:
         jobs: list[CoachJob],
         *,
         match_id: int,
-    ) -> list[list[Assignment]]:
+    ) -> list[list[CoachCommand]]:
         """
         Execute the coach jobs of a match without exceeding the deadline.
 
@@ -701,7 +701,7 @@ class BehaviorWorkerPool:
             match_id: Identifier of the registered match.
 
         Returns:
-            The assignments of each job, in the same order as the jobs.
+            The commands of each job, in the same order as the jobs.
 
         Raises:
             KeyError: If the match is not registered.

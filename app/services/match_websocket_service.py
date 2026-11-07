@@ -1,13 +1,15 @@
 from fastapi import WebSocket
 
 from app.game.models.match import MatchSnapshot
-from app.game.types import Assignment
+from app.game.types import Assignment, Substitution
 from app.schemas.match_websocket import (
     MatchPlayerState,
     MatchStateMessage,
     BallState,
     MatchCoachChange,
     MatchCoachChangesMessage,
+    MatchCoachSubstitution,
+    MatchCoachSubstitutionsMessage,
     MatchPauseStartedMessage,
     MatchSubstitutionWindowClosedMessage,
     MatchPauseFinishedMessage,
@@ -52,6 +54,7 @@ class MatchConnectionManager:
         message: (
         MatchStateMessage
         | MatchCoachChangesMessage
+        | MatchCoachSubstitutionsMessage
         | MatchPauseStartedMessage
         | MatchSubstitutionWindowClosedMessage
         | MatchPauseFinishedMessage
@@ -149,6 +152,24 @@ def build_coach_changes_message(
             )
             for club_id, assignments in applied_assignments.items()
             for player_id, behavior_name in assignments
+        ],
+    )
+
+
+# prepare the message with the coach substitutions executed in a break,
+# from the result of match.close_and_execute_substitutions()
+def build_coach_substitutions_message(
+    executed_substitutions: list[tuple[int, Substitution]],
+) -> MatchCoachSubstitutionsMessage:
+
+    return MatchCoachSubstitutionsMessage(
+        changes=[
+            MatchCoachSubstitution(
+                club_id=club_id,
+                player_out_id=substitution.player_out_id,
+                player_in_id=substitution.player_in_id,
+            )
+            for club_id, substitution in executed_substitutions
         ],
     )
 

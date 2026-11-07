@@ -93,6 +93,9 @@ class BehaviorCompiler:
             "CoachTrigger": CoachTrigger,
             "current_behavior": primitives.current_behavior,
             "assign": primitives.assign,
+            "substitute": primitives.substitute,
+            "bench": primitives.bench,
+            "can_substitute": primitives.can_substitute,
             "trigger": primitives.trigger,
             "available_behaviors": primitives.available_behaviors,
         }

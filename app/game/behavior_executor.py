@@ -8,7 +8,7 @@ that the execution context is always cleared after execution.
 
 from app.game.models.runtime_behavior import RuntimeBehavior, RuntimeCoachBehavior
 from app.game.models.actions import MoveAction, KickAction, WaitAction
-from app.game.types import Assignment
+from app.game.types import CoachCommand, Substitution
 from app.game.context import (
     BehaviorContext,
     CoachContext,
@@ -63,7 +63,7 @@ def execute_behavior_strict(
 def execute_coach_behavior(
         context: CoachContext,
         behavior: RuntimeCoachBehavior,
-) -> list[Assignment]:
+) -> list[CoachCommand]:
     """
     Execute a runtime coach behavior within the given CoachContext.
 
@@ -72,22 +72,22 @@ def execute_coach_behavior(
         behavior: Runtime coach behavior whose coach() function will be executed.
 
     Returns:
-        Assignments returned by coach(). Elements that are not a
-        (player_id, behavior_name) pair are discarded. If execution fails
-        or coach() does not return a list, an empty list is returned.
+        Assignments and substitutions returned by coach(). Any other element
+        is discarded. If execution fails or coach() does not return a list,
+        an empty list is returned.
     """
     set_current_context(context)
 
     try:
-        assignments = behavior.coach()
+        commands = behavior.coach()
 
-        if not isinstance(assignments, list):
+        if not isinstance(commands, list):
             return []
 
         return [
-            assignment
-            for assignment in assignments
-            if _is_assignment(assignment)
+            command
+            for command in commands
+            if _is_assignment(command) or isinstance(command, Substitution)
         ]
     except Exception:
         return []

@@ -5,7 +5,7 @@ from app.game.models.match import Match, MatchSnapshot
 from app.game.models.actions import MoveAction, KickAction, WaitAction
 from app.game.models.behavior_job import BehaviorJob
 from app.game.models.coach_job import CoachJob
-from app.game.types import Assignment, CoachTrigger
+from app.game.types import CoachCommand, CoachTrigger
 
 
 Action = MoveAction | KickAction | WaitAction
@@ -110,13 +110,14 @@ class BehaviorCoordinator:
         self,
         match: Match,
         triggers: list[tuple[int, CoachTrigger]],
-    ) -> dict[int, list[Assignment]]:
+    ) -> dict[int, list[CoachCommand]]:
         """
-        Execute the coach of each triggered club and return its assignments.
+        Execute the coach of each triggered club and return its commands
+        (assignments and substitutions).
 
         Clubs without a coach behavior are skipped. If the same club is
         triggered more than once in the tic, its coach runs once per trigger
-        and the assignments are concatenated in trigger order.
+        and the commands are concatenated in trigger order.
 
         Args:
             match: Current match state.
@@ -124,7 +125,7 @@ class BehaviorCoordinator:
             (club_id, trigger).
 
         Returns:
-            A mapping from club identifiers to the assignments returned by
+            A mapping from club identifiers to the commands returned by
             their coach.
         """
         jobs: list[CoachJob] = []
@@ -158,9 +159,9 @@ class BehaviorCoordinator:
             match_id=self._match_id,
         )
 
-        assignments: dict[int, list[Assignment]] = {}
+        commands: dict[int, list[CoachCommand]] = {}
 
-        for job, job_assignments in zip(jobs, results):
-            assignments.setdefault(job.club_id, []).extend(job_assignments)
+        for job, job_commands in zip(jobs, results):
+            commands.setdefault(job.club_id, []).extend(job_commands)
 
-        return assignments
+        return commands

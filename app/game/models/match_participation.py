@@ -74,6 +74,7 @@ class MatchParticipation:
         player_out_id: int,
         player_in_id: int,
         period: Period,
+        from_coach: bool = False,
     ) -> None:
 
         # when we are in the fourth period, changes can no longer be made
@@ -104,11 +105,22 @@ class MatchParticipation:
         if incoming.is_on_field:
             raise ValueError("Incoming player is not a substitute")
 
+        # the coach cannot replace a request made by the user
+        if from_coach and self.has_pending_manual_substitution():
+            raise ValueError("A manual substitution is already planned")
+
         # a valid request replaces the previous pending request.
         self.pending_substitution = PendingSubstitution(
             player_out_id=player_out_id,
             player_in_id=player_in_id,
             period=period,
+            from_coach=from_coach,
+        )
+
+    def has_pending_manual_substitution(self) -> bool:
+        return (
+            self.pending_substitution is not None
+            and not self.pending_substitution.from_coach
         )
 
     # the manual change is not applied right away, so it can win over
