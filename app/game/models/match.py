@@ -38,6 +38,9 @@ class MatchSnapshot:
     pause_type: PauseType | None = None
     substitution_window_open: bool = True
 
+    winner_club_id: int | None = None
+
+
 @dataclass  # non-persistent class
 class Match:
     match_id: int   # it will be used for WebSockets.
@@ -61,6 +64,8 @@ class Match:
     substitution_requests_open: bool = True # it is set to true as long as substitutions can be planned.
     is_paused: bool = False
     pause_type: PauseType | None = None
+
+    winner_club_id: int | None = None
 
     def snapshot(self) -> MatchSnapshot:  # returns a copy of match in the state it was in when made
         return MatchSnapshot(
@@ -90,7 +95,9 @@ class Match:
 
             is_paused=self.is_paused,
             pause_type=self.pause_type,
-            substitution_window_open=self.substitution_requests_open
+            substitution_window_open=self.substitution_requests_open,
+
+            winner_club_id=self.winner_club_id,
         )
 
     def plan_substitution(

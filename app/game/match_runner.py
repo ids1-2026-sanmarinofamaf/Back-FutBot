@@ -221,6 +221,22 @@ class MatchRunner:
                 # eeset the tick clock after a scheduled break
                 next_tick_time = time.monotonic()
 
+        winner_id = None
+
+        if (
+            match.participation_a.goals
+            > match.participation_b.goals
+        ):
+            winner_id = match.participation_a.club_id
+
+        elif (
+            match.participation_a.goals
+            < match.participation_b.goals
+        ):
+            winner_id = match.participation_b.club_id
+
+        match.winner_club_id = winner_id
+
         # when the match ended, change its state to finished and close ws conections
         match.substitution_requests_open = False
         match.state = MatchState.FINISHED

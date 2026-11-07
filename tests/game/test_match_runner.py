@@ -448,3 +448,44 @@ async def test_match_does_not_catch_up_ticks_after_break(
 
     assert match.current_tick == 8
     assert match.state == MatchState.FINISHED
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("goals_a", "goals_b", "expected_winner"),
+    [
+        pytest.param(2, 1, 1, id="home-wins"),
+        pytest.param(1, 2, 2, id="away-wins"),
+        pytest.param(1, 1, None, id="draw"),
+    ],
+)
+async def test_run_match_sets_regulation_winner(
+    match,
+    behavior_coordinator,
+    game_engine,
+    goals_a,
+    goals_b,
+    expected_winner,
+):
+    match.duration_ticks = 4
+    match.participation_a.goals = goals_a
+    match.participation_b.goals = goals_b
+
+    assert match.winner_club_id is None
+
+    runner = MatchRunner(
+        behavior_coordinator,
+        game_engine,
+        hydration_duration=0,
+        halftime_duration=0,
+        execution_window=0,
+    )
+
+    result = await runner.run_match(match)
+
+    assert result.state == MatchState.FINISHED
+    assert result.winner_club_id == expected_winner
+    assert result.snapshot().winner_club_id == expected_winner
+
+    assert result.participation_a.goals == goals_a
+    assert result.participation_b.goals == goals_b
