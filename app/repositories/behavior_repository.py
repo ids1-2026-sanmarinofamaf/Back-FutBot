@@ -97,3 +97,16 @@ def save(db: Session, behavior: Behavior) -> Behavior:
     db.add(behavior)
     db.flush()
     return behavior
+
+
+def delete(db: Session, behavior: Behavior) -> None:
+    """
+    Delete a Behavior instance from the current session.
+
+    Args:
+        db: Active SQLAlchemy database session.
+        behavior: Behavior ORM instance to delete.
+    """
+    db.delete(behavior)
+    db.flush()
+
