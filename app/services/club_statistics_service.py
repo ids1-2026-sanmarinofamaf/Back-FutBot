@@ -3,6 +3,8 @@ from sqlalchemy.orm import Session
 
 from app.repositories import club_statistics_repository
 
+from app.game.match_result import resolve_match_winner
+
 # this method should be called at the end of a league match, verifying that it is a public league. 
 # since the "start league" functionality has not yet been implemented, i am leaving this for whoever is tasked with implementing it.
 def update_statistics(
@@ -12,19 +14,26 @@ def update_statistics(
     club_b_id: int,
     goals_a: int,
     goals_b: int,
+    winner_club_id: int | None = None,
 ) -> None:
 
     if league.privacy != LeaguePrivacy.PUBLICA:
         return
 
+    resolve_winner_id = resolve_match_winner(
+        (club_a_id, goals_a),
+        (club_b_id, goals_b),
+        winner_club_id,
+    )
+
     # determine match result
-    if goals_a > goals_b:
+    if resolve_winner_id == club_a_id:
         points_a, points_b = 3, 0
         won_a, won_b = 1, 0
         drawn_a, drawn_b = 0, 0
         lost_a, lost_b = 0, 1
 
-    elif goals_a < goals_b:
+    elif resolve_winner_id == club_b_id:
         points_a, points_b = 0, 3
         won_a, won_b = 0, 1
         drawn_a, drawn_b = 0, 0
