@@ -8,7 +8,7 @@ from app.schemas.club import ClubOut, ClubUpdate
 from app.services import club_service
 
 
-router = APIRouter(prefix="/clubs", tags=["clubs"])
+router = APIRouter(prefix="/clubes", tags=["clubs"])
 
 
 @router.get("/me", response_model=ClubOut)

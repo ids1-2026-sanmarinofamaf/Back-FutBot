@@ -67,7 +67,7 @@ def test_get_club_profile_success(mock_get_club, api_dependencies):
         },
     }
 
-    response = client.get("/clubs/me")
+    response = client.get("/clubes/me")
 
     assert response.status_code == 200
     assert response.json() == mock_get_club.return_value
@@ -88,7 +88,7 @@ def test_get_club_profile_success(mock_get_club, api_dependencies):
 )
 @patch("app.api.clubs.club_service.update_club")
 def test_update_club_success(mock_update, api_dependencies, body):
-    response = client.put("/clubs/me", json=body)
+    response = client.put("/clubes/me", json=body)
 
     assert response.status_code == 204
     assert response.content == b""
@@ -107,8 +107,8 @@ def test_update_club_success(mock_update, api_dependencies, body):
     "method, endpoint",
     [
         ("GET", "/users/me"),
-        ("GET", "/clubs/me"),
-        ("PUT", "/clubs/me"),
+        ("GET", "/clubes/me"),
+        ("PUT", "/clubes/me"),
     ],
 )
 def test_profile_invalid_token(method, endpoint):
@@ -164,7 +164,7 @@ def test_update_club_persistence(mock_get_club, mock_update):
 )
 @patch("app.api.clubs.club_service.update_club")
 def test_update_club_invalid_body(mock_update, api_dependencies, body):
-    response = client.put("/clubs/me", json=body)
+    response = client.put("/clubes/me", json=body)
 
     assert response.status_code == 422
     mock_update.assert_not_called()
