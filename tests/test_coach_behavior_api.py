@@ -127,32 +127,62 @@ def test_create_with_missing_data_returns_400(user, body):
     assert response.status_code == 400
 
 
-@pytest.mark.parametrize("code", [
-    "def play():\n    return wait()\n",
-    "coach = 3\n",
-    "def coach(:\n",
+@pytest.mark.parametrize("code, message", [
+    ("def play():\n    return wait()\n", "Se debe definir la función principal 'def coach():'"),
+    ("coach = 3\n", "Se debe definir la función principal 'def coach():'"),
+    ("def coach(:\n", "Error sintáctico"),
 ])
-def test_create_without_callable_coach_returns_400(user, code):
+def test_create_without_callable_coach_returns_400(user, code, message):
     response = create(code=code)
 
     assert response.status_code == 400
-    assert response.json()["detail"] == "Code must define a callable coach()."
+    assert message in response.json()["detail"]
 
 
-@pytest.mark.parametrize("code", [
-    "import os\ndef coach():\n    return []\n",
-    "from os import system\ndef coach():\n    return []\n",
-    "def coach():\n    open('x')\n    return []\n",
-    "def coach():\n    return ().__class__.__bases__\n",
-    "while True:\n    pass\ndef coach():\n    return []\n",
-    "print('x')\ndef coach():\n    return []\n",
-    "x = len([])\ndef coach():\n    return []\n",
+@pytest.mark.parametrize("code, message", [
+    ("import os\ndef coach():\n    return []\n", "No se permiten importaciones"),
+    ("from os import system\ndef coach():\n    return []\n", "No se permiten importaciones"),
+    ("def coach():\n    open('x')\n    return []\n", "No se permite el uso de 'open'"),
+    ("def coach():\n    return ().__class__.__bases__\n", "No se permite el acceso interno"),
+    ("while True:\n    pass\ndef coach():\n    return []\n", "En el nivel principal del archivo"),
+    ("print('x')\ndef coach():\n    return []\n", "En el nivel principal del archivo"),
+    ("x = len([])\ndef coach():\n    return []\n", "No se permiten llamadas a funciones fuera de def coach()"),
 ])
-def test_create_with_forbidden_code_returns_400(user, code):
+def test_create_with_forbidden_code_returns_400(user, code, message):
     response = create(code=code)
 
     assert response.status_code == 400
-    assert response.json()["detail"] == "Code uses a forbidden construction."
+    assert message in response.json()["detail"]
+
+
+@pytest.mark.parametrize("code, message", [
+    ("def coach():\n    pass\n", "debe retornar una lista"),
+    ("def coach(x):\n    return []\n", "no debe llevar argumentos"),
+    ("def coach():\n    return [move((1.0, 0.0), 1.0)]\n", "'move'"),
+    ("def coach():\n    return 3\n", "debe retornar una lista"),
+    ("def coach():\n    return [1]\n", "assign(...) o substitute(...)"),
+    ("def coach():\n    return [1 / 0]\n", "Error de ejecución en coach()"),
+    ("def coach():\n    while True:\n        pass\n    return []\n", "tiempo máximo"),
+])
+def test_create_with_code_that_fails_in_a_match_returns_400(user, db, code, message):
+    response = create(code=code)
+
+    assert response.status_code == 400
+    assert message in response.json()["detail"]
+    assert db.query(CoachBehavior).count() == 0
+
+
+def test_create_with_assign_and_substitute_returns_201(user):
+    code = (
+        "def coach():\n"
+        "    if trigger() == CoachTrigger.GOAL_AGAINST and can_substitute():\n"
+        "        return [substitute(1, bench()[0]), assign(2, available_behaviors()[0])]\n"
+        "    return [assign(1, 'Attacker')]\n"
+    )
+
+    response = create(code=code)
+
+    assert response.status_code == 201
 
 
 def test_create_with_default_behavior_name_returns_409(user):

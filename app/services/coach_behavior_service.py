@@ -3,7 +3,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.game.active_matches import is_club_in_active_match
-from app.game.coach_validator import CoachCodeError, validate_coach_code
+from app.game.behavior_validator import BehaviorValidationError, validate_coach_code
 from app.game.default_behaviors import ATTACKER_NAME, DEFENDER_NAME, MIDFIELDER_NAME
 from app.models.coach_behavior import CoachBehavior
 from app.repositories import club_repository, coach_behavior_repository
@@ -64,10 +64,11 @@ def create_coach_behavior(db: Session, user_id: int, name: str, code: str) -> Co
     if name in DEFAULTS:
         raise CoachBehaviorNameTaken("Coach behavior name matches a default behavior.")
 
-    # static check only: user code is never executed inside the API process
+    # static checks plus a dry-run of coach(); the code runs in a separate
+    # process with a timeout, never inside the API process
     try:
         validate_coach_code(code)
-    except CoachCodeError as error:
+    except BehaviorValidationError as error:
         raise InvalidCoachCode(str(error)) from error
 
     #CoachBehavior (id lo genera la base, club y rosters son relaciones)
