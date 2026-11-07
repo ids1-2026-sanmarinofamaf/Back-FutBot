@@ -736,6 +736,41 @@ def test_delete_behavior_success(user, db):
         db.commit()
 
 
+def test_deleted_behavior_not_in_db_nor_in_get_behaviors_list(user, db):
+    behavior = Behavior(
+        club_id=user.club.id,
+        name="Comportamiento a Eliminar",
+        code=CODE,
+        is_default=False,
+    )
+    db.add(behavior)
+    db.commit()
+    db.refresh(behavior)
+    behavior_id = behavior.id
+
+    headers = auth_header(login())
+
+    # Antes de eliminar figura en el listado GET /clubes/me/behaviors
+    initial_list = client.get("/clubes/me/behaviors", headers=headers)
+    assert initial_list.status_code == 200
+    assert behavior_id in {b["behavior_id"] for b in initial_list.json()}
+
+    delete_response = client.delete(
+        f"/clubes/me/behaviors/{behavior_id}",
+        headers=headers,
+    )
+    assert delete_response.status_code == 204
+
+    # Ya no figura en la base de datos
+    db.expire_all()
+    assert db.get(Behavior, behavior_id) is None
+
+    # Ya no figura en el listado GET /clubes/me/behaviors
+    after_list = client.get("/clubes/me/behaviors", headers=headers)
+    assert after_list.status_code == 200
+    assert behavior_id not in {b["behavior_id"] for b in after_list.json()}
+
+
 def test_delete_behavior_not_found_returns_404(user, db):
     response = client.delete(
         "/clubes/me/behaviors/99999",
