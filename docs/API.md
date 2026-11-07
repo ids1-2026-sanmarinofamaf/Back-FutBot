@@ -64,6 +64,7 @@
 | 2 | Websocket sala de espera - Partido amistoso | Partido amistoso específico | estado_Partidoamistoso | ws/friendly_game/{friendly_game_id} | El servidor provee cantidad de participantes actuales, estado de partido amistoso | {<br>    friendly_game_id: int,<br>    state: int,<br>    current_users: int,<br>    match_id: int,<br>    users: [<br>        {<br>            user_name: string,<br>            avatar: string,<br>	    is_creator: bool<br>        },<br>        {<br>            user_name: string,<br>            avatar: string,<br>	    is_creator: bool<br>        }<br>    ]<br>} | 1000 cierre normal de lobby<br>4401 token faltante o invalido<br>4404 amistoso inexistente<br>4403 club no participa<br>4409 lobby no disponible<br> |
 | 3 | Websocket Partido | Dentro de un partido en vivo | estado_partido | ws/matches/{match_id} | El estado provee la posición matricial (x, y) de la pelota y de cada jugador, junto con las estadísticas de goles y el tiempo transcurrido | {<br>    "actual_tic": int,<br>    "total_tic": int,<br>    "user1_goals": int,<br>    "user2_goals": int,<br>    "ball": {<br>        "x": float,<br>        "y": float,<br>        "speed_x": float,<br>        "speed_y": float<br><br>    },<br>    "players": [<br>        {<br>            "player_id": int,<br>            "x": float,<br>            "y": float <br>            " is_on_field": bool<br>            "team": string ("A" \| "B")<br>        }<br>    ]<br>} | 1000 cierre normal |
 | 4 | Websocket Partido | Dentro de un partido en vivo | cambios_dt | ws/matches/{match_id} | El servidor notifica los cambios de comportamiento aplicados por los DT. Se envía al comienzo del tic en el que rigen los cambios (from_tic), antes del estado del partido, y solo si se aplicó al menos un cambio del DT. No incluye asignaciones descartadas ni las reemplazadas por un cambio manual | {<br>    "event": "coach_changes",<br>    "from_tic": int,<br>    "changes": [<br>        {<br>            "club_id": int,<br>            "player_id": int,<br>            "behavior": string<br>        }<br>    ]<br>} | 1000 cierre normal |
+| 5 | Websocket Partido | Dentro de un partido en vivo | sustituciones_dt | ws/matches/{match_id} | El servidor notifica las sustituciones pedidas por los DT y ejecutadas en la pausa. Se envía al cerrarse la ventana de sustituciones, solo si se ejecutó al menos una sustitución de un DT. No incluye sustituciones manuales ni pedidos descartados | {<br>    "event": "coach_substitutions",<br>    "changes": [<br>        {<br>            "club_id": int,<br>            "player_out_id": int,<br>            "player_in_id": int<br>        }<br>    ]<br>} | 1000 cierre normal |
                                                               |
 
 
@@ -827,7 +828,7 @@ def play():
 
 Además de los comportamientos de jugador, cada club puede definir comportamientos DT (director técnico).
 
-Un comportamiento DT no controla a un jugador BOT. Su función es cambiar la estrategia del equipo durante el partido sin que el usuario tenga que intervenir: cuando ocurre un gol o empieza un período, el DT analiza el partido y decide qué comportamiento pasa a ejecutar cada uno de sus jugadores BOT en cancha.
+Un comportamiento DT no controla a un jugador BOT. Su función es cambiar la estrategia del equipo durante el partido sin que el usuario tenga que intervenir: cuando ocurre un gol o empieza un período, el DT analiza el partido y decide qué comportamiento pasa a ejecutar cada uno de sus jugadores BOT en cancha. También puede pedir una sustitución, que se ejecuta en la pausa siguiente.
 
 Para usar un DT:
 
@@ -856,10 +857,11 @@ Fuera de las funciones solo se permiten definiciones de funciones y constantes: 
 **Descripción:**
 Es el punto de entrada del comportamiento DT. El servidor la ejecuta cada vez que ocurre un gol o empieza un período (ver 11.8).
 
-La función debe devolver una lista de asignaciones construidas con la acción `assign(...)`. La lista puede estar vacía, lo que indica que el DT no realiza cambios.
+La función debe devolver una lista de asignaciones construidas con `assign(...)` y de sustituciones construidas con `substitute(...)`. La lista puede estar vacía, lo que indica que el DT no realiza cambios.
 
 ```python
 [assign(...), assign(...), ...]
+[assign(...), substitute(...)]
 []
 ```
 
@@ -905,6 +907,14 @@ Representa un cambio de comportamiento solicitado por el DT.
 - Segunda componente: nombre del comportamiento de jugador que se le desea asignar.
 
 Se obtiene mediante la acción `assign(...)`.
+
+---
+
+### `Substitution`
+
+Representa una sustitución solicitada por el DT: el jugador BOT que sale y el suplente que entra.
+
+Se obtiene mediante la acción `substitute(...)`.
 
 ---
 
@@ -993,7 +1003,32 @@ Devuelve los nombres de los comportamientos que el DT puede asignar: los comport
 
 ---
 
-### 11.6 Coach action
+### `bench()`
+
+```python
+bench() -> list[int]
+```
+
+**Descripción:**
+Devuelve los identificadores de los suplentes del club.
+
+---
+
+### `can_substitute()`
+
+```python
+can_substitute() -> bool
+```
+
+**Descripción:**
+Devuelve `True` si en este momento se aceptaría una sustitución pedida por el DT. Devuelve `False` si:
+- ya se ejecutó la sustitución de este período;
+- el partido está en el último cuarto o la ventana de sustituciones está cerrada;
+- el usuario ya pidió una sustitución manual que todavía no se ejecutó.
+
+---
+
+### 11.6 Coach actions
 
 ### `assign(player_id, behavior_name)`
 
@@ -1017,6 +1052,44 @@ Si la asignación es válida, el jugador BOT ejecuta el nuevo comportamiento a p
 Una asignación se descarta, sin afectar al resto de la lista, si:
 - `player_id` corresponde a un jugador rival, a un suplente o a un jugador inexistente;
 - `behavior_name` no es uno de los nombres devueltos por `available_behaviors()`.
+
+---
+
+### `substitute(player_out_id, player_in_id)`
+
+```python
+substitute(
+    player_out_id: int,
+    player_in_id: int
+) -> Substitution
+```
+
+**Descripción:**
+Solicita que el jugador BOT `player_out_id` sea reemplazado por el suplente `player_in_id`.
+
+**Parameters:**
+- `player_out_id`: identificador de un jugador BOT propio en cancha.
+- `player_in_id`: uno de los identificadores devueltos por `bench()`.
+
+**State effect:**
+Si el pedido es válido, la sustitución se ejecuta en la pausa siguiente. El jugador que entra hereda el comportamiento y la posición inicial del que sale.
+
+Un pedido se descarta, sin afectar al resto de la lista, si:
+- `player_out_id` no es un jugador propio en cancha;
+- `player_in_id` no es un suplente propio;
+- `can_substitute()` devuelve `False`.
+
+```python
+def coach():
+    if trigger() == CoachTrigger.PERIOD_START and can_substitute():
+        on_field = teammates()
+        substitutes = bench()
+
+        if on_field and substitutes:
+            return [substitute(on_field[0][0], substitutes[0])]
+
+    return []
+```
 
 ---
 
@@ -1073,3 +1146,7 @@ def coach():
 - Si en el mismo tic el usuario cambia manualmente el comportamiento de un jugador BOT y el DT también le asigna uno, se aplica el cambio manual.
 - Cada ejecución de `coach()` debe finalizar dentro del límite de tiempo establecido por el servidor. Si lanza un error, supera ese límite o devuelve algo que no es una lista, no se aplica ningún cambio: los jugadores BOT siguen con sus comportamientos y el partido continúa.
 - El usuario debe evitar operaciones cuyo tiempo de ejecución no esté acotado, como bucles infinitos o cálculos excesivamente costosos.
+- Las sustituciones pedidas por el DT comparten el límite con las manuales: una por período, y ninguna en el último cuarto.
+- Una sustitución pedida por el DT se ejecuta en la pausa siguiente, no en el tic siguiente. Hasta entonces, el jugador que entra sigue en el banco: una asignación a ese jugador en la misma lista se descarta. Para cambiarle el comportamiento, el DT puede asignárselo cuando empiece el período siguiente.
+- Si una misma lista contiene más de una sustitución válida, se aplica la última. Lo mismo ocurre entre ejecuciones del DT dentro de un período: un pedido nuevo reemplaza al anterior hasta que se ejecute.
+- Si el usuario pide una sustitución manual, esta reemplaza a la pedida por el DT. Si ya hay una sustitución manual pendiente, el pedido del DT se descarta.
