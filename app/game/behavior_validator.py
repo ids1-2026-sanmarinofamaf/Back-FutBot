@@ -31,7 +31,7 @@ class BehaviorValidationError(Exception):
     """Raised when behavior source code fails any validation stage."""
 
 
-DRY_RUN_TIMEOUT_SECONDS: float = 0.5
+DRY_RUN_TIMEOUT_SECONDS: float = 2.0
 
 FORBIDDEN_BUILTINS: frozenset[str] = frozenset(
     {
