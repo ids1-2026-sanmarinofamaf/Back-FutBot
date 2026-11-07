@@ -185,3 +185,86 @@ def test_negative_goals_fail(db):
 
     with pytest.raises(ValueError):
         update_standings(db, league.id, local.id, visitante.id, -1, 0)
+
+
+@pytest.mark.parametrize("winner_index", [0, 1])
+def test_tiebreak_win_preserves_regulation_goals(db, winner_index):
+    league, clubs = create_league(db, 2)
+    league.penalties_enabled = True
+
+    local, visitante = clubs
+    winner = clubs[winner_index]
+    loser = clubs[1 - winner_index]
+
+    update_standings(
+        db=db,
+        league_id=league.id,
+        local_club_id=local.id,
+        visitante_club_id=visitante.id,
+        local_goals=1,
+        visitante_goals=1,
+        winner_club_id=winner.id,
+    )
+
+    assert get_row(db, league.id, winner.id) == {
+        "points": 3,
+        "played": 1,
+        "won": 1,
+        "drawn": 0,
+        "lost": 0,
+        "gf": 1,
+        "ga": 1,
+    }
+    assert get_row(db, league.id, loser.id) == {
+        "points": 0,
+        "played": 1,
+        "won": 0,
+        "drawn": 0,
+        "lost": 1,
+        "gf": 1,
+        "ga": 1,
+    }
+
+
+@pytest.mark.parametrize(
+    ("local_goals", "visitante_goals", "winner_index", "message"),
+    [
+        pytest.param(1, 1, 2, "participating club", id="outside-match"),
+        pytest.param(2, 1, 1, "contradicts", id="wrong-away-winner"),
+        pytest.param(1, 2, 0, "contradicts", id="wrong-home-winner"),
+    ],
+)
+def test_invalid_winner_does_not_change_standings(
+    db,
+    local_goals,
+    visitante_goals,
+    winner_index,
+    message,
+):
+    league, clubs = create_league(db, 3)
+    local, visitante, _ = clubs
+
+    before = {
+        club.id: get_row(db, league.id, club.id)
+        for club in clubs
+    }
+
+    with pytest.raises(ValueError, match=message):
+        update_standings(
+            db=db,
+            league_id=league.id,
+            local_club_id=local.id,
+            visitante_club_id=visitante.id,
+            local_goals=local_goals,
+            visitante_goals=visitante_goals,
+            winner_club_id=clubs[winner_index].id,
+        )
+
+    db.flush()
+
+    after = {
+        club.id: get_row(db, league.id, club.id)
+        for club in clubs
+    }
+
+    assert after == before
