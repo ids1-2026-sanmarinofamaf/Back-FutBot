@@ -160,13 +160,16 @@ def test_incoming_inherits_starting_position_and_behavior(participation):
 
     participation.plan_substitution(1, 4, Period.FIRST_QUARTER)
     outgoing.current_behavior_id = 25
+    outgoing.current_behavior_name = "Defensa Férrea"
 
     participation.execute_pending_substitution(Period.FIRST_QUARTER)
 
     assert incoming.position == (8.0, 5.0)
     assert incoming.starting_position == (8.0, 5.0)
     assert incoming.current_behavior_id == 25
+    assert incoming.current_behavior_name == "Defensa Férrea"
     assert outgoing.current_behavior_id is None
+    assert outgoing.current_behavior_name is None
 
 
 def test_incoming_keeps_own_pacss(participation):
@@ -340,12 +343,18 @@ def test_fourth_period_disables_planning(active_match):
 
 def test_match_snapshot_after_substitution(active_match):
     # checks that the match snapshot reflects the updated lineup and behavior
+    player_1 = active_match.participation_a.get_player(1)
+    player_1.current_behavior_name = "Ataque Rápido"
+
     active_match.plan_substitution(1, 1, 4)
     active_match.close_and_execute_substitutions()
     players = {p.player_id: p for p in active_match.snapshot().players_a}
     assert not players[1].is_on_field
+    assert players[1].current_behavior_id is None
+    assert players[1].current_behavior_name is None
     assert players[4].is_on_field
     assert players[4].current_behavior_id == 1
+    assert players[4].current_behavior_name == "Ataque Rápido"
 
 
 # checks all the http codes

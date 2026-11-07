@@ -1,3 +1,5 @@
+import asyncio
+
 from types import SimpleNamespace
 from unittest.mock import patch, AsyncMock, MagicMock
 
@@ -11,6 +13,7 @@ from app.services.session_websocket_service import (
     broadcast_leagues,
     send_session_snapshot_to_connection,
 )
+from app.services import session_websocket_service as session_service
 
 def make_league(
     league_id: int,
@@ -238,3 +241,115 @@ async def test_send_session_snapshot_includes_both_categories(
             ],
         }
     )
+
+
+def test_load_session_leagues_payload_closes_database_session():
+    payload = LeaguesSessionPayload(leagues=[])
+
+    with (
+        patch.object(session_service, "SessionLocal") as session_factory,
+        patch.object(
+            session_service,
+            "build_leagues_payload",
+            return_value=payload,
+        ) as build,
+    ):
+        context = session_factory.return_value
+        db = context.__enter__.return_value
+
+        result = session_service._load_session_leagues_payload()
+
+    assert result is payload
+    build.assert_called_once_with(db)
+    context.__exit__.assert_called_once_with(None, None, None)
+
+
+@pytest.mark.asyncio
+async def test_notify_leagues_updated_sends_payload():
+    payload = LeaguesSessionPayload(leagues=[])
+
+    with (
+        patch.object(
+            session_service,
+            "_load_session_leagues_payload",
+            return_value=payload,
+        ) as load,
+        patch.object(
+            session_service,
+            "broadcast_leagues_payload",
+            new_callable=AsyncMock,
+        ) as broadcast,
+    ):
+        await session_service.notify_leagues_updated()
+
+    load.assert_called_once_with()
+    broadcast.assert_awaited_once_with(payload)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "failure_at",
+    ["load", "send"],
+)
+async def test_notify_leagues_updated_logs_errors(failure_at):
+    payload = LeaguesSessionPayload(leagues=[])
+    error = RuntimeError("Notification failed")
+
+    with (
+        patch.object(
+            session_service,
+            "_load_session_leagues_payload",
+            return_value=payload,
+        ) as load,
+        patch.object(
+            session_service,
+            "broadcast_leagues_payload",
+            new_callable=AsyncMock,
+        ) as broadcast,
+        patch.object(session_service, "logger") as logger,
+    ):
+        if failure_at == "load":
+            load.side_effect = error
+        else:
+            broadcast.side_effect = error
+
+        await session_service.notify_leagues_updated()
+
+    logger.exception.assert_called_once()
+
+    if failure_at == "load":
+        broadcast.assert_not_awaited()
+    else:
+        broadcast.assert_awaited_once_with(payload)
+
+
+async def blocked_session_broadcast(payload):
+    await asyncio.Future()
+
+
+@pytest.mark.asyncio
+async def test_notify_leagues_updated_limits_send_time(monkeypatch):
+    monkeypatch.setattr(session_service, "SEND_TIMEOUT_SECONDS", 0.01)
+    payload = LeaguesSessionPayload(leagues=[])
+
+    with (
+        patch.object(
+            session_service,
+            "_load_session_leagues_payload",
+            return_value=payload,
+        ),
+        patch.object(
+            session_service,
+            "broadcast_leagues_payload",
+            new_callable=AsyncMock,
+            side_effect=blocked_session_broadcast,
+        ) as broadcast,
+        patch.object(session_service, "logger") as logger,
+    ):
+        await asyncio.wait_for(
+            session_service.notify_leagues_updated(),
+            timeout=1,
+        )
+
+    broadcast.assert_awaited_once_with(payload)
+    logger.exception.assert_called_once()

@@ -63,13 +63,47 @@ def test_change_behavior_success(
         behavior_id=7,
     )
 
-    assert player.current_behavior_id == 7
-    assert opponent.current_behavior_id == 6
+    # the change is queued and applied at the beginning of the next tick
+    match.participation_a.plan_behavior_change.assert_called_once_with(10, 7, None)
+    match.participation_b.plan_behavior_change.assert_not_called()
 
     mock_get_behavior.assert_called_once_with(
         db=db,
         club_id=1,
         behavior_id=7,
+    )
+
+
+@patch("app.services.match_service.behavior_repository.get_available_by_id")
+@patch("app.services.match_service.club_repository.get_by_user_id")
+@patch("app.services.match_service.get_match")
+def test_change_behavior_updates_current_behavior_name(
+    mock_get_match,
+    mock_get_club,
+    mock_get_behavior,
+    setup_match,
+):
+    db, club, player, _, match = setup_match
+
+    mock_get_match.return_value = match
+    mock_get_club.return_value = club
+    mock_behavior = MagicMock(id=7)
+    mock_behavior.name = "Ataque Total"
+    mock_get_behavior.return_value = mock_behavior
+
+    change_player_behavior(
+        db=db,
+        user_id=1,
+        match_id=100,
+        player_id=10,
+        behavior_id=7,
+    )
+
+    # the name travels with the queued change and is applied in the next tick
+    match.participation_a.plan_behavior_change.assert_called_once_with(
+        10,
+        7,
+        "Ataque Total",
     )
 
 
@@ -242,7 +276,8 @@ def test_change_behavior_multiple_changes(
             behavior_id=behavior_id,
         )
 
-    assert player.current_behavior_id == 9
+    assert match.participation_a.plan_behavior_change.call_count == 3
+    match.participation_a.plan_behavior_change.assert_called_with(10, 9, None)
     assert mock_get_behavior.call_count == 3
 
 
@@ -271,8 +306,8 @@ def test_change_behavior_team_b(
         behavior_id=7,
     )
 
-    assert opponent.current_behavior_id == 7
-    assert player.current_behavior_id == 5
+    match.participation_b.plan_behavior_change.assert_called_once_with(20, 7, None)
+    match.participation_a.plan_behavior_change.assert_not_called()
 
     mock_get_behavior.assert_called_once_with(
         db=db,
@@ -407,6 +442,11 @@ def test_change_behavior_reflected_in_next_snapshot(
         player_id=player.player_id,
         behavior_id=7,
     )
+
+    # the change is not visible until the pending changes are applied
+    assert match.snapshot().players_a[0].current_behavior_id == 5
+
+    match.apply_pending_behavior_changes()
 
     next_snapshot = match.snapshot()
 
