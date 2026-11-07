@@ -138,7 +138,8 @@ def create_league(db: Session, data: LeagueCreate , current_user_id):
             max_clubs = data.max_clubs,
             privacy = data.privacy,
             password_hash = password_hash,
-            creator_id = club.id
+            creator_id = club.id,
+            penalties_enabled=data.penalties_enabled,
         )
         # flush, league.id is assigned here
         league_repository.create(db=db, league=league)

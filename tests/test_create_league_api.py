@@ -580,3 +580,37 @@ def test_create_league_failure_sends_nothing_to_connections(
 
     assert response.status_code == 400
     assert connection.sent == []
+
+
+@pytest.mark.parametrize(
+    ("sent_value", "expected"),
+    [
+        pytest.param(None, False, id="omitted"),
+        pytest.param(False, False, id="disabled"),
+        pytest.param(True, True, id="enabled"),
+    ],
+)
+def test_create_league_persists_penalties_option(
+    user,
+    db,
+    players,
+    behavior,
+    sent_value,
+    expected,
+):
+    body = valid_body(players, behavior)
+
+    if sent_value is not None:
+        body["definicion_por_penales"] = sent_value
+
+    response = post_league(body)
+
+    assert response.status_code == 201
+
+    league_id = response.json()["id_liga"]
+
+    db.expire_all()
+    league = db.get(League, league_id)
+
+    assert league is not None
+    assert league.penalties_enabled is expected
