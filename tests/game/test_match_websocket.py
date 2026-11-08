@@ -1,3 +1,10 @@
+import asyncio
+
+from app.game import penalty_session as penalty_session_module
+from app.game.penalties import PenaltyShootout, PenaltySide
+from app.game.penalty_session import PenaltySession
+from app.services import match_websocket_service as ws_service
+
 
 from fastapi.testclient import TestClient
 import pytest
@@ -581,3 +588,215 @@ async def test_broadcast_filters_tactical_info_per_client_club(active_match):
         assert p["current_behavior_name"] is None
         assert p["current_behavior_id"] is None
 
+
+
+@pytest.fixture
+def penalty_reconnection(active_match, monkeypatch):
+    clock = Mock(return_value=100.0)
+    monkeypatch.setattr(penalty_session_module, "monotonic", clock)
+    monkeypatch.setattr(ws_service, "monotonic", clock)
+
+    session = PenaltySession(
+        shootout=PenaltyShootout(
+            club_a_id=1,
+            club_b_id=2,
+            kickers_a=(1, 2, 3),
+            kickers_b=(7, 8, 9),
+            seed=active_match.match_id,
+        ),
+        response_timeout=10.0,
+    )
+    return session, clock
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("phase", ["none", "open", "between", "finished"])
+async def test_connect_restores_existing_penalty_messages(
+    active_match,
+    penalty_reconnection,
+    phase,
+):
+    session, clock = penalty_reconnection
+
+    if phase != "none":
+        active_match.penalty_session = session
+
+    if phase == "open":
+        session.open_turn()
+        session.submit_choice(1, 1, PenaltySide.CENTER)
+        clock.return_value = 104.0
+    elif phase == "between":
+        session.shootout.resolve_penalty(PenaltySide.LEFT, PenaltySide.RIGHT)
+    elif phase == "finished":
+        for _ in range(6):
+            session.shootout.resolve_penalty(PenaltySide.LEFT, PenaltySide.LEFT)
+
+    manager = MatchConnectionManager()
+    websocket = AsyncMock()
+    await manager.connect(active_match.match_id, websocket, client_club_id=1)
+
+    messages = [awaited.args[0] for awaited in websocket.send_json.await_args_list]
+    assert [message["event"] for message in messages[:2]] == [
+        "match_info",
+        "estado_partido",
+    ]
+
+    if phase == "open":
+        assert len(messages) == 3
+        assert messages[2] == {
+            "event": "penalty_turn_started",
+            "turn": 1,
+            "club_id": 1,
+            "kicker": 1,
+            "score_club_a": 0,
+            "score_club_b": 0,
+            "remaining_seconds": 6.0,
+        }
+        assert session.choices == {1: PenaltySide.CENTER}
+    elif phase == "finished":
+        assert len(messages) == 3
+        assert messages[2] == {
+            "event": "penalty_shootout_finished",
+            "winner_club_id": session.shootout.winner_club_id,
+            "score_club_a": 0,
+            "score_club_b": 0,
+        }
+    else:
+        assert len(messages) == 2
+
+    assert all("choices" not in message for message in messages)
+
+
+class InitialMessageBarrier:
+    def __init__(self, blocked_event):
+        self.blocked_event = blocked_event
+        self.started = asyncio.Event()
+        self.release = asyncio.Event()
+        self.messages = []
+
+    async def send_json(self, payload):
+        if payload["event"] == self.blocked_event:
+            self.started.set()
+            await self.release.wait()
+        self.messages.append(payload)
+
+
+@pytest.mark.asyncio
+async def test_live_penalty_result_waits_for_initial_messages(
+    active_match,
+    penalty_reconnection,
+):
+    session, _ = penalty_reconnection
+    active_match.penalty_session = session
+    session.open_turn()
+
+    barrier = InitialMessageBarrier("match_info")
+    websocket = AsyncMock()
+    websocket.send_json.side_effect = barrier.send_json
+    manager = MatchConnectionManager()
+
+    connect_task = asyncio.create_task(
+        manager.connect(active_match.match_id, websocket),
+    )
+    broadcast_task = None
+
+    try:
+        await asyncio.wait_for(barrier.started.wait(), timeout=1.0)
+
+        # Simulate the runner resolving a penalty during initialization.
+        result = session.shootout.resolve_penalty(
+            PenaltySide.LEFT,
+            PenaltySide.RIGHT,
+        )
+        session.accepting_choices = False
+
+        broadcast_task = asyncio.create_task(
+            manager.broadcast(
+                active_match.match_id,
+                ws_service.build_penalty_result_message(result),
+            ),
+        )
+        await asyncio.sleep(0)
+
+        assert not broadcast_task.done()
+        assert websocket.send_json.await_count == 1
+
+        barrier.release.set()
+        await asyncio.wait_for(
+            asyncio.gather(connect_task, broadcast_task),
+            timeout=1.0,
+        )
+
+        assert [message["event"] for message in barrier.messages] == [
+            "match_info",
+            "estado_partido",
+            "penalty_result",
+        ]
+    finally:
+        tasks = [connect_task]
+        if broadcast_task is not None:
+            tasks.append(broadcast_task)
+        for task in tasks:
+            task.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "blocked_event",
+    ["match_info", "estado_partido", "penalty_turn_started"],
+)
+async def test_initial_message_timeout_cleans_connection(
+    active_match,
+    penalty_reconnection,
+    monkeypatch,
+    blocked_event,
+):
+    session, _ = penalty_reconnection
+    active_match.penalty_session = session
+    session.open_turn()
+    monkeypatch.setattr(ws_service, "SEND_TIMEOUT_SECONDS", 0.01)
+
+    barrier = InitialMessageBarrier(blocked_event)
+    websocket = AsyncMock()
+    websocket.send_json.side_effect = barrier.send_json
+    manager = MatchConnectionManager()
+
+    with pytest.raises(TimeoutError):
+        await asyncio.wait_for(
+            manager.connect(active_match.match_id, websocket),
+            timeout=1.0,
+        )
+
+    assert barrier.started.is_set()
+    assert active_match.match_id not in manager.active_connections
+    assert websocket not in manager.connection_clubs
+    assert websocket not in manager._send_locks
+    websocket.close.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_initial_message_cancellation_cleans_connection(active_match):
+    barrier = InitialMessageBarrier("match_info")
+    websocket = AsyncMock()
+    websocket.send_json.side_effect = barrier.send_json
+    manager = MatchConnectionManager()
+
+    task = asyncio.create_task(
+        manager.connect(active_match.match_id, websocket),
+    )
+
+    try:
+        await asyncio.wait_for(barrier.started.wait(), timeout=1.0)
+        task.cancel()
+
+        with pytest.raises(asyncio.CancelledError):
+            await task
+    finally:
+        task.cancel()
+        await asyncio.gather(task, return_exceptions=True)
+
+    assert active_match.match_id not in manager.active_connections
+    assert websocket not in manager.connection_clubs
+    assert websocket not in manager._send_locks
+    websocket.close.assert_awaited_once()
