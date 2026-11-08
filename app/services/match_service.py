@@ -64,6 +64,8 @@ def load_match_coach_behaviors(
         if coach_behavior is None:
             continue
 
+        participation.coach_behavior_name = coach_behavior.name
+
         coach_behaviors.append(
             BehaviorDefinition(
                 id=coach_behavior.id,

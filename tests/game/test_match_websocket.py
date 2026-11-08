@@ -587,6 +587,40 @@ async def test_broadcast_filters_tactical_info_per_client_club(active_match):
         assert p["current_behavior_id"] is None
 
 
+@pytest.mark.asyncio
+async def test_broadcast_filters_pending_substitution_per_client_club(active_match):
+    manager = MatchConnectionManager()
+
+    active_match.participation_a.plan_substitution(
+        player_out_id=1,
+        player_in_id=4,
+        period=active_match.current_period,
+        from_coach=True,
+    )
+
+    ws_a = AsyncMock()
+    ws_b = AsyncMock()
+    ws_spectator = AsyncMock()
+
+    manager.active_connections[active_match.match_id] = [ws_a, ws_b, ws_spectator]
+    manager.connection_clubs[ws_a] = 1
+    manager.connection_clubs[ws_b] = 2
+    manager.connection_clubs[ws_spectator] = None
+
+    snapshot = active_match.snapshot()
+    message = build_match_state_message(snapshot)
+
+    await manager.broadcast(active_match.match_id, message)
+
+    sent_a = ws_a.send_json.await_args.args[0]
+    sent_b = ws_b.send_json.await_args.args[0]
+    sent_spec = ws_spectator.send_json.await_args.args[0]
+
+    assert sent_a["pending_substitution"] == {"player_out_id": 1, "player_in_id": 4}
+    assert sent_b["pending_substitution"] is None
+    assert sent_spec["pending_substitution"] is None
+
+
 # coach (DT) events privacy
 
 def _coach_changes_message():

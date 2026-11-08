@@ -5,6 +5,7 @@ from app.game.models.match import MatchSnapshot, Match, PauseType
 from app.game.types import Assignment, Substitution
 from app.schemas.match_websocket import (
     MatchPlayerState,
+    MatchPendingSubstitution,
     MatchStateMessage,
     BallState,
     MatchCoachChange,
@@ -57,6 +58,8 @@ class MatchConnectionManager:
                 client_club_id=client_club_id,
                 club_a_id=match.participation_a.club_id,
                 club_b_id=match.participation_b.club_id,
+                pending_a=match.participation_a.pending_substitution,
+                pending_b=match.participation_b.pending_substitution,
             )
             await websocket.send_json(filtered_initial_state.model_dump())
 
@@ -98,6 +101,16 @@ class MatchConnectionManager:
             match = get_match(match_id)
             club_a_id = match.participation_a.club_id if match is not None else None
             club_b_id = match.participation_b.club_id if match is not None else None
+            pending_a = (
+                match.participation_a.pending_substitution
+                if match is not None
+                else None
+            )
+            pending_b = (
+                match.participation_b.pending_substitution
+                if match is not None
+                else None
+            )
 
             for websocket in connections:
                 client_club_id = self.connection_clubs.get(websocket)
@@ -106,6 +119,8 @@ class MatchConnectionManager:
                     client_club_id=client_club_id,
                     club_a_id=club_a_id,
                     club_b_id=club_b_id,
+                    pending_a=pending_a,
+                    pending_b=pending_b,
                 )
                 try:
                     await websocket.send_json(filtered_msg.model_dump())
@@ -277,10 +292,13 @@ def filter_match_state_for_client(
     client_club_id: int | None,
     club_a_id: int | None,
     club_b_id: int | None,
+    pending_a=None,
+    pending_b=None,
 ) -> MatchStateMessage:
     """
     Oculta current_behavior_id y current_behavior_name de los jugadores rivales
-    o de ambos equipos si el cliente es un espectador.
+    o de ambos equipos si el cliente es un espectador, e incluye únicamente la
+    sustitución pendiente del propio club.
     """
     filtered_players: list[MatchPlayerState] = []
 
@@ -305,7 +323,25 @@ def filter_match_state_for_client(
                 )
             )
 
-    return message.model_copy(update={"players": filtered_players})
+    own_pending = None
+    if client_club_id is not None:
+        if client_club_id == club_a_id and pending_a is not None:
+            own_pending = MatchPendingSubstitution(
+                player_out_id=pending_a.player_out_id,
+                player_in_id=pending_a.player_in_id,
+            )
+        elif client_club_id == club_b_id and pending_b is not None:
+            own_pending = MatchPendingSubstitution(
+                player_out_id=pending_b.player_out_id,
+                player_in_id=pending_b.player_in_id,
+            )
+
+    return message.model_copy(
+        update={
+            "players": filtered_players,
+            "pending_substitution": own_pending,
+        }
+    )
 
 
 def build_pause_started_message(

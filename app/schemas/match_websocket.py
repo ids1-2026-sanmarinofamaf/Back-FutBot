@@ -19,6 +19,11 @@ class BallState(BaseModel):
     speed_y: float
 
 
+class MatchPendingSubstitution(BaseModel):
+    player_out_id: int
+    player_in_id: int
+
+
 class MatchStateMessage(BaseModel):
     event: str
 
@@ -32,6 +37,7 @@ class MatchStateMessage(BaseModel):
     is_paused: bool = False
     pause_type: Literal["hydration", "halftime"] | None = None
     substitution_window_open: bool = True
+    pending_substitution: MatchPendingSubstitution | None = None
 
     ball: BallState
     players: list[MatchPlayerState]
