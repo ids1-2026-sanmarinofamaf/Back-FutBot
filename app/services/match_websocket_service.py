@@ -1,7 +1,12 @@
+import asyncio
+
 from fastapi import WebSocket
+from time import monotonic
 
 from app.game.active_matches import get_match
 from app.game.models.match import MatchSnapshot, Match, PauseType
+from app.game.penalties import PenaltyShootout
+from app.game.penalty_session import PenaltySession
 from app.schemas.match_websocket import (
     MatchPlayerState,
     MatchStateMessage,
@@ -12,8 +17,13 @@ from app.schemas.match_websocket import (
     MatchTeamInfo,
     MatchPlayerInfo,
     MatchInfoMessage,
+    PenaltyTurnStartedMessage,
+    PenaltyResultMessage,
+    PenaltyShootoutFinishedMessage,
 )
 
+
+SEND_TIMEOUT_SECONDS = 1.0
 
 class MatchConnectionManager:
     def __init__(self):
@@ -80,6 +90,9 @@ class MatchConnectionManager:
             | MatchPauseStartedMessage
             | MatchSubstitutionWindowClosedMessage
             | MatchPauseFinishedMessage
+            | PenaltyTurnStartedMessage
+            | PenaltyResultMessage
+            | PenaltyShootoutFinishedMessage
         ),
     ) -> None:
 
@@ -101,13 +114,22 @@ class MatchConnectionManager:
                     club_b_id=club_b_id,
                 )
                 try:
-                    await websocket.send_json(filtered_msg.model_dump())
+                    async with asyncio.timeout(SEND_TIMEOUT_SECONDS):
+                        await websocket.send_json(
+                            filtered_msg.model_dump(mode="json")
+                        )
+
                 except Exception:
                     disconnected.append(websocket)
+
         else:
             for websocket in connections:
                 try:
-                    await websocket.send_json(message.model_dump())
+                    async with asyncio.timeout(SEND_TIMEOUT_SECONDS):
+                        await websocket.send_json(
+                            message.model_dump(mode="json")
+                        )
+
                 except Exception:
                     disconnected.append(websocket)
 
@@ -122,8 +144,9 @@ class MatchConnectionManager:
 
         for websocket in connections:
             self.connection_clubs.pop(websocket, None)
-            try:    
-                await websocket.close()
+            try:
+                async with asyncio.timeout(SEND_TIMEOUT_SECONDS):
+                    await websocket.close()
 
             except Exception:
                 pass
@@ -298,6 +321,58 @@ def build_match_info_message(
 
         players=players,
         
+    )
+
+
+def build_penalty_turn_started_message(
+    session: PenaltySession,
+) -> PenaltyTurnStartedMessage:
+    if not session.accepting_choices:
+        raise ValueError("Penalty turn is closed")
+
+    if session.deadline is None:
+        raise RuntimeError("Open penalty turn has no deadline")
+
+    shootout = session.shootout
+    kicker_index = shootout.turn // 2
+
+    if shootout.turn % 2 == 0:
+        club_id = shootout.club_a_id
+        kicker = shootout.kickers_a[kicker_index]
+
+    else:
+        club_id = shootout.club_b_id
+        kicker = shootout.kickers_b[kicker_index]
+
+    return PenaltyTurnStartedMessage(
+        turn=shootout.turn + 1,
+        club_id=club_id,
+        kicker=kicker,
+        score_club_a=shootout.score_a,
+        score_club_b=shootout.score_b,
+        remaining_seconds=max(
+            0.0,
+            session.deadline - monotonic(),
+        ),
+    )
+
+
+def build_penalty_result_message(
+    result: dict,
+) -> PenaltyResultMessage:
+    return PenaltyResultMessage(**result)
+
+
+def build_penalty_shootout_finished_message(
+    shootout: PenaltyShootout,
+) -> PenaltyShootoutFinishedMessage:
+    if shootout.winner_club_id is None:
+        raise ValueError("Penalty shootout has no winner yet")
+
+    return PenaltyShootoutFinishedMessage(
+        winner_club_id=shootout.winner_club_id,
+        score_club_a=shootout.score_a,
+        score_club_b=shootout.score_b,
     )
 
 

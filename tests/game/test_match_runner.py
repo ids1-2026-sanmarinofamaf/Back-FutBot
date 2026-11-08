@@ -8,7 +8,7 @@ from functools import partial
 from itertools import count
 
 from types import SimpleNamespace
-from unittest.mock import MagicMock, AsyncMock
+from unittest.mock import MagicMock, AsyncMock, call
 
 from app.game.match_runner import (
     MatchRunner,
@@ -705,4 +705,100 @@ async def test_penalty_failure_does_not_finish_match(
     assert match.state == MatchState.IN_PROGRESS
     assert match.winner_club_id is None
     assert match.substitution_requests_open is False
+    penalty_connections.close_match_connection.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_penalty_events_are_emitted_before_socket_closes(
+    match,
+    penalty_runner,
+    penalty_connections,
+    expired_penalty_clock,
+):
+    match.duration_ticks = 4
+    match.penalties_enabled = True
+
+    timeline = MagicMock()
+    timeline.attach_mock(penalty_connections.broadcast, "broadcast")
+    timeline.attach_mock(
+        penalty_connections.close_match_connection,
+        "close",
+    )
+
+    await penalty_runner.run_match(match)
+
+    events = [
+        awaited.args[1]
+        for awaited in penalty_connections.broadcast.await_args_list
+        if awaited.args[1].event.startswith("penalty_")
+    ]
+
+    assert [message.event for message in events] == (
+        ["penalty_turn_started", "penalty_result"] * 6
+        + ["penalty_shootout_finished"]
+    )
+
+    started = events[:-1:2]
+    results = events[1:-1:2]
+
+    assert [message.turn for message in started] == list(range(1, 7))
+    assert [message.turn for message in results] == list(range(1, 7))
+    assert [message.club_id for message in started] == [1, 2] * 3
+    assert [message.kicker for message in started] == [1, 7, 2, 8, 3, 9]
+
+    for start, result in zip(started, results):
+        assert result.club_id == start.club_id
+        assert result.kicker == start.kicker
+
+    finished = events[-1]
+    shootout = match.penalty_session.shootout
+
+    assert finished.winner_club_id == match.winner_club_id
+    assert finished.score_club_a == shootout.score_a
+    assert finished.score_club_b == shootout.score_b
+
+    assert timeline.mock_calls[-1] == call.close(match.match_id)
+
+
+class CancelPenaltyDelivery:
+    def __init__(self, event):
+        self.event = event
+
+    async def broadcast(self, match_id, message):
+        if message.event == self.event:
+            raise asyncio.CancelledError()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "event, expected_resolved_turns",
+    [
+        ("penalty_turn_started", 0),
+        ("penalty_result", 1),
+    ],
+)
+async def test_cancellation_during_penalty_delivery_closes_turn(
+    match,
+    penalty_runner,
+    penalty_connections,
+    expired_penalty_clock,
+    event,
+    expected_resolved_turns,
+):
+    match.duration_ticks = 4
+    match.penalties_enabled = True
+
+    cancellation = CancelPenaltyDelivery(event)
+    penalty_connections.broadcast.side_effect = cancellation.broadcast
+
+    with pytest.raises(asyncio.CancelledError):
+        await penalty_runner.run_match(match)
+
+    session = match.penalty_session
+
+    assert session is not None
+    assert session.accepting_choices is False
+    assert session.shootout.turn == expected_resolved_turns
+    assert match.state == MatchState.IN_PROGRESS
+    assert match.winner_club_id is None
     penalty_connections.close_match_connection.assert_not_awaited()

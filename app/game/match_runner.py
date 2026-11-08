@@ -20,6 +20,9 @@ from app.services.match_websocket_service import (
     build_pause_started_message,
     build_substitution_window_closed_message,
     build_pause_finished_message,
+    build_penalty_turn_started_message,
+    build_penalty_result_message,
+    build_penalty_shootout_finished_message,
 )
 
 
@@ -282,11 +285,32 @@ class MatchRunner:
 
         match.penalty_session = session
 
-        for _ in range(6):
-            session.open_turn()
-            await session.wait_and_resolve()
+        try:
+            for _ in range(6):
+                session.open_turn()
 
-        match.winner_club_id = shootout.winner_club_id
+                await match_connection_manager.broadcast(
+                    match.match_id,
+                    build_penalty_turn_started_message(session),
+                )
+
+                result = await session.wait_and_resolve()
+
+                await match_connection_manager.broadcast(
+                    match.match_id,
+                    build_penalty_result_message(result),
+                )
+
+            match.winner_club_id = shootout.winner_club_id
+
+            await match_connection_manager.broadcast(
+                match.match_id,
+                build_penalty_shootout_finished_message(shootout),
+            )
+
+        finally:
+            session.accepting_choices = False
+
 
 
 
