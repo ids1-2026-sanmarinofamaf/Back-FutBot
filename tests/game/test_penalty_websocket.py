@@ -38,7 +38,10 @@ def result_message(session):
         PenaltySide.LEFT,
         PenaltySide.RIGHT,
     )
-    return ws_service.build_penalty_result_message(result)
+    return ws_service.build_penalty_result_message(
+        result,
+        duration=5.0,
+    )
 
 
 async def block_socket(*args, **kwargs):
@@ -145,6 +148,7 @@ async def test_broadcast_serializes_penalty_sides(result_message):
         "is_goal": True,
         "score_club_a": 1,
         "score_club_b": 0,
+        "duration": 5.0,
     }
 
     first.send_json.assert_awaited_once_with(expected)

@@ -17,6 +17,7 @@ from app.schemas.match_websocket import (
     MatchTeamInfo,
     MatchPlayerInfo,
     MatchInfoMessage,
+    PenaltyShootoutStartedMessage,
     PenaltyTurnStartedMessage,
     PenaltyResultMessage,
     PenaltyShootoutFinishedMessage,
@@ -72,7 +73,7 @@ class MatchConnectionManager:
 
                     session = match.penalty_session
                     if session is not None:
-                        if session.shootout.winner_club_id is not None:
+                        if match.winner_club_id is not None:
                             penalty_message = build_penalty_shootout_finished_message(
                                 session.shootout,
                             )
@@ -134,6 +135,7 @@ class MatchConnectionManager:
             | MatchPauseStartedMessage
             | MatchSubstitutionWindowClosedMessage
             | MatchPauseFinishedMessage
+            | PenaltyShootoutStartedMessage
             | PenaltyTurnStartedMessage
             | PenaltyResultMessage
             | PenaltyShootoutFinishedMessage
@@ -372,6 +374,17 @@ def build_match_info_message(
     )
 
 
+def build_penalty_shootout_started_message(
+    duration: float,
+)-> PenaltyShootoutStartedMessage:
+    if duration < 0:
+        raise ValueError("Invalid penalties duration")
+
+    return PenaltyShootoutStartedMessage(
+        duration=duration,
+    )
+
+
 def build_penalty_turn_started_message(
     session: PenaltySession,
 ) -> PenaltyTurnStartedMessage:
@@ -407,8 +420,9 @@ def build_penalty_turn_started_message(
 
 def build_penalty_result_message(
     result: dict,
+    duration: float,
 ) -> PenaltyResultMessage:
-    return PenaltyResultMessage(**result)
+    return PenaltyResultMessage(**result, duration=duration)
 
 
 def build_penalty_shootout_finished_message(

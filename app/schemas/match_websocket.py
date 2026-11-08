@@ -78,6 +78,11 @@ class MatchInfoMessage(BaseModel):
     players: list[MatchPlayerInfo]
 
 
+class PenaltyShootoutStartedMessage(BaseModel):
+    event: Literal["penalty_shootout_started"] = "penalty_shootout_started"
+    duration: float
+
+
 class PenaltyTurnStartedMessage(BaseModel):
     event: Literal["penalty_turn_started"] = "penalty_turn_started"
     turn: int
@@ -98,6 +103,7 @@ class PenaltyResultMessage(BaseModel):
     is_goal: bool
     score_club_a: int
     score_club_b: int
+    duration: float
 
 
 class PenaltyShootoutFinishedMessage(BaseModel):

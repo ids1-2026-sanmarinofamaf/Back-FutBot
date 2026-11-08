@@ -13,6 +13,8 @@ from app.game.constants import (
     HYDRATION_BREAK_DURATION,
     HALFTIME_BREAK_DURATION,
     SUBSTITUTION_EXECUTION_WINDOW,
+    PENALTY_INTRO_DURATION,
+    PENALTY_RESULT_DURATION,
 )
 from app.services.match_websocket_service import (
     match_connection_manager,
@@ -20,6 +22,7 @@ from app.services.match_websocket_service import (
     build_pause_started_message,
     build_substitution_window_closed_message,
     build_pause_finished_message,
+    build_penalty_shootout_started_message,
     build_penalty_turn_started_message,
     build_penalty_result_message,
     build_penalty_shootout_finished_message,
@@ -49,6 +52,8 @@ class MatchRunner:
         hydration_duration: float = HYDRATION_BREAK_DURATION,
         halftime_duration: float = HALFTIME_BREAK_DURATION,
         execution_window: float = SUBSTITUTION_EXECUTION_WINDOW,
+        penalty_intro_duration: float = PENALTY_INTRO_DURATION,
+        penalty_result_duration: float = PENALTY_RESULT_DURATION,
     ):
         if (
             execution_window < 0
@@ -57,11 +62,20 @@ class MatchRunner:
         ):
             raise ValueError("Invalid break durations")
 
+        if (
+            penalty_intro_duration < 0
+            or penalty_result_duration < 0
+        ):
+            raise ValueError("Invalid penalties duration")
+
         self.behavior_coordinator = behavior_coordinator
         self.game_engine = game_engine
         self.hydration_duration = hydration_duration
         self.halftime_duration = halftime_duration
         self.execution_window = execution_window
+        self.penalty_intro_duration = penalty_intro_duration
+        self.penalty_result_duration = penalty_result_duration
+
 
     # we implemented the execution of a single tick, and then the cycle of the whole match
 
@@ -286,6 +300,15 @@ class MatchRunner:
         match.penalty_session = session
 
         try:
+            await match_connection_manager.broadcast(
+                match.match_id,
+                build_penalty_shootout_started_message(
+                    self.penalty_intro_duration
+                )
+            )
+
+            await asyncio.sleep(self.penalty_intro_duration)
+
             for _ in range(6):
                 session.open_turn()
 
@@ -298,8 +321,13 @@ class MatchRunner:
 
                 await match_connection_manager.broadcast(
                     match.match_id,
-                    build_penalty_result_message(result),
+                    build_penalty_result_message(
+                        result,
+                        self.penalty_result_duration,
+                    ),
                 )
+
+                await asyncio.sleep(self.penalty_result_duration)
 
             match.winner_club_id = shootout.winner_club_id
 

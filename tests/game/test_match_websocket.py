@@ -629,7 +629,12 @@ async def test_connect_restores_existing_penalty_messages(
         session.shootout.resolve_penalty(PenaltySide.LEFT, PenaltySide.RIGHT)
     elif phase == "finished":
         for _ in range(6):
-            session.shootout.resolve_penalty(PenaltySide.LEFT, PenaltySide.LEFT)
+            session.shootout.resolve_penalty(
+                PenaltySide.LEFT,
+                PenaltySide.LEFT,
+            )
+
+        active_match.winner_club_id = session.shootout.winner_club_id
 
     manager = MatchConnectionManager()
     websocket = AsyncMock()
@@ -713,7 +718,10 @@ async def test_live_penalty_result_waits_for_initial_messages(
         broadcast_task = asyncio.create_task(
             manager.broadcast(
                 active_match.match_id,
-                ws_service.build_penalty_result_message(result),
+                ws_service.build_penalty_result_message(
+                    result,
+                    duration=5.0,
+                ),
             ),
         )
         await asyncio.sleep(0)
@@ -800,3 +808,63 @@ async def test_initial_message_cancellation_cleans_connection(active_match):
     assert websocket not in manager.connection_clubs
     assert websocket not in manager._send_locks
     websocket.close.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_reconnection_waits_for_match_winner_confirmation(
+    active_match,
+    penalty_reconnection,
+):
+    session, _ = penalty_reconnection
+    active_match.penalty_session = session
+
+    for _ in range(6):
+        session.shootout.resolve_penalty(
+            PenaltySide.LEFT,
+            PenaltySide.LEFT,
+        )
+
+    assert session.shootout.winner_club_id is not None
+    assert active_match.winner_club_id is None
+
+    manager = MatchConnectionManager()
+    during_pause = AsyncMock()
+
+    await manager.connect(
+        active_match.match_id,
+        during_pause,
+        client_club_id=1,
+    )
+
+    messages = [
+        awaited.args[0]
+        for awaited in during_pause.send_json.await_args_list
+    ]
+
+    # The last pause has not ended, so no winner is announced yet.
+    assert [message["event"] for message in messages] == [
+        "match_info",
+        "estado_partido",
+    ]
+
+    # Simulate the runner confirming the winner after the final pause.
+    active_match.winner_club_id = session.shootout.winner_club_id
+
+    after_pause = AsyncMock()
+    await manager.connect(
+        active_match.match_id,
+        after_pause,
+        client_club_id=1,
+    )
+
+    messages = [
+        awaited.args[0]
+        for awaited in after_pause.send_json.await_args_list
+    ]
+
+    assert [message["event"] for message in messages] == [
+        "match_info",
+        "estado_partido",
+        "penalty_shootout_finished",
+    ]
+    assert messages[-1]["winner_club_id"] == active_match.winner_club_id

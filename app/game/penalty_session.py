@@ -12,7 +12,7 @@ class PenaltySession:
     ):
         if response_timeout <= 0:
             raise ValueError("Response timeout must be positive")
-        
+
         self.shootout = shootout
         self.response_timeout = response_timeout
         self.choices: dict[int, PenaltySide] = {}

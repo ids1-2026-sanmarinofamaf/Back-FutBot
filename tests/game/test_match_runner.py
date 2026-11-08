@@ -499,6 +499,20 @@ async def test_run_match_sets_regulation_winner(
 
 # Penalty tests
 
+class PenaltyPauseProbe:
+    def __init__(self, match):
+        self.match = match
+        self.states = []
+
+    async def sleep(self, duration):
+        session = self.match.penalty_session
+        self.states.append((
+            session.shootout.turn,
+            session.accepting_choices,
+            self.match.winner_club_id,
+            session.shootout.winner_club_id,
+        ))
+
 
 @pytest.fixture
 def penalty_runner(behavior_coordinator, game_engine):
@@ -508,6 +522,8 @@ def penalty_runner(behavior_coordinator, game_engine):
         hydration_duration=0,
         halftime_duration=0,
         execution_window=0,
+        penalty_intro_duration=0,
+        penalty_result_duration=0,
     )
 
 
@@ -734,12 +750,22 @@ async def test_penalty_events_are_emitted_before_socket_closes(
     ]
 
     assert [message.event for message in events] == (
-        ["penalty_turn_started", "penalty_result"] * 6
+        ["penalty_shootout_started"]
+        + ["penalty_turn_started", "penalty_result"] * 6
         + ["penalty_shootout_finished"]
     )
 
-    started = events[:-1:2]
-    results = events[1:-1:2]
+    started = [
+        message
+        for message in events
+        if message.event == "penalty_turn_started"
+    ]
+
+    results = [
+        message
+        for message in events
+        if message.event == "penalty_result"
+    ]
 
     assert [message.turn for message in started] == list(range(1, 7))
     assert [message.turn for message in results] == list(range(1, 7))
@@ -802,3 +828,81 @@ async def test_cancellation_during_penalty_delivery_closes_turn(
     assert match.state == MatchState.IN_PROGRESS
     assert match.winner_club_id is None
     penalty_connections.close_match_connection.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_penalty_pauses_happen_before_next_turn_and_finalization(
+    match,
+    penalty_runner,
+    penalty_connections,
+    expired_penalty_clock,
+    monkeypatch,
+):
+    penalty_runner.penalty_intro_duration = 1.5
+    penalty_runner.penalty_result_duration = 2.5
+
+    probe = PenaltyPauseProbe(match)
+    sleep = AsyncMock(side_effect=probe.sleep)
+
+    # Replace only the runner's asyncio reference.
+    monkeypatch.setattr(
+        match_runner_module,
+        "asyncio",
+        SimpleNamespace(sleep=sleep),
+    )
+
+    timeline = MagicMock()
+    timeline.attach_mock(penalty_connections.broadcast, "broadcast")
+    timeline.attach_mock(sleep, "sleep")
+
+    await penalty_runner.run_penalties(
+        match=match,
+        turn_timeout=5.0,
+    )
+
+    # Introduction, then six turn/result/pause sequences, then finalization.
+    assert [operation[0] for operation in timeline.mock_calls] == (
+        ["broadcast", "sleep"]
+        + ["broadcast", "broadcast", "sleep"] * 6
+        + ["broadcast"]
+    )
+
+    assert sleep.await_args_list == (
+        [call(1.5)] + [call(2.5)] * 6
+    )
+
+    messages = [
+        awaited.args[1]
+        for awaited in penalty_connections.broadcast.await_args_list
+    ]
+
+    assert messages[0].event == "penalty_shootout_started"
+    assert messages[0].duration == 1.5
+
+    results = [
+        message
+        for message in messages
+        if message.event == "penalty_result"
+    ]
+    assert len(results) == 6
+    assert all(message.duration == 2.5 for message in results)
+
+    # Choices remain closed and the match winner remains unconfirmed
+    # throughout the introduction and all six result pauses.
+    assert [
+        state[:3]
+        for state in probe.states
+    ] == [
+        (resolved_turns, False, None)
+        for resolved_turns in range(7)
+    ]
+
+    # The shootout already knows its winner during the last pause.
+    assert probe.states[-1][3] in (
+        match.participation_a.club_id,
+        match.participation_b.club_id,
+    )
+
+    assert messages[-1].event == "penalty_shootout_finished"
+    assert messages[-1].winner_club_id == match.winner_club_id
+    assert match.winner_club_id == match.penalty_session.shootout.winner_club_id
