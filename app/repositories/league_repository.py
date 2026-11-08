@@ -34,6 +34,14 @@ def update_state(
     db.flush()
 
 
+def delete(
+    db: Session,
+    league: League,
+) -> None:
+    db.delete(league)
+    db.flush()
+
+
 def create(db: Session, league: League):
     # use flush instead of commit to keep transaction control outside this function, so we can rollback later
     db.add(league)
