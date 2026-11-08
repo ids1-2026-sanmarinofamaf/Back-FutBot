@@ -61,6 +61,7 @@ def test_put_success_returns_200(
     authenticated_client,
     roster_payload,
 ):
+    roster_payload["coach_behavior_id"] = 7
     with patch("app.api.leagues.update_league_roster") as mock_update:
         response = authenticated_client.put(
             URL,
@@ -77,6 +78,7 @@ def test_put_success_returns_200(
     assert kwargs["league_id"] == LEAGUE_ID
     assert kwargs["user_id"] == USER_ID
     assert kwargs["data"].formation.value == "defensive"
+    assert kwargs["data"].coach_behavior_id == 7
     assert len(kwargs["data"].players) == 6
 
 
@@ -290,6 +292,7 @@ def test_put_inactive_league_returns_409(
         },
     ],
 )
+
 def test_put_invalid_schema_returns_422(
     authenticated_client,
     invalid_payload,
@@ -302,3 +305,23 @@ def test_put_invalid_schema_returns_422(
 
     assert response.status_code == 422
     mock_update.assert_not_called()
+
+def test_put_invalid_coach_behavior_returns_400(
+    authenticated_client,
+    roster_payload,
+):
+    roster_payload["coach_behavior_id"] = 999
+
+    with patch(
+        "app.api.leagues.update_league_roster",
+        side_effect=InvalidRoster(
+            "Coach behavior doesn't exist."
+        ),
+    ):
+        response = authenticated_client.put(
+            URL,
+            json=roster_payload,
+        )
+
+    assert response.status_code == 400
+    assert response.json()["detail"] == ("Coach behavior doesn't exist.")
