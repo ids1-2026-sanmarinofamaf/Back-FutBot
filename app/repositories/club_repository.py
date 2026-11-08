@@ -23,3 +23,8 @@ def update_club(
         club.avatar = new_avatar
 
     db.flush()
+
+def get_by_id(db: Session, club_id: int) -> Club | None:
+    return db.scalar(
+        select(Club).where(Club.id == club_id)
+    )

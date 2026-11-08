@@ -1,15 +1,25 @@
+
 from fastapi.testclient import TestClient
 import pytest
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, Mock
 import copy
 from app.game.models.match_participation import MatchParticipation
 from app.game.models.ball import Ball
 from app.game.models.match import Match
-from app.schemas.match_websocket import (MatchStateMessage,BallState)
+from app.game.active_matches import register_match, remove_match
+from app.schemas.match_websocket import (
+    MatchStateMessage,
+    MatchPlayerState,
+    BallState,
+)
 from app.main import app
 # the endpoint always use the manager = match_connection_manager
 from app.services.match_websocket_service import match_connection_manager
-from app.services.match_websocket_service import (MatchConnectionManager, build_match_state_message)
+from app.services.match_websocket_service import (
+    MatchConnectionManager,
+    build_match_state_message,
+    filter_match_state_for_client,
+)
 
 from unittest.mock import AsyncMock, MagicMock
 
@@ -52,14 +62,21 @@ def match(six_players):
             position=(20.0, 10.0),
             velocity=(0.0, 0.0),
         ),
-        duration_ticks=10,
+        duration_ticks=4,
     )
+
+
+@pytest.fixture
+def active_match(match):
+    register_match(match)
+    yield match
+    remove_match(match.match_id)
 
 def test_client_can_connect_to_match():
     match_id = 1
 
     match_connection_manager.active_connections.clear()
-    
+
     with client.websocket_connect(f"/ws/matches/{match_id}"):
         # we checked that the connection was created and that it was just one
         assert match_id in match_connection_manager.active_connections
@@ -258,6 +275,9 @@ async def test_match_runner_sends_initial_state_and_tick_updates(match):
     runner = MatchRunner(
         behavior_coordinator,
         game_engine,
+        hydration_duration=0,
+        halftime_duration=0,
+        execution_window=0,
     )
 
     websocket = AsyncMock()
@@ -268,20 +288,296 @@ async def test_match_runner_sends_initial_state_and_tick_updates(match):
     ] = [websocket]
 
     # use only two ticks 
-    match.duration_ticks = 2
+    match.duration_ticks = 4
 
     await runner.run_match(match)
 
-    # 1 initial state + 2 tick updates
-    assert websocket.send_json.await_count == 3
+    # 1 initial state + 4 tick updates + 3 break states + 9 break events
+    assert websocket.send_json.await_count == 17
 
     sent_messages = [
         call.args[0]
         for call in websocket.send_json.await_args_list
     ]
 
+    events = [message["event"] for message in sent_messages]
+
+    assert events.count("estado_partido") == 8
+    assert events.count("pause_started") == 3
+    assert events.count("substitution_window_closed") == 3
+    assert events.count("pause_finished") == 3
+
     assert sent_messages[0]["event"] == "estado_partido"
     assert sent_messages[0]["actual_tic"] == 0
 
-    assert sent_messages[1]["actual_tic"] == 1
-    assert sent_messages[2]["actual_tic"] == 2
+    state_messages = [
+        message
+        for message in sent_messages
+        if message["event"] == "estado_partido"
+    ]
+
+    assert [message["actual_tic"] for message in state_messages] == [
+        0, 1, 1, 2, 2, 3, 3, 4
+    ]
+
+
+@pytest.mark.asyncio
+async def test_close_match_continues_after_connection_error():
+    manager = MatchConnectionManager()
+    failing_connection = Mock()
+    healthy_connection = Mock()
+
+    failing_connection.close = AsyncMock(
+        side_effect=RuntimeError("Connection already closed"),
+    )
+    healthy_connection.close = AsyncMock()
+
+    manager.active_connections[123] = [
+        failing_connection,
+        healthy_connection,
+    ]
+
+    await manager.close_match_connection(123)
+
+    failing_connection.close.assert_awaited_once_with()
+    healthy_connection.close.assert_awaited_once_with()
+    assert 123 not in manager.active_connections
+
+
+@pytest.mark.asyncio
+async def test_connect_sends_match_info_and_initial_state_when_match_active(active_match):
+    manager = MatchConnectionManager()
+    websocket = AsyncMock()
+
+    await manager.connect(active_match.match_id, websocket, client_club_id=1)
+
+    websocket.accept.assert_awaited_once()
+    assert manager.connection_clubs[websocket] == 1
+    assert websocket.send_json.await_count == 2
+
+    sent_info = websocket.send_json.await_args_list[0].args[0]
+    assert sent_info["event"] == "match_info"
+    assert sent_info["match_id"] == active_match.match_id
+    assert sent_info["my_club_id"] == 1
+    assert sent_info["team_a"]["club_id"] == active_match.participation_a.club_id
+    assert sent_info["team_b"]["club_id"] == active_match.participation_b.club_id
+    assert len(sent_info["players"]) == 12
+
+    sent_state = websocket.send_json.await_args_list[1].args[0]
+    assert sent_state["event"] == "estado_partido"
+    assert sent_state["actual_tic"] == 0
+
+
+@pytest.mark.asyncio
+async def test_connect_as_spectator_sends_match_info_with_none_club(active_match):
+    manager = MatchConnectionManager()
+    websocket = AsyncMock()
+
+    await manager.connect(active_match.match_id, websocket, client_club_id=None)
+
+    websocket.accept.assert_awaited_once()
+    assert manager.connection_clubs[websocket] is None
+    assert websocket.send_json.await_count == 2
+
+    sent_info = websocket.send_json.await_args_list[0].args[0]
+    assert sent_info["event"] == "match_info"
+    assert sent_info["my_club_id"] is None
+
+
+def test_disconnect_cleans_connection_clubs():
+    manager = MatchConnectionManager()
+    ws = AsyncMock()
+    manager.active_connections[1] = [ws]
+    manager.connection_clubs[ws] = 1
+
+    manager.disconnect(1, ws)
+
+    assert ws not in manager.connection_clubs
+    assert 1 not in manager.active_connections
+
+
+def test_websocket_endpoint_with_valid_token(active_match, monkeypatch):
+    match_connection_manager.active_connections.clear()
+    match_connection_manager.connection_clubs.clear()
+
+    for p in active_match.participation_a.players:
+        if p.is_on_field:
+            p.current_behavior_name = "Táctica A"
+    for p in active_match.participation_b.players:
+        if p.is_on_field:
+            p.current_behavior_name = "Táctica B"
+
+    monkeypatch.setattr("app.services.auth_service.get_user_from_token", lambda db, token: Mock(id=10))
+    monkeypatch.setattr("app.repositories.club_repository.get_by_user_id", lambda db, user_id: Mock(id=1))
+
+    with client.websocket_connect(f"/ws/matches/{active_match.match_id}?token=valid_token") as ws:
+        msg1 = ws.receive_json()
+        assert msg1["event"] == "match_info"
+        assert msg1["my_club_id"] == 1
+
+        msg2 = ws.receive_json()
+        assert msg2["event"] == "estado_partido"
+        assert msg2["actual_tic"] == 0
+
+        # Privacidad táctica: el club 1 solo ve comportamientos del equipo A
+        starters_a = [p for p in msg2["players"] if p["team"] == "A" and p["is_on_field"]]
+        players_b = [p for p in msg2["players"] if p["team"] == "B"]
+        assert all(p["current_behavior_name"] == "Táctica A" for p in starters_a)
+        assert all(p["current_behavior_id"] is not None for p in starters_a)
+        assert all(p["current_behavior_name"] is None for p in players_b)
+        assert all(p["current_behavior_id"] is None for p in players_b)
+
+    match_connection_manager.active_connections.clear()
+    match_connection_manager.connection_clubs.clear()
+
+
+def test_websocket_endpoint_spectator_without_token(active_match):
+    match_connection_manager.active_connections.clear()
+    match_connection_manager.connection_clubs.clear()
+
+    with client.websocket_connect(f"/ws/matches/{active_match.match_id}") as ws:
+        msg1 = ws.receive_json()
+        assert msg1["event"] == "match_info"
+        assert msg1["my_club_id"] is None
+
+        msg2 = ws.receive_json()
+        assert msg2["event"] == "estado_partido"
+
+        # Privacidad táctica: espectadores no ven comportamientos de ningún equipo
+        assert all(p["current_behavior_name"] is None for p in msg2["players"])
+        assert all(p["current_behavior_id"] is None for p in msg2["players"])
+
+    match_connection_manager.active_connections.clear()
+    match_connection_manager.connection_clubs.clear()
+
+
+def test_websocket_endpoint_with_invalid_token_falls_back_to_spectator(active_match, monkeypatch):
+    match_connection_manager.active_connections.clear()
+    match_connection_manager.connection_clubs.clear()
+
+    monkeypatch.setattr(
+        "app.services.auth_service.get_user_from_token",
+        Mock(side_effect=Exception("Invalid token")),
+    )
+
+    with client.websocket_connect(f"/ws/matches/{active_match.match_id}?token=invalid_token") as ws:
+        msg1 = ws.receive_json()
+        assert msg1["event"] == "match_info"
+        assert msg1["my_club_id"] is None
+
+        msg2 = ws.receive_json()
+        assert msg2["event"] == "estado_partido"
+
+    match_connection_manager.active_connections.clear()
+    match_connection_manager.connection_clubs.clear()
+
+
+def test_filter_match_state_for_client_privacy():
+    message = MatchStateMessage(
+        event="estado_partido",
+        actual_tic=10,
+        total_tic=100,
+        user1_goals=0,
+        user2_goals=0,
+        ball=BallState(x=20.0, y=10.0, speed_x=0.0, speed_y=0.0),
+        players=[
+            MatchPlayerState(
+                player_id=1,
+                x=5.0,
+                y=5.0,
+                is_on_field=True,
+                team="A",
+                current_behavior_id=10,
+                current_behavior_name="Ataque",
+            ),
+            MatchPlayerState(
+                player_id=7,
+                x=15.0,
+                y=5.0,
+                is_on_field=True,
+                team="B",
+                current_behavior_id=20,
+                current_behavior_name="Defensa",
+            ),
+        ],
+    )
+
+    # Cliente del club A (club_id=1)
+    filtered_a = filter_match_state_for_client(
+        message, client_club_id=1, club_a_id=1, club_b_id=2
+    )
+    assert filtered_a.players[0].current_behavior_name == "Ataque"
+    assert filtered_a.players[0].current_behavior_id == 10
+    assert filtered_a.players[1].current_behavior_name is None
+    assert filtered_a.players[1].current_behavior_id is None
+
+    # Cliente del club B (club_id=2)
+    filtered_b = filter_match_state_for_client(
+        message, client_club_id=2, club_a_id=1, club_b_id=2
+    )
+    assert filtered_b.players[0].current_behavior_name is None
+    assert filtered_b.players[0].current_behavior_id is None
+    assert filtered_b.players[1].current_behavior_name == "Defensa"
+    assert filtered_b.players[1].current_behavior_id == 20
+
+    # Espectador (club_id=None)
+    filtered_spectator = filter_match_state_for_client(
+        message, client_club_id=None, club_a_id=1, club_b_id=2
+    )
+    assert filtered_spectator.players[0].current_behavior_name is None
+    assert filtered_spectator.players[0].current_behavior_id is None
+    assert filtered_spectator.players[1].current_behavior_name is None
+    assert filtered_spectator.players[1].current_behavior_id is None
+
+
+@pytest.mark.asyncio
+async def test_broadcast_filters_tactical_info_per_client_club(active_match):
+    manager = MatchConnectionManager()
+
+    for p in active_match.participation_a.players:
+        if p.is_on_field:
+            p.current_behavior_name = "Táctica A"
+    for p in active_match.participation_b.players:
+        if p.is_on_field:
+            p.current_behavior_name = "Táctica B"
+
+    ws_a = AsyncMock()
+    ws_b = AsyncMock()
+    ws_spectator = AsyncMock()
+
+    manager.active_connections[active_match.match_id] = [ws_a, ws_b, ws_spectator]
+    manager.connection_clubs[ws_a] = 1  # club A
+    manager.connection_clubs[ws_b] = 2  # club B
+    manager.connection_clubs[ws_spectator] = None  # espectador
+
+    snapshot = active_match.snapshot()
+    message = build_match_state_message(snapshot)
+
+    await manager.broadcast(active_match.match_id, message)
+
+    # ws_a solo ve comportamientos del equipo A
+    sent_a = ws_a.send_json.await_args.args[0]
+    for p in sent_a["players"]:
+        if p["team"] == "A" and p["is_on_field"]:
+            assert p["current_behavior_name"] == "Táctica A"
+            assert p["current_behavior_id"] is not None
+        else:
+            assert p["current_behavior_name"] is None
+            assert p["current_behavior_id"] is None
+
+    # ws_b solo ve comportamientos del equipo B
+    sent_b = ws_b.send_json.await_args.args[0]
+    for p in sent_b["players"]:
+        if p["team"] == "B" and p["is_on_field"]:
+            assert p["current_behavior_name"] == "Táctica B"
+            assert p["current_behavior_id"] is not None
+        else:
+            assert p["current_behavior_name"] is None
+            assert p["current_behavior_id"] is None
+
+    # ws_spectator no ve comportamientos de ninguno
+    sent_spec = ws_spectator.send_json.await_args.args[0]
+    for p in sent_spec["players"]:
+        assert p["current_behavior_name"] is None
+        assert p["current_behavior_id"] is None
+

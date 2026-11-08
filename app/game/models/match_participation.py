@@ -9,8 +9,8 @@ from app.game.types import Period
 class MatchParticipation:
     club_id: int  # ID of the club to which that participation belongs
     roster_id: int  # ID of the roster to which that participation belongs
-
     players: list[PlayerInMatch]  # starting players and substitutes selected for this match
+    club_name: str = ""
 
     goals: int = 0
 
@@ -18,6 +18,7 @@ class MatchParticipation:
     pending_substitution: PendingSubstitution | None = None
     # ensure only one substitution in one period
     last_substitution_period: Period | None = None
+    coach_behavior_name: str | None = None
 
     # validations
     def __post_init__(self):
@@ -128,6 +129,7 @@ class MatchParticipation:
 
         # inherit the current behavior from the outgoing player.
         incoming.current_behavior_id = outgoing.current_behavior_id
+        incoming.current_behavior_name = outgoing.current_behavior_name
 
         # reset alll the temporary restrictions.
         incoming.kick_cooldown_remaining = 0
@@ -139,6 +141,7 @@ class MatchParticipation:
         incoming.is_on_field = True
 
         outgoing.current_behavior_id = None
+        outgoing.current_behavior_name = None
 
         # mark the period as used and remove the pending request.
         self.last_substitution_period = period

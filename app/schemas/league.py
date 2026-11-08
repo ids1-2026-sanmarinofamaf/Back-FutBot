@@ -1,8 +1,22 @@
-from pydantic import BaseModel, Field, field_validator, model_validator
+
+from pydantic import (
+    BaseModel,
+    Field,
+    field_validator,
+    model_validator,
+    AwareDatetime,
+)
 
 from app.models.league import LeagueState, LeaguePrivacy
+from app.models.match import MatchState
+
+from typing import Literal
 
 from app.schemas.roster import RosterCreate
+
+
+class LeagueUpdate(BaseModel):
+    state: LeagueState
 
 
 class LeagueCreate(BaseModel):
@@ -67,3 +81,64 @@ class LeagueSessionItem(BaseModel):
 
 class LeaguesSessionPayload(BaseModel):
     leagues: list[LeagueSessionItem]
+
+
+class FixtureClub(BaseModel):
+    club_id: int
+    name: str
+
+
+class MatchScore(BaseModel):
+    local: int = Field(ge=0)
+    visitante: int = Field(ge=0)
+
+
+class FixtureMatchItem(BaseModel):
+    match_id: int
+    match_order: int
+    round: int
+    state: MatchState
+    local: FixtureClub
+    visitante: FixtureClub
+    score: MatchScore | None = None
+
+
+class StandingRow(BaseModel):
+    club_id: int
+    name: str
+    points: int
+    matches_played: int
+    matches_won: int
+    matches_drawn: int
+    matches_lost: int
+    goals_for: int
+    goals_against: int
+    goal_difference: int
+
+
+class LeagueStartedEvent(BaseModel):
+    # le sirve al front para distinguir league_started de otros eventos que lleguen por el mismo canal de liga.
+    type: Literal["league_started"] = "league_started"
+    league_id: int
+    fixture: list[FixtureMatchItem]
+    standings: list[StandingRow]
+
+
+class LeagueDetail(BaseModel):
+    league_id: int
+    name: str
+    state: LeagueState
+    privacy: LeaguePrivacy
+    current_participants: int
+    capacity: int
+    # only filled when the league is INICIADA and FINALIZADA
+    fixture: list[FixtureMatchItem] | None = None
+    standings: list[StandingRow] | None = None
+    last_completed_round: int = Field(default=0, ge=0)
+    active_round: int | None = Field(default=None, ge=1)
+    active_match_ids: list[int] = Field(default_factory=list)
+    break_ends_at: AwareDatetime | None = None
+
+
+class MyLeaguesResponse(BaseModel):
+    league_ids: list[int]
