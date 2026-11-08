@@ -6,6 +6,8 @@ from fastapi.exception_handlers import request_validation_exception_handler
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import text
 
+from app.database import engine
+
 from app.api import (
     auth,
     users,
@@ -18,12 +20,14 @@ from app.api import (
     coach_behaviors,
     leagues,
     ranking,
+    clubs,
 )
+
 from app.api.friendly_game_websocket import router as friendly_game_websocket_router
 from app.api.match_websocket import router as match_websocket_router
 from app.api.behavior_preview_websocket import router as behavior_preview_websocket_router
 from app.api.league_websocket import router as league_websocket_router
-from app.database import engine
+
 from app.services.league_runner import stop_league_runners
 from app.services.startup_service import (
     recover_interrupted_games,
@@ -35,6 +39,7 @@ from app.services.match_service import (
     stop_running_matches,
 )
 from app.services.behavior_preview_service import stop_running_previews
+
 
 
 @asynccontextmanager
@@ -89,6 +94,7 @@ app.include_router(coach_behaviors.router)
 app.include_router(leagues.router)
 app.include_router(ranking.router)
 app.include_router(league_websocket_router)
+app.include_router(clubs.router)
 app.include_router(friendly_games.router)
 app.include_router(players.router)
 app.include_router(matches.router)
