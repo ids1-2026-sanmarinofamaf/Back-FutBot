@@ -3,6 +3,9 @@ from typing import Protocol, Any
 import time, asyncio
 
 from app.game.models.match import Match, MatchState, MatchSnapshot
+from app.game.models.player_in_match import PlayerInMatch
+from app.game.penalties import PenaltyShootout
+from app.game.penalty_session import PenaltySession
 from app.game.types import Period
 from app.game.constants import (
     TIC_DURATION,
@@ -235,12 +238,65 @@ class MatchRunner:
         ):
             winner_id = match.participation_b.club_id
 
-        match.winner_club_id = winner_id
-
-        # when the match ended, change its state to finished and close ws conections
         match.substitution_requests_open = False
+
+        if (
+            winner_id is None
+            and match.penalties_enabled
+        ):
+            await self.run_penalties(
+                match=match,
+                turn_timeout=5.0,
+            )
+        else:
+            match.winner_club_id = winner_id
+
         match.state = MatchState.FINISHED
 
         await match_connection_manager.close_match_connection(match.match_id)
 
         return match
+
+
+    async def run_penalties(
+        self,
+        match: Match,
+        turn_timeout: float,
+    ) -> None:
+        shootout = PenaltyShootout(
+            club_a_id=match.participation_a.club_id,
+            club_b_id=match.participation_b.club_id,
+            kickers_a=_get_penalty_kickers(
+                match.participation_a.players,
+            ),
+            kickers_b=_get_penalty_kickers(
+                match.participation_b.players,
+            ),
+            seed=match.match_id,
+        )
+
+        session = PenaltySession(
+            shootout=shootout,
+            response_timeout=turn_timeout,
+        )
+
+        match.penalty_session = session
+
+        for _ in range(6):
+            session.open_turn()
+            await session.wait_and_resolve()
+
+        match.winner_club_id = shootout.winner_club_id
+
+
+
+def _get_penalty_kickers(
+    players: list[PlayerInMatch],
+) -> tuple[int, ...]:
+    kickers = []
+
+    for player in players:
+        if player.is_on_field:
+            kickers.append(player.player_id)
+
+    return tuple(kickers)

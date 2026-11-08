@@ -5,8 +5,10 @@ from enum import Enum
 from app.game.models.ball import Ball, BallSnapshot
 from app.game.models.match_participation import MatchParticipation
 from app.game.models.player_in_match import PlayerInMatchSnapshot
+from app.game.penalty_session import PenaltySession
 from app.game.types import Side, Period
 from typing import Literal
+
 
 PauseType = Literal["hydration", "halftime"]
 
@@ -68,6 +70,8 @@ class Match:
     winner_club_id: int | None = None
 
     penalties_enabled: bool = False
+
+    penalty_session: PenaltySession | None = None
 
 
     def snapshot(self) -> MatchSnapshot:  # returns a copy of match in the state it was in when made

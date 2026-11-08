@@ -2,6 +2,11 @@
 import copy
 
 import pytest
+
+import asyncio
+from functools import partial
+from itertools import count
+
 from types import SimpleNamespace
 from unittest.mock import MagicMock, AsyncMock
 
@@ -14,6 +19,7 @@ import app.game.match_runner as match_runner_module
 from app.game.models.ball import Ball
 from app.game.models.match import Match, MatchState
 from app.game.models.match_participation import MatchParticipation
+import app.game.penalty_session as penalty_session_module
 
 
 @pytest.fixture
@@ -489,3 +495,214 @@ async def test_run_match_sets_regulation_winner(
 
     assert result.participation_a.goals == goals_a
     assert result.participation_b.goals == goals_b
+
+
+# Penalty tests
+
+
+@pytest.fixture
+def penalty_runner(behavior_coordinator, game_engine):
+    return MatchRunner(
+        behavior_coordinator,
+        game_engine,
+        hydration_duration=0,
+        halftime_duration=0,
+        execution_window=0,
+    )
+
+
+@pytest.fixture
+def penalty_connections(monkeypatch):
+    connections = SimpleNamespace(
+        broadcast=AsyncMock(),
+        close_match_connection=AsyncMock(),
+    )
+    monkeypatch.setattr(
+        match_runner_module,
+        "match_connection_manager",
+        connections,
+    )
+    return connections
+
+
+@pytest.fixture
+def expired_penalty_clock(monkeypatch):
+    # Advance beyond the five-second deadline on each clock read.
+    monkeypatch.setattr(
+        penalty_session_module,
+        "monotonic",
+        partial(next, count(start=100, step=10)),
+    )
+
+
+class ControlledPenaltyRun:
+    def __init__(self):
+        self.started = asyncio.Event()
+        self.release = asyncio.Event()
+
+    async def __call__(self, *, match, turn_timeout):
+        self.started.set()
+        await self.release.wait()
+        match.winner_club_id = match.participation_b.club_id
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "enabled, goals_a, goals_b, expected_winner",
+    [
+        pytest.param(False, 1, 1, None, id="draw-allowed"),
+        pytest.param(False, 2, 1, 1, id="home-regulation-win"),
+        pytest.param(False, 1, 2, 2, id="away-regulation-win"),
+        pytest.param(True, 2, 1, 1, id="home-win-no-shootout"),
+        pytest.param(True, 1, 2, 2, id="away-win-no-shootout"),
+    ],
+)
+async def test_run_match_skips_unnecessary_penalties(
+    match,
+    penalty_runner,
+    penalty_connections,
+    monkeypatch,
+    enabled,
+    goals_a,
+    goals_b,
+    expected_winner,
+):
+    match.duration_ticks = 4
+    match.penalties_enabled = enabled
+    match.participation_a.goals = goals_a
+    match.participation_b.goals = goals_b
+
+    penalties = AsyncMock()
+    monkeypatch.setattr(penalty_runner, "run_penalties", penalties)
+
+    result = await penalty_runner.run_match(match)
+
+    penalties.assert_not_awaited()
+    assert result.winner_club_id == expected_winner
+    assert result.penalty_session is None
+    assert result.state == MatchState.FINISHED
+    assert result.participation_a.goals == goals_a
+    assert result.participation_b.goals == goals_b
+
+    penalty_connections.close_match_connection.assert_awaited_once_with(
+        match.match_id,
+    )
+
+
+@pytest.mark.asyncio
+async def test_tied_match_runs_all_penalties_with_current_starters(
+    match,
+    penalty_runner,
+    penalty_connections,
+    expired_penalty_clock,
+):
+    match.duration_ticks = 4
+    match.penalties_enabled = True
+    match.participation_a.goals = 1
+    match.participation_b.goals = 1
+
+    # Replace one starter on each team before the shootout.
+    for participation in (
+        match.participation_a,
+        match.participation_b,
+    ):
+        participation.players[0].is_on_field = False
+        participation.players[3].is_on_field = True
+
+    result = await penalty_runner.run_match(match)
+
+    session = result.penalty_session
+    assert session is not None
+
+    shootout = session.shootout
+    assert shootout.turn == 6
+    assert shootout.seed == match.match_id
+    assert shootout.kickers_a == (2, 3, 4)
+    assert shootout.kickers_b == (8, 9, 10)
+    assert session.accepting_choices is False
+
+    assert result.winner_club_id in (
+        match.participation_a.club_id,
+        match.participation_b.club_id,
+    )
+    assert result.winner_club_id == shootout.winner_club_id
+    assert result.snapshot().winner_club_id == shootout.winner_club_id
+
+    assert result.participation_a.goals == 1
+    assert result.participation_b.goals == 1
+    assert result.current_tick == result.duration_ticks
+    assert result.state == MatchState.FINISHED
+
+    penalty_connections.close_match_connection.assert_awaited_once_with(
+        match.match_id,
+    )
+
+
+@pytest.mark.asyncio
+async def test_match_waits_for_penalties_before_finishing(
+    match,
+    penalty_runner,
+    penalty_connections,
+    monkeypatch,
+):
+    match.duration_ticks = 4
+    match.penalties_enabled = True
+
+    penalties = ControlledPenaltyRun()
+    monkeypatch.setattr(
+        penalty_runner,
+        "run_penalties",
+        penalties,
+    )
+
+    task = asyncio.create_task(penalty_runner.run_match(match))
+
+    try:
+        await asyncio.wait_for(penalties.started.wait(), timeout=1.0)
+
+        assert not task.done()
+        assert match.state == MatchState.IN_PROGRESS
+        assert match.substitution_requests_open is False
+        assert match.winner_club_id is None
+        penalty_connections.close_match_connection.assert_not_awaited()
+
+        penalties.release.set()
+        result = await asyncio.wait_for(task, timeout=1.0)
+
+        assert result.state == MatchState.FINISHED
+        assert result.winner_club_id == match.participation_b.club_id
+        penalty_connections.close_match_connection.assert_awaited_once_with(
+            match.match_id,
+        )
+    finally:
+        task.cancel()
+        await asyncio.gather(task, return_exceptions=True)
+
+
+@pytest.mark.asyncio
+async def test_penalty_failure_does_not_finish_match(
+    match,
+    penalty_runner,
+    penalty_connections,
+    monkeypatch,
+):
+    match.duration_ticks = 4
+    match.penalties_enabled = True
+
+    penalties = AsyncMock(
+        side_effect=RuntimeError("Penalty execution failed"),
+    )
+    monkeypatch.setattr(
+        penalty_runner,
+        "run_penalties",
+        penalties,
+    )
+
+    with pytest.raises(RuntimeError, match="Penalty execution failed"):
+        await penalty_runner.run_match(match)
+
+    penalties.assert_awaited_once()
+    assert match.state == MatchState.IN_PROGRESS
+    assert match.winner_club_id is None
+    assert match.substitution_requests_open is False
+    penalty_connections.close_match_connection.assert_not_awaited()
