@@ -19,6 +19,11 @@ class BallState(BaseModel):
     speed_y: float
 
 
+class MatchPendingSubstitution(BaseModel):
+    player_out_id: int
+    player_in_id: int
+
+
 class MatchStateMessage(BaseModel):
     event: str
 
@@ -32,10 +37,35 @@ class MatchStateMessage(BaseModel):
     is_paused: bool = False
     pause_type: Literal["hydration", "halftime"] | None = None
     substitution_window_open: bool = True
+    pending_substitution: MatchPendingSubstitution | None = None
 
     ball: BallState
     players: list[MatchPlayerState]
 
+
+class MatchCoachChange(BaseModel):
+    club_id: int
+    player_id: int
+    behavior: str
+
+
+# behavior changes made by the coaches (DT) and applied in this tic
+class MatchCoachChangesMessage(BaseModel):
+    event: Literal["coach_changes"] = "coach_changes"
+    from_tic: int  # first tic in which the changes are in effect
+    changes: list[MatchCoachChange]
+
+
+class MatchCoachSubstitution(BaseModel):
+    club_id: int
+    player_out_id: int
+    player_in_id: int
+
+
+# substitutions requested by the coaches (DT) and executed in this break
+class MatchCoachSubstitutionsMessage(BaseModel):
+    event: Literal["coach_substitutions"] = "coach_substitutions"
+    changes: list[MatchCoachSubstitution]
 
 class MatchPauseStartedMessage(BaseModel):
     event: Literal["pause_started"] = "pause_started"

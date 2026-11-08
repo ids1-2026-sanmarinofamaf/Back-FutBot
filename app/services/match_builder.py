@@ -105,9 +105,17 @@ def create_match_participation(
     if club is None:
         raise ValueError("Club does not exist")
 
+    coach_behavior_name = (
+        roster.coach_behavior.name
+        if getattr(roster, "coach_behavior", None) is not None
+        else None
+    )
+
     return MatchParticipation(
         club_id=roster.club_id,
         roster_id=roster.id,
         club_name=club.name,
         players=players,
+        coach_behavior_id=roster.coach_behavior_id,
+        coach_behavior_name=coach_behavior_name,
     )

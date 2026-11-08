@@ -11,6 +11,10 @@ from app.schemas.match_websocket import (
     MatchStateMessage,
     MatchPlayerState,
     BallState,
+    MatchCoachChange,
+    MatchCoachChangesMessage,
+    MatchCoachSubstitution,
+    MatchCoachSubstitutionsMessage,
 )
 from app.main import app
 # the endpoint always use the manager = match_connection_manager
@@ -18,6 +22,7 @@ from app.services.match_websocket_service import match_connection_manager
 from app.services.match_websocket_service import (
     MatchConnectionManager,
     build_match_state_message,
+    filter_coach_changes_for_client,
     filter_match_state_for_client,
 )
 
@@ -581,3 +586,126 @@ async def test_broadcast_filters_tactical_info_per_client_club(active_match):
         assert p["current_behavior_name"] is None
         assert p["current_behavior_id"] is None
 
+
+@pytest.mark.asyncio
+async def test_broadcast_filters_pending_substitution_per_client_club(active_match):
+    manager = MatchConnectionManager()
+
+    active_match.participation_a.plan_substitution(
+        player_out_id=1,
+        player_in_id=4,
+        period=active_match.current_period,
+        from_coach=True,
+    )
+
+    ws_a = AsyncMock()
+    ws_b = AsyncMock()
+    ws_spectator = AsyncMock()
+
+    manager.active_connections[active_match.match_id] = [ws_a, ws_b, ws_spectator]
+    manager.connection_clubs[ws_a] = 1
+    manager.connection_clubs[ws_b] = 2
+    manager.connection_clubs[ws_spectator] = None
+
+    snapshot = active_match.snapshot()
+    message = build_match_state_message(snapshot)
+
+    await manager.broadcast(active_match.match_id, message)
+
+    sent_a = ws_a.send_json.await_args.args[0]
+    sent_b = ws_b.send_json.await_args.args[0]
+    sent_spec = ws_spectator.send_json.await_args.args[0]
+
+    assert sent_a["pending_substitution"] == {"player_out_id": 1, "player_in_id": 4}
+    assert sent_b["pending_substitution"] is None
+    assert sent_spec["pending_substitution"] is None
+
+
+# coach (DT) events privacy
+
+def _coach_changes_message():
+    return MatchCoachChangesMessage(
+        from_tic=5,
+        changes=[
+            MatchCoachChange(club_id=1, player_id=10, behavior="Attacker"),
+            MatchCoachChange(club_id=2, player_id=20, behavior="Defender"),
+            MatchCoachChange(club_id=1, player_id=11, behavior="Defender"),
+        ],
+    )
+
+
+def _manager_with_clients(match_id, clubs):
+    manager = MatchConnectionManager()
+    sockets = []
+
+    for club_id in clubs:
+        websocket = AsyncMock()
+        manager.connection_clubs[websocket] = club_id
+        sockets.append(websocket)
+
+    manager.active_connections[match_id] = list(sockets)
+
+    return manager, sockets
+
+
+def test_filter_coach_changes_keeps_only_own_club():
+    filtered = filter_coach_changes_for_client(
+        _coach_changes_message(),
+        client_club_id=1,
+    )
+
+    assert filtered.from_tic == 5
+    assert [(c.club_id, c.player_id) for c in filtered.changes] == [(1, 10), (1, 11)]
+
+
+@pytest.mark.parametrize("client_club_id", [None, 3])
+def test_filter_coach_changes_returns_none_without_own_changes(client_club_id):
+    assert filter_coach_changes_for_client(
+        _coach_changes_message(),
+        client_club_id=client_club_id,
+    ) is None
+
+
+@pytest.mark.asyncio
+async def test_broadcast_coach_changes_only_reaches_their_own_club():
+    manager, (ws_a, ws_b, ws_spectator) = _manager_with_clients(1, [1, 2, None])
+
+    await manager.broadcast(1, _coach_changes_message())
+
+    sent_a = ws_a.send_json.await_args.args[0]
+    sent_b = ws_b.send_json.await_args.args[0]
+
+    assert {change["club_id"] for change in sent_a["changes"]} == {1}
+    assert len(sent_a["changes"]) == 2
+    assert sent_b["changes"] == [
+        {"club_id": 2, "player_id": 20, "behavior": "Defender"},
+    ]
+    ws_spectator.send_json.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_broadcast_coach_changes_skips_club_without_changes():
+    manager, (ws_a, ws_b) = _manager_with_clients(1, [1, 2])
+    message = MatchCoachChangesMessage(
+        from_tic=5,
+        changes=[MatchCoachChange(club_id=1, player_id=10, behavior="Attacker")],
+    )
+
+    await manager.broadcast(1, message)
+
+    ws_a.send_json.assert_awaited_once()
+    ws_b.send_json.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_broadcast_coach_substitutions_reaches_everyone():
+    # substitutions reveal no behavior and are visible in estado_partido anyway
+    manager, sockets = _manager_with_clients(1, [1, 2, None])
+    message = MatchCoachSubstitutionsMessage(
+        changes=[MatchCoachSubstitution(club_id=1, player_out_id=10, player_in_id=13)],
+    )
+
+    await manager.broadcast(1, message)
+
+    for websocket in sockets:
+        websocket.send_json.assert_awaited_once_with(message.model_dump())

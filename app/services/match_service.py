@@ -5,6 +5,7 @@ from collections.abc import Awaitable, Callable
 from app.game.models.match import Match, MatchState
 from app.game.models.behavior_definition import BehaviorDefinition
 from app.repositories import behavior_repository, club_repository
+from app.repositories import coach_behavior_repository
 from app.game.behavior_worker_pool import BehaviorWorkerPool
 from app.game.behavior_coordinator import BehaviorCoordinator
 from app.game.engine import GameEngine
@@ -39,6 +40,61 @@ def load_match_behaviors(
         )
         for behavior in behaviors
     ]
+
+# load in memory the coach (DT) behavior chosen by each club, if any
+def load_match_coach_behaviors(
+    db: Session,
+    match: Match,
+) -> list[BehaviorDefinition]:
+
+    coach_behaviors = []
+
+    for participation in (match.participation_a, match.participation_b):
+        # the club plays without DT
+        if participation.coach_behavior_id is None:
+            continue
+
+        # filtering by club ensures the DT belongs to that club
+        coach_behavior = coach_behavior_repository.get_by_id_for_club(
+            db=db,
+            club_id=participation.club_id,
+            coach_behavior_id=participation.coach_behavior_id,
+        )
+
+        if coach_behavior is None:
+            continue
+
+        participation.coach_behavior_name = coach_behavior.name
+
+        coach_behaviors.append(
+            BehaviorDefinition(
+                id=coach_behavior.id,
+                code=coach_behavior.code,
+            )
+        )
+
+    return coach_behaviors
+
+# load in memory, for each club, the behaviors its coach (DT) can assign
+def load_match_available_behaviors(
+    db: Session,
+    match: Match,
+) -> None:
+
+    for participation in (match.participation_a, match.participation_b):
+        behaviors = behavior_repository.get_available_for_club(
+            db=db,
+            club_id=participation.club_id,
+        )
+
+        # defaults first, so a club behavior with the same name wins
+        # (same rule as get_available_by_name)
+        behaviors.sort(key=lambda behavior: not behavior.is_default)
+
+        participation.available_behaviors = {
+            behavior.name: behavior.id
+            for behavior in behaviors
+        }
 
 _running_match_tasks: set[asyncio.Task] = set()
 _worker_pool: BehaviorWorkerPool | None = None
@@ -105,6 +161,7 @@ def start_match_task(
     match: Match,
     behaviors: list[BehaviorDefinition],
     on_finished: Callable[[Match], Awaitable[None]] | None = None,
+    coach_behaviors: list[BehaviorDefinition] | None = None,
 ) -> asyncio.Task[None]:
     """
     Register and start a match using the shared worker pool.
@@ -116,6 +173,7 @@ def start_match_task(
         match: Match to execute.
         behaviors: Available behavior definitions for the match.
         on_finished: Optional callback executed after the match finishes.
+        coach_behaviors: Coach behavior definitions chosen by the clubs.
 
     Returns:
         Task responsible for executing and cleaning up the match.
@@ -135,6 +193,7 @@ def start_match_task(
         worker_pool.register_match(
             match.match_id,
             behaviors,
+            coach_behaviors,
         )
 
         coordinator = BehaviorCoordinator(
@@ -171,6 +230,7 @@ def start_match(
     match: Match,
     behaviors: list[BehaviorDefinition],
     on_finished: Callable[[Match], Awaitable[None]] | None = None,
+    coach_behaviors: list[BehaviorDefinition] | None = None,
 ) -> int:
     """
     Start a match in the background and return its ID.
@@ -182,6 +242,7 @@ def start_match(
         match: Match to execute.
         behaviors: Available behavior definitions for the match.
         on_finished: Optional callback executed after the match finishes.
+        coach_behaviors: Coach behavior definitions chosen by the clubs.
 
     Returns:
         Identifier of the started match.
@@ -189,7 +250,8 @@ def start_match(
     start_match_task(
         match=match,
         behaviors=behaviors,
-        on_finished=on_finished
+        on_finished=on_finished,
+        coach_behaviors=coach_behaviors,
     )
 
     return match.match_id
@@ -249,10 +311,14 @@ def change_player_behavior(
     if behavior is None:
         raise LookupError("Behavior not available")
 
-    player.current_behavior_id = behavior_id
+    # applied at the beginning of the next tick, over the coach assignments;
+    # the name is kept so the snapshot shows it once the change is applied
     behavior_name = getattr(behavior, "name", None)
-    if isinstance(behavior_name, str):
-        player.current_behavior_name = behavior_name
+    participation.plan_behavior_change(
+        player_id,
+        behavior_id,
+        behavior_name if isinstance(behavior_name, str) else None,
+    )
 
 
 async def stop_running_matches() -> None:

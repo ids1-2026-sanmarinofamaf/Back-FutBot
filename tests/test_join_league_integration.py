@@ -6,6 +6,7 @@ import pytest
 
 from app.models.user import User
 from app.models.club import Club
+from app.models.coach_behavior import CoachBehavior
 from app.models.player import Player
 from app.models.league import League, LeagueState, LeaguePrivacy
 from app.repositories import behavior_repository
@@ -445,3 +446,67 @@ async def test_join_private_league_with_correct_password(
     )
 
     assert roster_count == 1
+
+
+COACH_CODE = "def coach():\n    return []\n"
+
+
+@pytest.mark.asyncio
+async def test_join_league_saves_coach_behavior_in_roster(
+    db,
+    test_user,
+    test_club,
+    test_league,
+    valid_join_data,
+):
+    coach_behavior = CoachBehavior(club_id=test_club.id, name="Coach", code=COACH_CODE)
+    db.add(coach_behavior)
+    db.flush()
+
+    valid_join_data.roster.coach_behavior_id = coach_behavior.id
+
+    _, roster = await join_league(
+        db=db,
+        league_id=test_league.id,
+        user_id=test_user.id,
+        data=valid_join_data,
+    )
+
+    db.expire_all()
+    assert db.get(Roster, roster.id).coach_behavior_id == coach_behavior.id
+
+
+@pytest.mark.asyncio
+async def test_join_league_rejects_foreign_coach_behavior(
+    db,
+    test_user,
+    test_club,
+    test_league,
+    test_league_creator,
+    valid_join_data,
+):
+    foreign_coach_behavior = CoachBehavior(
+        club_id=test_league_creator.id,
+        name="Coach",
+        code=COACH_CODE,
+    )
+    db.add(foreign_coach_behavior)
+    db.flush()
+
+    valid_join_data.roster.coach_behavior_id = foreign_coach_behavior.id
+
+    with pytest.raises(InvalidRoster, match="Coach behavior doesn't exist."):
+        await join_league(
+            db=db,
+            league_id=test_league.id,
+            user_id=test_user.id,
+            data=valid_join_data,
+        )
+
+    roster_count = db.scalar(
+        select(func.count())
+        .select_from(Roster)
+        .where(Roster.club_id == test_club.id)
+    )
+
+    assert roster_count == 0

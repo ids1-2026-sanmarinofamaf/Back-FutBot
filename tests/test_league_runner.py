@@ -63,12 +63,16 @@ class ControlledMatchStarter:
         self.cancelled = []
         self.tasks = []
 
-    def __call__(self, *, match, behaviors):
+    def __call__(self, *, match, behaviors, coach_behaviors=None):
         if match.match_id == self.fail_during_start:
             raise RuntimeError("Cannot start match")
 
         self.calls.append(
-            call(match=match, behaviors=behaviors)
+            call(
+                match=match,
+                behaviors=behaviors,
+                coach_behaviors=coach_behaviors,
+            )
         )
 
         task = asyncio.create_task(
@@ -155,6 +159,7 @@ class ControlledLeagueRound:
         matches,
         behaviors_by_match,
         started_event,
+        coach_behaviors_by_match=None,
     ):
         assert get_active_round(
             started_event.league_id,
@@ -202,6 +207,16 @@ def runner_event_setup(
         "load_match_behaviors",
         Mock(return_value=[]),
     )
+    monkeypatch.setattr(
+        league_runner,
+        "load_match_coach_behaviors",
+        Mock(return_value=[]),
+    )
+    monkeypatch.setattr(
+        league_runner,
+        "load_match_available_behaviors",
+        Mock(),
+    )
     monkeypatch.setattr(league_runner, "run_round_matches", execute)
     monkeypatch.setattr(league_runner.asyncio, "sleep", AsyncMock())
     monkeypatch.setattr(league_runner, "_notify_league_event", notify)
@@ -245,6 +260,17 @@ def mock_match_execution(
         league_runner,
         "load_match_behaviors",
         behavior_loader,
+    )
+
+    monkeypatch.setattr(
+        league_runner,
+        "load_match_coach_behaviors",
+        Mock(return_value=[]),
+    )
+    monkeypatch.setattr(
+        league_runner,
+        "load_match_available_behaviors",
+        Mock(),
     )
 
     return behavior_loader
@@ -413,10 +439,12 @@ async def test_run_round_matches_concurrently(
             call(
                 match=runtime_matches[0],
                 behaviors=["behavior_1"],
+                coach_behaviors=None,
             ),
             call(
                 match=runtime_matches[1],
                 behaviors=["behavior_2"],
+                coach_behaviors=None,
             ),
         ]
 
@@ -518,6 +546,24 @@ async def test_run_round_matches_handles_cancellation(
     assert all(task.done() for task in starter.tasks)
     assert all(task.cancelled() for task in starter.tasks)
     assert set(starter.cancelled) == {100, 101}
+
+
+@pytest.mark.asyncio
+async def test_run_round_matches_passes_each_match_its_coaches(
+    monkeypatch,
+    runtime_matches,
+):
+    starter = ControlledMatchStarter()
+    mock_match_execution(monkeypatch, starter)
+    starter.release.set()
+
+    await league_runner.run_round_matches(
+        matches=runtime_matches,
+        behaviors_by_match={100: [], 101: []},
+        coach_behaviors_by_match={100: ["coach_a"], 101: []},
+    )
+
+    assert [c.kwargs["coach_behaviors"] for c in starter.calls] == [["coach_a"], []]
 
 
 @pytest.mark.asyncio
@@ -994,6 +1040,8 @@ async def test_run_league_executes_rounds(monkeypatch, round_db, round_case):
     monkeypatch.setattr(league_runner, "SessionLocal", sessionmaker(bind=round_db.bind))
     monkeypatch.setattr(league_runner, "build_round_matches", build)
     monkeypatch.setattr(league_runner, "load_match_behaviors", Mock(return_value=[]))
+    monkeypatch.setattr(league_runner, "load_match_coach_behaviors", Mock(return_value=["coach"]))
+    monkeypatch.setattr(league_runner, "load_match_available_behaviors", Mock())
     monkeypatch.setattr(league_runner, "run_round_matches", execute)
     monkeypatch.setattr(league_runner.asyncio, "sleep", sleep)
 
@@ -1003,6 +1051,11 @@ async def test_run_league_executes_rounds(monkeypatch, round_db, round_case):
     assert execute.await_args_list[0].kwargs["matches"] is first_round
     assert execute.await_args_list[1].kwargs["matches"] is second_round
     assert execute.await_args_list[0].kwargs["behaviors_by_match"] == {1001: [], 1002: []}
+    assert execute.await_args_list[0].kwargs["coach_behaviors_by_match"] == {
+        1001: ["coach"],
+        1002: ["coach"],
+    }
+    assert league_runner.load_match_available_behaviors.call_count == 3
     assert execute.await_args_list[1].kwargs["behaviors_by_match"] == {1003: []}
     sleep.assert_awaited_once()
     assert 0 < sleep.await_args.args[0] <= league_runner.ROUND_BREAK_SECONDS
@@ -1035,6 +1088,8 @@ async def test_run_league_resumes_pending_round(monkeypatch, round_db, round_cas
     monkeypatch.setattr(league_runner, "SessionLocal", sessionmaker(bind=round_db.bind))
     monkeypatch.setattr(league_runner, "build_round_matches", build)
     monkeypatch.setattr(league_runner, "load_match_behaviors", Mock(return_value=[]))
+    monkeypatch.setattr(league_runner, "load_match_coach_behaviors", Mock(return_value=["coach"]))
+    monkeypatch.setattr(league_runner, "load_match_available_behaviors", Mock())
     monkeypatch.setattr(league_runner, "run_round_matches", execute)
     monkeypatch.setattr(league_runner.asyncio, "sleep", sleep)
 
@@ -1133,8 +1188,16 @@ async def test_round_start_event_requires_all_matches_registered(
             )
 
             assert timeline.mock_calls == [
-                call.start(match=runtime_matches[0], behaviors=[]),
-                call.start(match=runtime_matches[1], behaviors=[]),
+                call.start(
+                    match=runtime_matches[0],
+                    behaviors=[],
+                    coach_behaviors=None,
+                ),
+                call.start(
+                    match=runtime_matches[1],
+                    behaviors=[],
+                    coach_behaviors=None,
+                ),
                 call.notify(10, event),
             ]
             notify.assert_awaited_once_with(10, event)

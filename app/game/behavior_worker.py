@@ -1,13 +1,21 @@
-from app.game.models.runtime_behavior import RuntimeBehavior
+from app.game.models.runtime_behavior import RuntimeBehavior, RuntimeCoachBehavior
 from app.game.models.actions import MoveAction, KickAction, WaitAction
 from app.game.models.behavior_job import BehaviorJob
+from app.game.models.coach_job import CoachJob
+from app.game.types import CoachCommand
 
-from app.game.behavior_executor import execute_behavior_strict
+from app.game.behavior_executor import (
+    execute_behavior_strict,
+    execute_coach_behavior,
+)
 from app.game.behavior_timeout import (
     BehaviorTimeout,
     behavior_time_limit,
 )
-from app.game.constants import BEHAVIOR_EXECUTION_TIMEOUT_MS
+from app.game.constants import (
+    BEHAVIOR_EXECUTION_TIMEOUT_MS,
+    COACH_EXECUTION_TIMEOUT_MS,
+)
 
 
 Action = MoveAction | KickAction | WaitAction
@@ -19,6 +27,10 @@ class BehaviorWorker:
 
     Each behavior instance is identified by match, player and behavior.
     Failed behaviors are disabled for the remainder of their match.
+
+    Coach (DT) instances are kept in a separate registry, identified by
+    match, club and coach behavior, since coach ids come from another table.
+    A failed coach is not disabled: it just produces no assignments.
     """
     def __init__(self) -> None:
         """
@@ -30,6 +42,11 @@ class BehaviorWorker:
         ] = {}
 
         self._disabled_behaviors: dict[int, set[int]] = {}
+
+        self._coach_cache: dict[
+            tuple[int, int, int],
+            RuntimeCoachBehavior,
+        ] = {}
 
 
     def register_player_behavior(
@@ -190,6 +207,15 @@ class BehaviorWorker:
         for key in keys_to_remove:
             del self._runtime_cache[key]
 
+        coach_keys_to_remove = [
+            key
+            for key in self._coach_cache
+            if key[0] == match_id
+        ]
+
+        for key in coach_keys_to_remove:
+            del self._coach_cache[key]
+
         self._disabled_behaviors.pop(match_id, None)
 
 
@@ -228,3 +254,119 @@ class BehaviorWorker:
             match_id,
             set(),
         ).copy()
+
+
+    def register_coach_behavior(
+        self,
+        match_id: int,
+        club_id: int,
+        coach_behavior_id: int,
+        runtime_coach_behavior: RuntimeCoachBehavior,
+    ) -> None:
+        """
+        Register a compiled coach behavior instance for a specific club.
+
+        Args:
+            match_id: Identifier of the match.
+            club_id: Identifier of the club.
+            coach_behavior_id: Identifier of the coach behavior.
+            runtime_coach_behavior: Compiled coach behavior instance.
+        """
+        key = (match_id, club_id, coach_behavior_id)
+
+        self._coach_cache[key] = runtime_coach_behavior
+
+
+    def has_coach_behavior(
+        self,
+        match_id: int,
+        club_id: int,
+        coach_behavior_id: int,
+    ) -> bool:
+        """
+        Check whether a club has a registered coach behavior instance.
+
+        Args:
+            match_id: Identifier of the match.
+            club_id: Identifier of the club.
+            coach_behavior_id: Identifier of the coach behavior.
+
+        Returns:
+            True if the coach behavior instance exists, False otherwise.
+        """
+        key = (match_id, club_id, coach_behavior_id)
+
+        return key in self._coach_cache
+
+
+    def execute_coach_batch(
+        self,
+        jobs: list[CoachJob],
+        timeout_ms: int = COACH_EXECUTION_TIMEOUT_MS,
+        *,
+        match_id: int,
+    ) -> list[list[CoachCommand]]:
+        """
+        Execute coach behaviors sequentially with individual timeouts.
+
+        A coach that is not registered, fails or exceeds its timeout
+        produces no commands, without interrupting the batch.
+
+        Args:
+            jobs: Coach execution requests for the current tick.
+            timeout_ms: Maximum execution time per coach, in milliseconds.
+            match_id: Identifier of the match.
+
+        Returns:
+            The commands of each job, in the same order as the jobs.
+
+        Raises:
+            ValueError: If timeout_ms is less than or equal to zero.
+        """
+        if timeout_ms <= 0:
+            raise ValueError("timeout_ms must be positive")
+
+        return [
+            self._execute_coach_job(job, timeout_ms, match_id)
+            for job in jobs
+        ]
+
+
+    def _execute_coach_job(
+        self,
+        job: CoachJob,
+        timeout_ms: int,
+        match_id: int,
+    ) -> list[CoachCommand]:
+        """
+        Execute a club's coach behavior for a specific match.
+
+        Args:
+            job: Coach execution request.
+            timeout_ms: Maximum execution time in milliseconds.
+            match_id: Identifier of the match.
+
+        Returns:
+            The coach commands, or an empty list if execution fails.
+        """
+        key = (
+            match_id,
+            job.club_id,
+            job.coach_behavior_id,
+        )
+        runtime = self._coach_cache.get(key)
+
+        if runtime is None:
+            return []
+
+        # execute_coach_behavior already turns errors into an empty list;
+        # the timeout is a BaseException, so it is caught here
+        try:
+            with behavior_time_limit(timeout_ms):
+                return execute_coach_behavior(
+                    job.context,
+                    runtime,
+                )
+
+        except BehaviorTimeout:
+            return []

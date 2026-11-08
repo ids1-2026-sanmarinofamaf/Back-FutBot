@@ -17,6 +17,7 @@ from app.api import (
     matches,
     behaviors,
     behavior_preview,
+    coach_behaviors,
     leagues,
     ranking,
     clubs,
@@ -63,11 +64,14 @@ async def lifespan(app: FastAPI):
 app = FastAPI(lifespan=lifespan)
 
 
-# POST /leagues must answer 400 on an invalid body; other endpoints keep 422.
+# these POST endpoints must answer 400 on an invalid body; every other endpoint keeps FastAPI's default 422
+BAD_REQUEST_ON_INVALID_BODY = {"/leagues", "/clubes/me/coach_behaviors"}
+
+
 @app.exception_handler(RequestValidationError)
 async def validation_exception_handler(request: Request, exc: RequestValidationError):
     response = await request_validation_exception_handler(request, exc)
-    if request.method == "POST" and request.url.path == "/leagues":
+    if request.method == "POST" and request.url.path in BAD_REQUEST_ON_INVALID_BODY:
         response.status_code = status.HTTP_400_BAD_REQUEST
     return response
 
@@ -86,6 +90,7 @@ app.include_router(sessions_websocket.router)
 app.include_router(friendly_game_websocket_router)
 app.include_router(behavior_preview.router)
 app.include_router(behaviors.router)
+app.include_router(coach_behaviors.router)
 app.include_router(leagues.router)
 app.include_router(ranking.router)
 app.include_router(league_websocket_router)

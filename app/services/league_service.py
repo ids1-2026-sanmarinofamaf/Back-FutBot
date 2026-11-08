@@ -17,8 +17,8 @@ from app.repositories import (
     behavior_repository,
     match_repository,
 )
+from app.services.coach_behavior_service import validate_coach_behavior
 from app.schemas.roster import RosterCreate, RosterDetail
-from app.models.player_on_roster import PlayerOnRoster
 
 from app.services.fixture_service import generate_fixture
 
@@ -106,7 +106,8 @@ def create_league(db: Session, data: LeagueCreate , current_user_id):
         # create roster object with the data
         roster = Roster(
             club_id=club.id,
-            formation=data.roster.formation
+            formation=data.roster.formation,
+            coach_behavior_id=data.roster.coach_behavior_id,
         )
         roster.players = [
                     PlayerOnRoster(
@@ -132,6 +133,9 @@ def create_league(db: Session, data: LeagueCreate , current_user_id):
                     raise ValueError("Behavior does not exist")
                 if not behavior.is_default and behavior.club_id != club.id:
                     raise ValueError("Behavior does not belong to user's club")
+
+        validate_coach_behavior(db, club.id, data.roster.coach_behavior_id)
+    
         # save roster on db
         roster_repository.save(db,roster)
         league = League(
@@ -280,6 +284,7 @@ async def join_league(
         roster = Roster(
             club_id=club.id,
             formation=data.roster.formation,
+            coach_behavior_id=data.roster.coach_behavior_id,
         )
         roster.players = [
             PlayerOnRoster(
@@ -320,6 +325,12 @@ async def join_league(
                     raise InvalidRoster(
                         "Behavior does not belong to user's club"
                     )
+
+        try:
+            validate_coach_behavior(db, club.id, data.roster.coach_behavior_id)
+        except ValueError as error:
+            raise InvalidRoster(str(error))
+
         roster_repository.save(
             db=db,
             roster=roster,
@@ -752,4 +763,5 @@ def get_league_roster(
             }
             for p in roster.players
         ],
+        coach_behavior_id=roster.coach_behavior_id,
     )

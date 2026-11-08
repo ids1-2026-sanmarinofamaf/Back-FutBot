@@ -36,7 +36,12 @@ from app.services.league_service import (
 from app.services.league_websocket_service import league_connection_manager
 from app.services import session_websocket_service
 from app.services.match_builder import create_match_participation
-from app.services.match_service import load_match_behaviors, start_match_task
+from app.services.match_service import (
+    load_match_behaviors,
+    load_match_coach_behaviors,
+    load_match_available_behaviors,
+    start_match_task,
+)
 
 from app.schemas.league_websocket import (
     LeagueRoundStartedEvent,
@@ -136,18 +141,21 @@ def build_round_matches(
 async def run_round_matches(
     matches: list[RuntimeMatch],
     behaviors_by_match: dict[int, list[BehaviorDefinition]],
+    coach_behaviors_by_match: dict[int, list[BehaviorDefinition]] | None = None,
     started_event: LeagueRoundStartedEvent | None = None,
 ) -> list[RuntimeMatch]:
     """
     Run all matches of a round concurrently.
     """
     tasks = []
+    coach_behaviors_by_match = coach_behaviors_by_match or {}
 
     try:
         for match in matches:
             task = start_match_task(
                 match=match,
                 behaviors=behaviors_by_match[match.match_id],
+                coach_behaviors=coach_behaviors_by_match.get(match.match_id),
             )
             tasks.append(task)
 
@@ -373,6 +381,15 @@ async def run_league(league_id: int) -> None:
                 for match in matches
             }
 
+            # the DT of each club and the behaviors it can assign
+            coach_behaviors = {
+                match.match_id: load_match_coach_behaviors(db=db, match=match)
+                for match in matches
+            }
+
+            for match in matches:
+                load_match_available_behaviors(db=db, match=match)
+
         register_round(league_id, round_number)
 
         try:
@@ -380,6 +397,7 @@ async def run_league(league_id: int) -> None:
             await run_round_matches(
                 matches=matches,
                 behaviors_by_match=behaviors,
+                coach_behaviors_by_match=coach_behaviors,
                 started_event=LeagueRoundStartedEvent(
                     league_id=league_id,
                     round=round_number,

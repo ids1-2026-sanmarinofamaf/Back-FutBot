@@ -17,14 +17,16 @@ from app.game.behavior_compiler import (
     BehaviorCompilationError,
     BehaviorCompiler,
 )
+from app.game.behavior_executor import _is_assignment
 from app.game.context import (
     BehaviorContext,
+    CoachContext,
     clear_current_context,
     set_current_context,
 )
 from app.game.models.actions import KickAction, MoveAction, WaitAction
 from app.game.models.behavior_definition import BehaviorDefinition
-from app.game.types import Period, Side
+from app.game.types import CoachTrigger, Period, Side, Substitution
 
 
 class BehaviorValidationError(Exception):
@@ -78,16 +80,27 @@ SAFE_BUILTINS: frozenset[str] = frozenset(
         "None",
     }
 )
-# En otras ramas se modifica build_namespace() para distinguir entre player y coach. Aquí se mantiene 
-# retrocompatibilidad para evitar conflictos. Debería ajustarse en la versión final.
+# the whitelist of each entrypoint is exactly what its namespace exposes
 _compiler = BehaviorCompiler()
-ALLOWED_PRIMITIVES: frozenset[str] = frozenset(
-    (
-        _compiler._build_player_namespace()
-        if hasattr(_compiler, "_build_player_namespace")
-        else _compiler._build_namespace()
-    ).keys()
+ALLOWED_PLAYER_PRIMITIVES: frozenset[str] = frozenset(
+    _compiler._build_player_namespace().keys()
 )
+ALLOWED_COACH_PRIMITIVES: frozenset[str] = frozenset(
+    _compiler._build_coach_namespace().keys()
+)
+# kept for backwards compatibility: the player whitelist
+ALLOWED_PRIMITIVES: frozenset[str] = ALLOWED_PLAYER_PRIMITIVES
+
+_ALLOWED_PRIMITIVES_BY_ENTRYPOINT: dict[str, frozenset[str]] = {
+    "play": ALLOWED_PLAYER_PRIMITIVES,
+    "coach": ALLOWED_COACH_PRIMITIVES,
+}
+
+# message used when the entrypoint has no return with a value
+_MISSING_RETURN_MESSAGES: dict[str, str] = {
+    "play": "La función play() debe retornar una acción (move, kick o wait)",
+    "coach": "La función coach() debe retornar una lista de assign(...) y/o substitute(...)",
+}
 
 
 def validate_behavior_code(code: str) -> bool:
@@ -114,7 +127,34 @@ def validate_behavior_code(code: str) -> bool:
     if not isinstance(code, str) or not code.strip():
         raise BehaviorValidationError("El comportamiento no puede estar vacío")
 
-    _run_validation_in_worker(code)
+    _run_validation_in_worker(code, entrypoint="play")
+
+    return True
+
+
+def validate_coach_code(code: str) -> bool:
+    """
+    Validate coach (DT) behavior Python source code.
+
+    Runs the same pipeline as validate_behavior_code, with coach() as the
+    entrypoint: the coach primitives as whitelist, and a dry-run of coach()
+    against sample CoachContext scenarios. coach() must return a list whose
+    elements are built with assign(...) or substitute(...); an empty list
+    is valid.
+
+    Args:
+        code: Raw Python source code defining the coach behavior.
+
+    Returns:
+        True if the coach code passes all validation stages.
+
+    Raises:
+        BehaviorValidationError: If the code is empty or fails any stage.
+    """
+    if not isinstance(code, str) or not code.strip():
+        raise BehaviorValidationError("El comportamiento no puede estar vacío")
+
+    _run_validation_in_worker(code, entrypoint="coach")
 
     return True
 
@@ -189,7 +229,7 @@ def _validate_ast(tree: ast.AST) -> None:
             )
 
 
-def _validate_module_structure(tree: ast.Module) -> None:
+def _validate_module_structure(tree: ast.Module, entrypoint: str = "play") -> None:
     """
     Validate top-level module statements and the presence of a valid play() function.
 
@@ -204,18 +244,18 @@ def _validate_module_structure(tree: ast.Module) -> None:
         BehaviorValidationError: If disallowed top-level statements exist,
             play() is missing, or play() never returns a value.
     """
-    play_node: ast.FunctionDef | None = None
+    entry_node: ast.FunctionDef | None = None
 
     for stmt in tree.body:
         if isinstance(stmt, ast.FunctionDef):
-            if stmt.name == "play":
-                play_node = stmt
+            if stmt.name == entrypoint:
+                entry_node = stmt
             continue
 
         if isinstance(stmt, (ast.Assign, ast.AnnAssign)):
             if any(isinstance(sub, ast.Call) for sub in ast.walk(stmt)):
                 raise BehaviorValidationError(
-                    "No se permiten llamadas a funciones fuera de def play() o funciones auxiliares"
+                    f"No se permiten llamadas a funciones fuera de def {entrypoint}() o funciones auxiliares"
                 )
             continue
 
@@ -230,22 +270,20 @@ def _validate_module_structure(tree: ast.Module) -> None:
             "En el nivel principal del archivo solo se permiten constantes y definiciones de funciones (def)"
         )
 
-    if play_node is None:
+    if entry_node is None:
         raise BehaviorValidationError(
-            "Se debe definir la función principal 'def play():'"
+            f"Se debe definir la función principal 'def {entrypoint}():'"
         )
 
     has_value_return = any(
         isinstance(node, ast.Return)
         and node.value is not None
         and not (isinstance(node.value, ast.Constant) and node.value.value is None)
-        for node in ast.walk(play_node)
+        for node in ast.walk(entry_node)
     )
 
     if not has_value_return:
-        raise BehaviorValidationError(
-            "La función play() debe retornar una acción (move, kick o wait)"
-        )
+        raise BehaviorValidationError(_MISSING_RETURN_MESSAGES[entrypoint])
 
 
 def _collect_defined_names(tree: ast.AST) -> set[str]:
@@ -279,7 +317,10 @@ def _collect_defined_names(tree: ast.AST) -> set[str]:
     return defined
 
 
-def _validate_identifiers(tree: ast.AST) -> None:
+def _validate_identifiers(
+    tree: ast.AST,
+    allowed_primitives: frozenset[str] = ALLOWED_PLAYER_PRIMITIVES,
+) -> None:
     """
     Verify that all loaded identifiers belong to the allowed whitelist.
 
@@ -294,7 +335,7 @@ def _validate_identifiers(tree: ast.AST) -> None:
             referenced.
     """
     user_defined = _collect_defined_names(tree)
-    allowed_names = ALLOWED_PRIMITIVES | SAFE_BUILTINS | user_defined
+    allowed_names = allowed_primitives | SAFE_BUILTINS | user_defined
 
     for node in ast.walk(tree):
         if isinstance(node, ast.Name) and isinstance(node.ctx, ast.Load):
@@ -305,7 +346,7 @@ def _validate_identifiers(tree: ast.AST) -> None:
                 )
 
 
-def _compile_behavior(code: str):
+def _compile_behavior(code: str, entrypoint: str = "play"):
     """
     Compile behavior source code using BehaviorCompiler.
 
@@ -322,7 +363,7 @@ def _compile_behavior(code: str):
     definition = BehaviorDefinition(id=0, code=code)
 
     try:
-        return compiler.compile(definition)
+        return compiler.compile(definition, entrypoint=entrypoint)
     except BehaviorCompilationError as exc:
         cause = exc.__cause__
         if cause is not None:
@@ -330,21 +371,23 @@ def _compile_behavior(code: str):
                 f"Error al compilar el código: {cause}"
             ) from exc
         raise BehaviorValidationError(
-            "Se debe definir correctamente la función play()"
+            f"Se debe definir correctamente la función {entrypoint}()"
         ) from exc
 
 
-def _validate_play_signature(play_fn) -> None:
+def _validate_entrypoint_signature(entry_fn, entrypoint: str = "play") -> None:
     """
-    Verify that the compiled play() function requires no positional or keyword arguments.
+    Verify that the compiled entrypoint function (play() or coach()) requires
+    no positional or keyword arguments.
 
     Args:
-        play_fn: Callable play function extracted from the compiled behavior.
+        entry_fn: Callable entrypoint extracted from the compiled behavior.
+        entrypoint: Name of the entrypoint, used in the error message.
 
     Raises:
-        BehaviorValidationError: If play() defines any required parameters.
+        BehaviorValidationError: If the entrypoint defines required parameters.
     """
-    signature = inspect.signature(play_fn)
+    signature = inspect.signature(entry_fn)
     required_params = [
         param
         for param in signature.parameters.values()
@@ -359,8 +402,13 @@ def _validate_play_signature(play_fn) -> None:
 
     if required_params:
         raise BehaviorValidationError(
-            "La función play() no debe llevar argumentos"
+            f"La función {entrypoint}() no debe llevar argumentos"
         )
+
+
+def _validate_play_signature(play_fn) -> None:
+    """Kept for backwards compatibility; see _validate_entrypoint_signature."""
+    _validate_entrypoint_signature(play_fn, "play")
 
 
 def _build_sample_contexts() -> list[BehaviorContext]:
@@ -414,42 +462,135 @@ def _build_sample_contexts() -> list[BehaviorContext]:
     return [far_ball_ctx, near_ball_ctx]
 
 
-def _validation_worker(code: str, output_queue: Queue) -> None:
+def _build_sample_coach_contexts() -> list[CoachContext]:
+    """
+    Build synthetic CoachContext scenarios for dry-run validation.
+
+    Covers every trigger, and both a context where a substitution can be
+    requested and one where it cannot (last quarter), since coach code
+    usually branches on trigger() and can_substitute().
+
+    Returns:
+        List of sample CoachContext instances.
+    """
+    def build(
+        trigger: CoachTrigger,
+        my_team_score: int,
+        opponent_score: int,
+        current_period: Period,
+        can_substitute: bool,
+    ) -> CoachContext:
+        return CoachContext(
+            teammates=[(1, (10.0, 10.0)), (2, (15.0, 5.0)), (3, (15.0, 15.0))],
+            opponents=[(4, (25.0, 5.0)), (5, (25.0, 10.0)), (6, (25.0, 15.0))],
+            ball=((20.0, 10.0), (0.0, 0.0)),
+            my_team_score=my_team_score,
+            opponent_score=opponent_score,
+            current_period=current_period,
+            side=Side.LEFT,
+            match_time_remaining=120.0,
+            period_time_remaining=30.0,
+            trigger=trigger,
+            available_behaviors=["Attacker", "Defender", "Midfielder"],
+            current_behaviors={1: "Defender", 2: "Midfielder", 3: "Attacker"},
+            bench=[7, 8, 9],
+            can_substitute=can_substitute,
+        )
+
+    return [
+        build(CoachTrigger.PERIOD_START, 0, 0, Period.FIRST_QUARTER, True),
+        build(CoachTrigger.GOAL_FOR, 1, 0, Period.SECOND_QUARTER, True),
+        build(CoachTrigger.GOAL_AGAINST, 1, 1, Period.THIRD_QUARTER, False),
+        build(CoachTrigger.PERIOD_START, 1, 2, Period.FOURTH_QUARTER, False),
+    ]
+
+
+def _run_play_dry_run(runtime_behavior) -> None:
+    """
+    Execute play() against each sample BehaviorContext and check the action.
+
+    Raises:
+        BehaviorValidationError: If play() raises or returns an invalid action.
+    """
+    for context in _build_sample_contexts():
+        set_current_context(context)
+        try:
+            action = runtime_behavior.play()
+        except Exception as exc:
+            raise BehaviorValidationError(
+                f"Error de ejecución en play(): {exc}"
+            ) from exc
+        finally:
+            clear_current_context()
+
+        if not isinstance(action, (MoveAction, KickAction, WaitAction)):
+            raise BehaviorValidationError(
+                "La función play() debe retornar una acción válida: move(), kick() o wait()"
+            )
+
+
+def _run_coach_dry_run(runtime_coach) -> None:
+    """
+    Execute coach() against each sample CoachContext and check the result.
+
+    The result must be a list (possibly empty) whose elements were built with
+    assign(...) or substitute(...). During a match invalid elements are just
+    discarded; here they are rejected so the user finds the mistake early.
+
+    Raises:
+        BehaviorValidationError: If coach() raises or returns an invalid value.
+    """
+    for context in _build_sample_coach_contexts():
+        set_current_context(context)
+        try:
+            commands = runtime_coach.coach()
+        except Exception as exc:
+            raise BehaviorValidationError(
+                f"Error de ejecución en coach(): {exc}"
+            ) from exc
+        finally:
+            clear_current_context()
+
+        if not isinstance(commands, list):
+            raise BehaviorValidationError(
+                "La función coach() debe retornar una lista de assign(...) y/o substitute(...)"
+            )
+
+        for command in commands:
+            if not (_is_assignment(command) or isinstance(command, Substitution)):
+                raise BehaviorValidationError(
+                    "Cada elemento de la lista que retorna coach() debe "
+                    "construirse con assign(...) o substitute(...)"
+                )
+
+
+def _validation_worker(code: str, output_queue: Queue, entrypoint: str = "play") -> None:
     """
     Worker target executed in a separate process to validate behavior code.
 
-    Runs static AST checks, compiles the behavior once, validates the play()
-    signature, and executes play() against each sample context, sending None
-    to output_queue on success or an error message string on failure.
+    Runs static AST checks, compiles the behavior once, validates the
+    entrypoint signature, and executes the entrypoint (play() or coach())
+    against each sample context, sending None to output_queue on success or
+    an error message string on failure.
 
     Args:
         code: Raw Python source code string to validate, compile, and execute.
         output_queue: Multiprocessing queue used to report the validation result.
+        entrypoint: "play" for player behaviors, "coach" for coach behaviors.
     """
     try:
         tree = _parse_syntax(code)
         _validate_ast(tree)
-        _validate_module_structure(tree)
-        _validate_identifiers(tree)
+        _validate_module_structure(tree, entrypoint)
+        _validate_identifiers(tree, _ALLOWED_PRIMITIVES_BY_ENTRYPOINT[entrypoint])
 
-        runtime_behavior = _compile_behavior(code)
-        _validate_play_signature(runtime_behavior.play)
+        runtime_behavior = _compile_behavior(code, entrypoint)
+        _validate_entrypoint_signature(getattr(runtime_behavior, entrypoint), entrypoint)
 
-        for context in _build_sample_contexts():
-            set_current_context(context)
-            try:
-                action = runtime_behavior.play()
-            except Exception as exc:
-                raise BehaviorValidationError(
-                    f"Error de ejecución en play(): {exc}"
-                ) from exc
-            finally:
-                clear_current_context()
-
-            if not isinstance(action, (MoveAction, KickAction, WaitAction)):
-                raise BehaviorValidationError(
-                    "La función play() debe retornar una acción válida: move(), kick() o wait()"
-                )
+        if entrypoint == "coach":
+            _run_coach_dry_run(runtime_behavior)
+        else:
+            _run_play_dry_run(runtime_behavior)
 
         output_queue.put(None)
     except BehaviorValidationError as exc:
@@ -458,7 +599,7 @@ def _validation_worker(code: str, output_queue: Queue) -> None:
         output_queue.put(f"Error al validar la ejecución del comportamiento: {exc}")
 
 
-def _run_validation_in_worker(code: str) -> None:
+def _run_validation_in_worker(code: str, entrypoint: str = "play") -> None:
     """
     Execute the complete validation pipeline in an isolated child process with a strict timeout.
 
@@ -476,7 +617,7 @@ def _run_validation_in_worker(code: str) -> None:
     output_queue: Queue = context.Queue()
     process = context.Process(
         target=_validation_worker,
-        args=(code, output_queue),
+        args=(code, output_queue, entrypoint),
     )
 
     process.start()

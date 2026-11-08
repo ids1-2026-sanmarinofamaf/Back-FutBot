@@ -9,6 +9,8 @@ from uuid import uuid4
 from app.game.models.behavior_definition import BehaviorDefinition
 from app.game.models.actions import MoveAction, KickAction, WaitAction
 from app.game.models.behavior_job import BehaviorJob
+from app.game.models.coach_job import CoachJob
+from app.game.types import CoachCommand
 
 from app.game.behavior_compiler import BehaviorCompiler, BehaviorCompilationError
 from app.game.behavior_worker import BehaviorWorker
@@ -53,6 +55,7 @@ class BehaviorWorkerPool:
 
         self._match_workers: dict[int, int] = {}
         self._match_definitions: dict[int, list[BehaviorDefinition]] = {}
+        self._match_coach_definitions: dict[int, list[BehaviorDefinition]] = {}
         self._disabled_behaviors: dict[int, set[int]] = {}
         self._closed = False
 
@@ -80,6 +83,7 @@ class BehaviorWorkerPool:
             "register_match": Register definitions for a match.
             "release-match": Release state for a finished match.
             "execute_batch": Execute one match batch.
+            "execute_coach_batch": Execute the coaches of one match.
             "shutdown": Stop the worker process.
 
         Args:
@@ -89,6 +93,7 @@ class BehaviorWorkerPool:
         worker = BehaviorWorker()
         compiler = BehaviorCompiler()
         definitions: dict[int, dict[int, BehaviorDefinition]] = {}
+        coach_definitions: dict[int, dict[int, BehaviorDefinition]] = {}
 
         output_queue.put({
             "status": "ready"
@@ -110,12 +115,18 @@ class BehaviorWorkerPool:
                     for behavior in message["behaviors"]
                 }
 
+                coach_definitions[match_id] = {
+                    coach_behavior.id: coach_behavior
+                    for coach_behavior in message.get("coach_behaviors", [])
+                }
+
                 for behavior_id in message.get("disabled_behavior_ids", []):
                     worker.disable_behavior(match_id, behavior_id)
 
             elif command == "release_match":
                 worker.release_match(match_id)
                 definitions.pop(match_id, None)
+                coach_definitions.pop(match_id, None)
 
             elif command == "execute_batch":
                 jobs = message["jobs"]
@@ -139,6 +150,27 @@ class BehaviorWorkerPool:
                     "disabled_behavior_ids": sorted(
                         worker.get_disabled_behaviors(match_id)
                     ),
+                })
+
+            elif command == "execute_coach_batch":
+                jobs = message["jobs"]
+                BehaviorWorkerPool._register_missing_coach_behaviors(
+                    worker,
+                    compiler,
+                    match_id,
+                    jobs,
+                    coach_definitions.get(match_id, {}),
+                )
+
+                assignments = worker.execute_coach_batch(
+                    jobs,
+                    match_id=match_id,
+                )
+
+                output_queue.put({
+                    "request_id": message["request_id"],
+                    "match_id": match_id,
+                    "assignments": assignments,
                 })
 
 
@@ -192,6 +224,56 @@ class BehaviorWorkerPool:
                 match_id,
                 job.player_id,
                 job.behavior_id,
+                runtime,
+            )
+
+
+    @staticmethod
+    def _register_missing_coach_behaviors(
+        worker: BehaviorWorker,
+        compiler: BehaviorCompiler,
+        match_id: int,
+        jobs: list[CoachJob],
+        definitions: dict[int, BehaviorDefinition],
+    ) -> None:
+        """
+        Compile and register missing club-specific coach behavior instances.
+
+        A coach that fails to compile is skipped, so executing it produces
+        no assignments.
+
+        Args:
+            worker: Worker holding compiled runtime instances.
+            compiler: Compiler used to create isolated runtime instances.
+            match_id: Identifier of the match being executed.
+            jobs: Coach requests for the current tic.
+            definitions: Coach source definitions available to the match.
+        """
+        for job in jobs:
+            if worker.has_coach_behavior(
+                match_id,
+                job.club_id,
+                job.coach_behavior_id,
+            ):
+                continue
+
+            definition = definitions.get(job.coach_behavior_id)
+            if definition is None:
+                continue
+
+            try:
+                runtime = compiler.compile(
+                    definition,
+                    entrypoint="coach",
+                )
+
+            except BehaviorCompilationError:
+                continue
+
+            worker.register_coach_behavior(
+                match_id,
+                job.club_id,
+                job.coach_behavior_id,
                 runtime,
             )
 
@@ -305,6 +387,7 @@ class BehaviorWorkerPool:
                 (
                     match_id,
                     self._match_definitions[match_id],
+                    self._match_coach_definitions.get(match_id, []),
                     sorted(
                         self._disabled_behaviors.get(
                             match_id,
@@ -316,11 +399,12 @@ class BehaviorWorkerPool:
                 if worker_index == index
             ]
 
-        for match_id, behaviors, disabled_ids in registrations:
+        for match_id, behaviors, coach_behaviors, disabled_ids in registrations:
             self._input_queues[index].put({
                 "command": "register_match",
                 "match_id": match_id,
                 "behaviors": behaviors,
+                "coach_behaviors": coach_behaviors,
                 "disabled_behavior_ids": disabled_ids,
             })
 
@@ -362,6 +446,7 @@ class BehaviorWorkerPool:
         self,
         match_id: int,
         behaviors: list[BehaviorDefinition],
+        coach_behaviors: list[BehaviorDefinition] | None = None,
     ) -> None:
         """
         Register a match and assign it to a worker for its lifetime.
@@ -369,6 +454,8 @@ class BehaviorWorkerPool:
         Args:
             match_id: Identifier of the match.
             behaviors: Behavior definitions available during the match.
+            coach_behaviors: Coach behavior definitions chosen by the
+                clubs of the match, if any.
 
         Raises:
             RuntimeError: If the pool has ben shut down.
@@ -397,36 +484,46 @@ class BehaviorWorkerPool:
                         "command": "register_match",
                         "match_id": match_id,
                         "behaviors": behaviors,
+                        "coach_behaviors": coach_behaviors or [],
                     })
                     self._match_workers[match_id] = index
                     self._match_definitions[match_id] = list(behaviors)
+                    self._match_coach_definitions[match_id] = list(
+                        coach_behaviors or []
+                    )
                     self._disabled_behaviors[match_id] = set()
 
 
     def _request_batch(
         self,
         index: int,
+        command: str,
         match_id: int,
-        jobs: list[BehaviorJob],
+        jobs: list[BehaviorJob] | list[CoachJob],
+        result_key: str,
+        result_type: type,
         deadline: float,
-    ) -> dict[int, Action] | None:
+    ) -> dict | None:
         """
         Send one batch and wait for its correlated response.
 
         Args:
             index: Worker slot handling the match.
+            command: Worker command that executes the batch.
             match_id: Identifier of the match.
-            jobs: Behavior requests for the tic.
+            jobs: Behavior or coach requests for the tic.
+            result_key: Key of the response that holds the results.
+            result_type: Expected type of the results.
             deadline: Absolute monotonic deadline for the request.
 
         Returns:
-            Mapped actions, or None if the request fails or times out.
+            The worker response, or None if the request fails or times out.
         """
         request_id = uuid4().hex
 
         try:
             self._input_queues[index].put({
-                "command": "execute_batch",
+                "command": command,
                 "request_id": request_id,
                 "match_id": match_id,
                 "jobs": jobs,
@@ -449,22 +546,92 @@ class BehaviorWorkerPool:
             not isinstance(result, dict)
             or result.get("request_id") != request_id
             or result.get("match_id") != match_id
-            or not isinstance(result.get("actions"), dict)
+            or not isinstance(result.get(result_key), result_type)
         ):
             return None
 
+        return result
+
+
+    def _dispatch(
+        self,
+        command: str,
+        match_id: int,
+        jobs: list[BehaviorJob] | list[CoachJob],
+        result_key: str,
+        result_type: type,
+    ) -> dict | None:
+        """
+        Run a batch in the worker assigned to the match, within the deadline.
+
+        If the worker does not answer in time, it is replaced.
+
+        Args:
+            command: Worker command that executes the batch.
+            match_id: Identifier of the registered match.
+            jobs: Behavior or coach requests for the tic.
+            result_key: Key of the response that holds the results.
+            result_type: Expected type of the results.
+
+        Returns:
+            The worker response, or None if there are no jobs or the
+            request fails or times out.
+
+        Raises:
+            KeyError: If the match is not registered.
+            RuntimeError: If the pool has been shut down.
+        """
         with self._state_lock:
-            self._disabled_behaviors[match_id].update(
-                result["disabled_behavior_ids"]
+            if self._closed:
+                raise RuntimeError("Behavior worker pool is shut down")
+
+            index = self._match_workers[match_id]
+
+        if not jobs:
+            return None
+
+        deadline = monotonic() + self._timeout_seconds
+        lock = self._worker_locks[index]
+
+        if not lock.acquire(
+            timeout=max(
+                0.0,
+                deadline - monotonic(),
+            )
+        ):
+            return None
+
+        try:
+            with self._state_lock:
+                if (
+                    self._closed
+                    or self._match_workers.get(match_id) != index
+                ):
+                    return None
+
+            if not self._processes[index].is_alive():
+                self._replace_worker(index)
+
+            if monotonic() >= deadline:
+                return None
+
+            result = self._request_batch(
+                index,
+                command,
+                match_id,
+                jobs,
+                result_key,
+                result_type,
+                deadline,
             )
 
-        return {
-            job.player_id: result["actions"].get(
-                job.player_id,
-                WaitAction()
-            )
-            for job in jobs
-        }
+            if result is None:
+                self._replace_worker(index)
+
+            return result
+
+        finally:
+            lock.release()
 
 
     def execute(
@@ -487,59 +654,71 @@ class BehaviorWorkerPool:
             KeyError: If the match is not registered.
             RuntimeError: If the pool has been shut down.
         """
+        result = self._dispatch(
+            "execute_batch",
+            match_id,
+            jobs,
+            result_key="actions",
+            result_type=dict,
+        )
+
+        if result is None:
+            return {
+                job.player_id: WaitAction()
+                for job in jobs
+            }
+
         with self._state_lock:
-            if self._closed:
-                raise RuntimeError("Behavior worker pool is shut down")
+            disabled = self._disabled_behaviors.get(match_id)
 
-            index = self._match_workers[match_id]
+            if disabled is not None:
+                disabled.update(result["disabled_behavior_ids"])
 
-        if not jobs:
-            return {}
-
-        fallback = {
-            job.player_id: WaitAction()
+        return {
+            job.player_id: result["actions"].get(
+                job.player_id,
+                WaitAction()
+            )
             for job in jobs
         }
-        deadline = monotonic() + self._timeout_seconds
-        lock = self._worker_locks[index]
 
-        if not lock.acquire(
-            timeout=max(
-                0.0,
-                deadline - monotonic(),
-            )
-        ):
-            return fallback
 
-        try:
-            with self._state_lock:
-                if (
-                    self._closed
-                    or self._match_workers.get(match_id) != index
-                ):
-                    return fallback
+    def execute_coach(
+        self,
+        jobs: list[CoachJob],
+        *,
+        match_id: int,
+    ) -> list[list[CoachCommand]]:
+        """
+        Execute the coach jobs of a match without exceeding the deadline.
 
-            if not self._processes[index].is_alive():
-                self._replace_worker(index)
+        Works like execute(): the jobs run in the worker assigned to the
+        match. If the worker does not answer in time, every coach produces
+        no assignments and the worker is replaced.
 
-            if monotonic() >= deadline:
-                return fallback
+        Args:
+            jobs: Coach requests for the current tic.
+            match_id: Identifier of the registered match.
 
-            actions = self._request_batch(
-                index,
-                match_id,
-                jobs,
-                deadline,
-            )
+        Returns:
+            The commands of each job, in the same order as the jobs.
 
-            if actions is None:
-                self._replace_worker(index)
-                return fallback
+        Raises:
+            KeyError: If the match is not registered.
+            RuntimeError: If the pool has been shut down.
+        """
+        result = self._dispatch(
+            "execute_coach_batch",
+            match_id,
+            jobs,
+            result_key="assignments",
+            result_type=list,
+        )
 
-            return actions
+        if result is None or len(result["assignments"]) != len(jobs):
+            return [[] for _ in jobs]
 
-        finally:
-            lock.release()
+        return result["assignments"]
 
 
     def release_match(
@@ -565,6 +744,7 @@ class BehaviorWorkerPool:
 
                 self._match_workers.pop(match_id)
                 self._match_definitions.pop(match_id, None)
+                self._match_coach_definitions.pop(match_id, None)
                 self._disabled_behaviors.pop(match_id, None)
                 closed = self._closed
 
@@ -586,6 +766,7 @@ class BehaviorWorkerPool:
             self._closed = True
             self._match_workers.clear()
             self._match_definitions.clear()
+            self._match_coach_definitions.clear()
             self._disabled_behaviors.clear()
 
         for index in range(self._size):

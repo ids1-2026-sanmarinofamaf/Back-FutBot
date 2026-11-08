@@ -5,11 +5,12 @@ This module translates the global match state into the player-relative
 state exposed through the Behavior API.
 """
 
-from app.game.models.match import MatchSnapshot
+from app.game.models.match import Match, MatchSnapshot
+from app.game.models.match_participation import MatchParticipation
 from app.game.models.player_in_match import PlayerInMatchSnapshot
 from app.game.constants import TIC_DURATION
-from app.game.context import BehaviorContext
-from app.game.types import Side, Period
+from app.game.context import BehaviorContext, CoachContext
+from app.game.types import Period, CoachTrigger
 from app.game.physics import (
     control_range,
     max_move_speed,
@@ -180,3 +181,106 @@ def _get_player_and_opponent_team(
         raise ValueError(f"Player {player_id} does not belong to this match")
 
     return player_team, opponent_team
+
+
+def build_coach_context(
+        match: Match,
+        participation: MatchParticipation,
+        trigger: CoachTrigger,
+) -> CoachContext:
+    """
+    Build the CoachContext for a club from the current match state.
+
+    The context contains the match state from the club's perspective:
+    its on-field players, the on-field opponents, score, field side,
+    remaining time, ball state, the trigger that caused the execution and
+    the behaviors the coach can assign.
+
+    Args:
+        match: Current match state.
+        participation: Participation of the club whose coach is executed.
+        trigger: Event that triggered the coach execution.
+
+    Returns:
+        CoachContext containing the state visible to the club's coach.
+
+    Raises:
+        ValueError: If the participation does not belong to the match.
+    """
+    if participation is match.participation_a:
+        opponent_participation = match.participation_b
+        context_side = match.side_a
+    elif participation is match.participation_b:
+        opponent_participation = match.participation_a
+        context_side = match.side_b
+    else:
+        raise ValueError("Participation does not belong to this match")
+
+    on_field_teammates = [
+        player for player in participation.players if player.is_on_field
+    ]
+
+    context_teammates = [
+        (player.player_id, player.position)
+        for player in on_field_teammates
+    ]
+
+    context_opponents = [
+        (player.player_id, player.position)
+        for player in opponent_participation.players
+        if player.is_on_field
+    ]
+
+    context_ball = (
+        match.ball.position,
+        match.ball.velocity,
+    )
+
+    context_match_time_remaining = (
+        match.duration_ticks - match.current_tick
+    ) * TIC_DURATION
+
+    period_end_tick = match.current_period.value * (match.duration_ticks // 4)
+
+    # max to solve possible inconsistences
+    remaining_period_ticks = max(0, period_end_tick - match.current_tick)
+
+    # inverse of the club catalog, to expose behavior names instead of ids
+    behavior_names = {
+        behavior_id: name
+        for name, behavior_id in participation.available_behaviors.items()
+    }
+
+    context_current_behaviors = {
+        player.player_id: behavior_names.get(player.current_behavior_id)
+        for player in on_field_teammates
+    }
+
+    context_bench = [
+        player.player_id
+        for player in participation.players
+        if not player.is_on_field
+    ]
+
+    context_can_substitute = (
+        match.substitution_requests_open
+        and participation.last_substitution_period != match.current_period
+        and not participation.has_pending_manual_substitution()
+    )
+
+    return CoachContext(
+        teammates=context_teammates,
+        opponents=context_opponents,
+        ball=context_ball,
+        my_team_score=participation.goals,
+        opponent_score=opponent_participation.goals,
+        current_period=match.current_period,
+        side=context_side,
+        match_time_remaining=context_match_time_remaining,
+        period_time_remaining=remaining_period_ticks * TIC_DURATION,
+        trigger=trigger,
+        available_behaviors=list(participation.available_behaviors),
+        current_behaviors=context_current_behaviors,
+        bench=context_bench,
+        can_substitute=context_can_substitute,
+    )

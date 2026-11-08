@@ -1,6 +1,5 @@
 from app.game.models.match import Match
 
-
 active_matches: dict[int, Match] = {}
 
 # here only register the match in memory

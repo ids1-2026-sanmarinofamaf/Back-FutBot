@@ -101,6 +101,7 @@ def test_get_success_returns_roster(
     assert response.json() == {
         "roster_id": ROSTER_ID,
         **roster_payload,
+        "coach_behavior_id": None,
     }
 
     mock_get.assert_called_once()

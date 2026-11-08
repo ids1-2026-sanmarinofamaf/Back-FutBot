@@ -68,3 +68,6 @@ HALFTIME_BREAK_DURATION = 20.0
 SUBSTITUTION_EXECUTION_WINDOW = 5.0
 # Maximum execution time for each player's behavior
 BEHAVIOR_EXECUTION_TIMEOUT_MS = 2
+
+# Maximum execution time for each coach (DT) behavior
+COACH_EXECUTION_TIMEOUT_MS = 10
