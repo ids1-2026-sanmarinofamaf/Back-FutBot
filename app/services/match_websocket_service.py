@@ -20,6 +20,7 @@ from app.schemas.match_websocket import (
     PenaltyShootoutStartedMessage,
     PenaltyTurnStartedMessage,
     PenaltyResultMessage,
+    PenaltyHistoryMessage,
     PenaltyShootoutFinishedMessage,
 )
 
@@ -73,18 +74,30 @@ class MatchConnectionManager:
 
                     session = match.penalty_session
                     if session is not None:
+                        history_message = build_penalty_history_message(
+                            session.shootout,
+                        )
+
+                        penalty_message = None
+
                         if match.winner_club_id is not None:
                             penalty_message = build_penalty_shootout_finished_message(
                                 session.shootout,
                             )
                         elif session.accepting_choices:
-                            penalty_message = build_penalty_turn_started_message(session)
-                        else:
-                            return
+                            penalty_message = build_penalty_turn_started_message(
+                                session,
+                            )
 
                         await websocket.send_json(
-                            penalty_message.model_dump(mode="json"),
+                            history_message.model_dump(mode="json"),
                         )
+
+                        if penalty_message is not None:
+                            await websocket.send_json(
+                                penalty_message.model_dump(mode="json"),
+                            )
+
         except (Exception, asyncio.CancelledError):
             self.disconnect(match_id, websocket)
             try:
@@ -423,6 +436,17 @@ def build_penalty_result_message(
     duration: float,
 ) -> PenaltyResultMessage:
     return PenaltyResultMessage(**result, duration=duration)
+
+
+def build_penalty_history_message(
+    shootout: PenaltyShootout,
+) -> PenaltyHistoryMessage:
+    return PenaltyHistoryMessage(
+        results=[
+            build_penalty_result_message(result, duration=0)
+            for result in shootout.results
+        ],
+    )
 
 
 def build_penalty_shootout_finished_message(

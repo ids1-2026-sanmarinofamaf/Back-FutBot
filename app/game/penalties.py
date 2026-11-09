@@ -42,6 +42,7 @@ class PenaltyShootout:
         self.score_b: int = 0
         self.winner_club_id: int | None = None
         self._rng = Random(seed)
+        self.results: list[dict] = []
 
 
     def resolve_penalty(
@@ -93,7 +94,7 @@ class PenaltyShootout:
         if self.turn == 6:
             self.winner_club_id = self._resolve_winner()
 
-        return {
+        result = {
             "turn": self.turn,
             "club_id": team,
             "kicker": kicker,
@@ -103,6 +104,11 @@ class PenaltyShootout:
             "score_club_a": self.score_a,
             "score_club_b": self.score_b,
         }
+
+        self.results.append(result)
+
+        return result
+
 
     def _resolve_side(
         self,

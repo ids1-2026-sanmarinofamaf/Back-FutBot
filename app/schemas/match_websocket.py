@@ -106,6 +106,11 @@ class PenaltyResultMessage(BaseModel):
     duration: float
 
 
+class PenaltyHistoryMessage(BaseModel):
+    event: Literal["penalty_history"] = "penalty_history"
+    results: list[PenaltyResultMessage]
+
+
 class PenaltyShootoutFinishedMessage(BaseModel):
     event: Literal["penalty_shootout_finished"] = "penalty_shootout_finished"
     winner_club_id: int

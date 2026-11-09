@@ -738,6 +738,7 @@ async def test_live_penalty_result_waits_for_initial_messages(
         assert [message["event"] for message in barrier.messages] == [
             "match_info",
             "estado_partido",
+            "penalty_history",
             "penalty_result",
         ]
     finally:
@@ -752,7 +753,12 @@ async def test_live_penalty_result_waits_for_initial_messages(
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     "blocked_event",
-    ["match_info", "estado_partido", "penalty_turn_started"],
+    [
+        "match_info",
+        "estado_partido",
+        "penalty_history",
+        "penalty_turn_started",
+    ],
 )
 async def test_initial_message_timeout_cleans_connection(
     active_match,
@@ -845,7 +851,9 @@ async def test_reconnection_waits_for_match_winner_confirmation(
     assert [message["event"] for message in messages] == [
         "match_info",
         "estado_partido",
+        "penalty_history",
     ]
+    assert len(messages[2]["results"]) == 6
 
     # Simulate the runner confirming the winner after the final pause.
     active_match.winner_club_id = session.shootout.winner_club_id
@@ -865,6 +873,110 @@ async def test_reconnection_waits_for_match_winner_confirmation(
     assert [message["event"] for message in messages] == [
         "match_info",
         "estado_partido",
+        "penalty_history",
         "penalty_shootout_finished",
     ]
-    assert messages[-1]["winner_club_id"] == active_match.winner_club_id
+    assert len(messages[2]["results"]) == 6
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("phase", ["none", "open", "between", "finished"])
+@pytest.mark.parametrize("client_club_id", [1, None])
+async def test_connect_restores_existing_penalty_messages(
+    active_match,
+    penalty_reconnection,
+    phase,
+    client_club_id,
+):
+    session, clock = penalty_reconnection
+
+    if phase != "none":
+        active_match.penalty_session = session
+
+    if phase == "open":
+        for _ in range(2):
+            session.shootout.resolve_penalty(
+                PenaltySide.LEFT,
+                PenaltySide.RIGHT,
+            )
+
+        session.open_turn()
+        session.submit_choice(1, 3, PenaltySide.CENTER)
+        clock.return_value = 104.0
+
+    elif phase == "between":
+        session.shootout.resolve_penalty(
+            PenaltySide.LEFT,
+            PenaltySide.RIGHT,
+        )
+
+    elif phase == "finished":
+        for _ in range(6):
+            session.shootout.resolve_penalty(
+                PenaltySide.LEFT,
+                PenaltySide.LEFT,
+            )
+
+        active_match.winner_club_id = session.shootout.winner_club_id
+
+    manager = MatchConnectionManager()
+    websocket = AsyncMock()
+
+    await manager.connect(
+        active_match.match_id,
+        websocket,
+        client_club_id=client_club_id,
+    )
+
+    messages = [
+        awaited.args[0]
+        for awaited in websocket.send_json.await_args_list
+    ]
+
+    assert [message["event"] for message in messages[:2]] == [
+        "match_info",
+        "estado_partido",
+    ]
+
+    if phase == "none":
+        assert len(messages) == 2
+        return
+
+    assert messages[2] == {
+        "event": "penalty_history",
+        "results": [
+            {
+                **result,
+                "event": "penalty_result",
+                "duration": 0,
+            }
+            for result in session.shootout.results
+        ],
+    }
+
+    if phase == "open":
+        assert len(messages) == 4
+        assert messages[3] == {
+            "event": "penalty_turn_started",
+            "turn": 3,
+            "club_id": 1,
+            "kicker": 2,
+            "score_club_a": 1,
+            "score_club_b": 1,
+            "remaining_seconds": 6.0,
+        }
+        assert session.choices == {1: PenaltySide.CENTER}
+
+    elif phase == "finished":
+        assert len(messages) == 4
+        assert messages[3] == {
+            "event": "penalty_shootout_finished",
+            "winner_club_id": session.shootout.winner_club_id,
+            "score_club_a": 0,
+            "score_club_b": 0,
+        }
+
+    else:
+        assert len(messages) == 3
+
+    assert all("choices" not in message for message in messages)

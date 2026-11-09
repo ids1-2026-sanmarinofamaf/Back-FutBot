@@ -198,3 +198,27 @@ def test_seventh_penalty_is_rejected_without_changes(shootout):
     assert (shootout.score_a, shootout.score_b) == (0, 0)
     assert shootout.winner_club_id == winner
     assert shootout._rng.getstate() == random_state
+
+
+def test_shootout_keeps_resolved_penalties_in_order(shootout):
+    assert shootout.results == []
+
+    first = shootout.resolve_penalty(
+        PenaltySide.LEFT,
+        PenaltySide.RIGHT,
+    )
+    second = shootout.resolve_penalty(
+        PenaltySide.CENTER,
+        PenaltySide.CENTER,
+    )
+
+    assert shootout.results == [first, second]
+    assert [result["turn"] for result in shootout.results] == [1, 2]
+    assert [result["is_goal"] for result in shootout.results] == [
+        True,
+        False,
+    ]
+    assert [
+        (result["score_club_a"], result["score_club_b"])
+        for result in shootout.results
+    ] == [(1, 0), (1, 0)]
