@@ -31,6 +31,7 @@ from app.services.league_service import (
     ClubNotFound,
     create_league,
     start_league,
+    cancel_league,
     LeagueForbidden,
     InvalidLeagueState,
     InsufficientLeagueParticipants,
@@ -52,6 +53,7 @@ from app.schemas.league import (
     MyLeaguesResponse
 )
 from app.schemas.roster import RosterCreate, RosterDetail
+from app.schemas.league_websocket import LeagueCancelledEvent
 
 SEND_TIMEOUT_SECONDS = 5
 
@@ -129,6 +131,63 @@ async def leave(
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=str(error),
+        )
+
+
+@router.delete(
+    "/{league_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+)
+async def cancel(
+    league_id: int,
+    db: Session = Depends(get_db),
+    current_user=Depends(get_current_user),
+):
+    try:
+        await run_in_threadpool(
+            cancel_league,
+            db=db,
+            league_id=league_id,
+            user_id=current_user.id,
+        )
+
+    except LeagueNotFound as error:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=str(error),
+        ) from error
+
+    except LeagueForbidden as error:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=str(error),
+        ) from error
+
+    except LeagueAlreadyStarted as error:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=str(error),
+        ) from error
+
+    # the cancellation is persisted, a notification failure must not turn it into an error
+    try:
+        try:
+            await league_connection_manager.broadcast(
+                league_id,
+                LeagueCancelledEvent(league_id=league_id),
+            )
+        finally:
+            await league_connection_manager.close_lobby(
+                league_id,
+                reason="League cancelled",
+            )
+
+        await session_websocket_service.broadcast_leagues(db)
+
+    except Exception:
+        logger.exception(
+            "Failed to notify clients about league %s cancellation",
+            league_id,
         )
 
 

@@ -441,6 +441,51 @@ def start_league(
         db.rollback()
         raise
 
+def cancel_league(
+    db: Session,
+    league_id: int,
+    user_id: int,
+) -> None:
+    try:
+        # lock the league so a concurrent join/start cannot interleave
+        league = league_repository.get_by_id_for_update(
+            db=db,
+            league_id=league_id,
+        )
+        if league is None:
+            raise LeagueNotFound("League does not exist")
+        club = club_repository.get_by_user_id(
+            db=db,
+            user_id=user_id,
+        )
+        if club is None or league.creator_id != club.id:
+            raise LeagueForbidden("Only the league creator can cancel the league")
+        if league.state != LeagueState.POR_COMENZAR:
+            raise LeagueAlreadyStarted("League cannot be cancelled")
+
+        participations = league_participation_repository.list_by_league(
+            db=db,
+            league_id=league_id,
+        )
+        for participation in participations:
+            # the roster was generated for this league only
+            roster = participation.roster
+            # participation goes first: it references the roster
+            league_participation_repository.delete_participation(
+                db=db,
+                participation=participation,
+            )
+            roster_repository.delete_roster(db=db, roster=roster)
+
+        league_repository.delete(db=db, league=league)
+
+        # league, participations and rosters go away in a single transaction
+        db.commit()
+    except Exception:
+        db.rollback()
+        raise
+
+
 # applies one match result to a single row of the standings
 def _apply_result(participation: LeagueParticipation, goals_for: int, goals_against: int) -> None:
     participation.matches_played += 1
