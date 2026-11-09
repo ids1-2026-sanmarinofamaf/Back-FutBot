@@ -15,8 +15,12 @@ from app.repositories import club_repository
 from app.schemas.match import (
     ChangePlayerBehaviorRequest,
     SubstitutionRequest,
+    PenaltyChoiceRequest,
 )
-from app.services.match_service import change_player_behavior
+from app.services.match_service import (
+    change_player_behavior,
+    submit_penalty_choice,
+)
 
 
 router = APIRouter(tags=["Matches"])
@@ -96,3 +100,43 @@ async def update_player_behavior(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=str(error),
         ) from error
+
+
+@router.post(
+    "/live_match/{match_id}/penalties/choices",
+    status_code=status.HTTP_204_NO_CONTENT,
+)
+async def choose_penalty_side(
+    match_id: int = Path(gt=0),
+    data: PenaltyChoiceRequest = Body(),
+    db: Session = Depends(get_db),
+    current_user=Depends(get_current_user),
+):
+    try:
+        submit_penalty_choice(
+            db=db,
+            user_id=current_user.id,
+            match_id=match_id,
+            turn=data.turn,
+            side=data.side,
+        )
+
+    except PermissionError as error:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=str(error),
+        ) from error
+
+    except LookupError as error:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=str(error),
+        ) from error
+
+    except ValueError as error:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=str(error),
+        ) from error
+
+    return None

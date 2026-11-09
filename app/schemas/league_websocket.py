@@ -49,6 +49,7 @@ class LeagueMatchResult(BaseModel):
     match_id: int = Field(ge=1)
     state: Literal["FINALIZADO"] = "FINALIZADO"
     score: MatchScore
+    winner_club_id: int | None = None
 
 
 class LeagueRoundFinishedEvent(BaseModel):

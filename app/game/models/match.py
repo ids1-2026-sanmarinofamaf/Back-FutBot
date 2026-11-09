@@ -5,8 +5,10 @@ from enum import Enum
 from app.game.models.ball import Ball, BallSnapshot
 from app.game.models.match_participation import MatchParticipation
 from app.game.models.player_in_match import PlayerInMatchSnapshot
+from app.game.penalty_session import PenaltySession
 from app.game.types import Side, Period, CoachTrigger, Assignment, Substitution
 from typing import Literal
+
 
 PauseType = Literal["hydration", "halftime"]
 
@@ -38,6 +40,9 @@ class MatchSnapshot:
     pause_type: PauseType | None = None
     substitution_window_open: bool = True
 
+    winner_club_id: int | None = None
+
+
 @dataclass  # non-persistent class
 class Match:
     match_id: int   # it will be used for WebSockets.
@@ -64,6 +69,13 @@ class Match:
     substitution_requests_open: bool = True # it is set to true as long as substitutions can be planned.
     is_paused: bool = False
     pause_type: PauseType | None = None
+
+    winner_club_id: int | None = None
+
+    penalties_enabled: bool = False
+
+    penalty_session: PenaltySession | None = None
+
 
     def snapshot(self) -> MatchSnapshot:  # returns a copy of match in the state it was in when made
         return MatchSnapshot(
@@ -93,7 +105,9 @@ class Match:
 
             is_paused=self.is_paused,
             pause_type=self.pause_type,
-            substitution_window_open=self.substitution_requests_open
+            substitution_window_open=self.substitution_requests_open,
+
+            winner_club_id=self.winner_club_id,
         )
 
     def get_participation(self, club_id: int) -> MatchParticipation | None:

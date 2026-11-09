@@ -33,6 +33,7 @@ class LeagueCreate(BaseModel):
     # plain password, it gets hashed in the service
     password: str | None = None
     roster: RosterCreate
+    penalties_enabled: bool = Field(alias="definicion_por_penales", default=False)
 
     @property
     def privacy(self) -> LeaguePrivacy:
@@ -101,6 +102,7 @@ class FixtureMatchItem(BaseModel):
     local: FixtureClub
     visitante: FixtureClub
     score: MatchScore | None = None
+    winner_club_id: int | None = None
 
 
 class StandingRow(BaseModel):

@@ -40,7 +40,7 @@ from app.game.active_matches import get_match
 from app.game.active_league_rounds import get_active_round
 from app.game.models.match import MatchState as RunningMatchState
 
-# add this classes in order to distinguish the errors
+from app.game.match_result import resolve_match_winner
 
 
 class LeagueNotFound(Exception):
@@ -144,7 +144,8 @@ def create_league(db: Session, data: LeagueCreate , current_user_id):
             max_clubs = data.max_clubs,
             privacy = data.privacy,
             password_hash = password_hash,
-            creator_id = club.id
+            creator_id = club.id,
+            penalties_enabled=data.penalties_enabled,
         )
         # flush, league.id is assigned here
         league_repository.create(db=db, league=league)
@@ -487,13 +488,18 @@ def cancel_league(
 
 
 # applies one match result to a single row of the standings
-def _apply_result(participation: LeagueParticipation, goals_for: int, goals_against: int) -> None:
+def _apply_result(
+    participation: LeagueParticipation,
+    goals_for: int,
+    goals_against: int,
+    resolve_winner_id: int | None,
+) -> None:
     participation.matches_played += 1
     participation.goals_for += goals_for
     participation.goals_against += goals_against
-    if goals_for > goals_against:
+    if resolve_winner_id == participation.club_id:
         participation.matches_won += 1
-    elif goals_for == goals_against:
+    elif resolve_winner_id is None:
         participation.matches_drawn += 1
     else:
         participation.matches_lost += 1
@@ -509,25 +515,41 @@ def update_standings(
     visitante_club_id: int,
     local_goals: int,
     visitante_goals: int,
+    winner_club_id: int | None = None,
 ) -> None:
-    if local_club_id == visitante_club_id:
-        raise ValueError("A club cannot play against itself")
-    if local_goals < 0 or visitante_goals < 0:
-        raise ValueError("Goals cannot be negative")
+    resolve_winner_id = resolve_match_winner(
+        (local_club_id, local_goals),
+        (visitante_club_id, visitante_goals),
+        winner_club_id,
+    )
+
     local = league_participation_repository.get_participation_by_club_and_league(
         db=db,
         league_id=league_id,
         club_id=local_club_id,
     )
+
     visitante = league_participation_repository.get_participation_by_club_and_league(
         db=db,
         league_id=league_id,
         club_id=visitante_club_id,
     )
+
     if local is None or visitante is None:
         raise LeagueParticipationNotFound("Club is not participating in this league")
-    _apply_result(local, local_goals, visitante_goals)
-    _apply_result(visitante, visitante_goals, local_goals)
+    _apply_result(
+        local,
+        local_goals,
+        visitante_goals,
+        resolve_winner_id,
+    )
+    _apply_result(
+        visitante,
+        visitante_goals,
+        local_goals,
+        resolve_winner_id,
+    )
+
     db.flush()
 
 
@@ -553,12 +575,15 @@ def build_league_state(db: Session, league: League) -> tuple[list[FixtureMatchIt
                     club_id=visitante.club_id,
                     name=visitante.club.name
                 ),
-                score=MatchScore(
-                    local=match.home_goals,
-                    visitante=match.away_goals,
-                )
-                if match.state == MatchState.FINALIZADO
-                else None
+                score=(
+                    MatchScore(
+                        local=match.home_goals,
+                        visitante=match.away_goals,
+                    )
+                    if match.state == MatchState.FINALIZADO
+                    else None
+                ),
+                winner_club_id=match.winner_club_id,
             )
         )
 

@@ -1,6 +1,8 @@
 from pydantic import BaseModel
 from typing import Literal
 
+from app.game.penalties import PenaltySide
+
 
 class MatchPlayerState(BaseModel):
     player_id: int
@@ -104,3 +106,43 @@ class MatchInfoMessage(BaseModel):
     team_a: MatchTeamInfo
     team_b: MatchTeamInfo
     players: list[MatchPlayerInfo]
+
+
+class PenaltyShootoutStartedMessage(BaseModel):
+    event: Literal["penalty_shootout_started"] = "penalty_shootout_started"
+    duration: float
+
+
+class PenaltyTurnStartedMessage(BaseModel):
+    event: Literal["penalty_turn_started"] = "penalty_turn_started"
+    turn: int
+    club_id: int
+    kicker: int
+    score_club_a: int
+    score_club_b: int
+    remaining_seconds: float
+
+
+class PenaltyResultMessage(BaseModel):
+    event: Literal["penalty_result"] = "penalty_result"
+    turn: int
+    club_id: int
+    kicker: int
+    kick_side: PenaltySide
+    save_side: PenaltySide
+    is_goal: bool
+    score_club_a: int
+    score_club_b: int
+    duration: float
+
+
+class PenaltyHistoryMessage(BaseModel):
+    event: Literal["penalty_history"] = "penalty_history"
+    results: list[PenaltyResultMessage]
+
+
+class PenaltyShootoutFinishedMessage(BaseModel):
+    event: Literal["penalty_shootout_finished"] = "penalty_shootout_finished"
+    winner_club_id: int
+    score_club_a: int
+    score_club_b: int

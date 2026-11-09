@@ -86,6 +86,7 @@ def test_round_finished_serializes_score_and_break(
             "match_id": 101,
             "state": "FINALIZADO",
             "score": {"local": 0, "visitante": 0},
+            "winner_club_id": None,
         }
     ]
 

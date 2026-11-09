@@ -72,5 +72,9 @@ class Match(Base):
     # Final score, NULL until the match finishes
     home_goals: Mapped[int | None] = mapped_column(nullable=True)
     away_goals: Mapped[int | None] = mapped_column(nullable=True)
+    winner_club_id: Mapped[int | None] = mapped_column(
+        ForeignKey("clubs.id", name="fk_matches_winner_club_id_clubs"),
+        nullable=True,
+    )
     league: Mapped["League | None"] = relationship(back_populates="matches")
     participations: Mapped[list["MatchParticipation"]] = relationship(back_populates="match", cascade="all, delete-orphan", passive_deletes=True)

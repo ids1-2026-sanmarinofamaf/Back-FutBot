@@ -49,6 +49,7 @@ from app.schemas.league_websocket import (
     LeagueFinishedEvent,
     LeagueMatchResult,
 )
+from app.game.match_result import resolve_match_winner
 
 
 ROUND_BREAK_SECONDS = 60
@@ -91,6 +92,7 @@ def build_round_matches(
     db: Session,
     matches: list[PersistedMatch],
     duration_seconds: int,
+    penalties_enabled: bool = False
 ) -> list[RuntimeMatch]:
     """
     Build runtime matches using the current rosters of a league round.
@@ -131,6 +133,7 @@ def build_round_matches(
                 velocity=(0.0, 0.0),
             ),
             duration_ticks=duration_seconds * TICS_PER_SECOND,
+            penalties_enabled=penalties_enabled,
         )
 
         runtime_matches.append(runtime_match)
@@ -213,8 +216,21 @@ def _apply_round_results(
         home = runtime.participation_a
         away = runtime.participation_b
 
+        resolve_winner_id = resolve_match_winner(
+            (home.club_id, home.goals),
+            (away.club_id, away.goals),
+            runtime.winner_club_id,
+        )
+
+        if (
+            league.penalties_enabled
+            and resolve_winner_id is None
+        ):
+            raise ValueError("Match must have a winner")
+
         persisted.home_goals = home.goals
         persisted.away_goals = away.goals
+        persisted.winner_club_id = resolve_winner_id
         persisted.state = PersistedMatchState.FINALIZADO
 
         update_standings(
@@ -224,6 +240,7 @@ def _apply_round_results(
             visitante_club_id=away.club_id,
             local_goals=home.goals,
             visitante_goals=away.goals,
+            winner_club_id=resolve_winner_id,
         )
 
         update_statistics(
@@ -233,6 +250,7 @@ def _apply_round_results(
             club_b_id=away.club_id,
             goals_a=home.goals,
             goals_b=away.goals,
+            winner_club_id=resolve_winner_id,
         )
 
 
@@ -342,6 +360,7 @@ async def run_league(league_id: int) -> None:
             round_number = league.last_completed_round + 1
             duration_seconds = league.match_duration
             break_ends_at = league.break_ends_at
+            penalties_enabled = league.penalties_enabled
 
             last_round = db.scalar(
                 select(func.max(PersistedMatch.round))
@@ -369,11 +388,12 @@ async def run_league(league_id: int) -> None:
 
             if not persisted:
                 raise ValueError(f"No matches in round {round_number}")
-            
+
             matches = build_round_matches(
                 db,
                 persisted,
-                duration_seconds
+                duration_seconds,
+                penalties_enabled,
             )
 
             behaviors = {
@@ -424,6 +444,7 @@ async def run_league(league_id: int) -> None:
                         LeagueMatchResult(
                             match_id=match.match_id,
                             score=match.score,
+                            winner_club_id=match.winner_club_id,
                         )
                         for match in detail.fixture
                         if match.round == round_number

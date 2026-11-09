@@ -69,5 +69,8 @@ SUBSTITUTION_EXECUTION_WINDOW = 5.0
 # Maximum execution time for each player's behavior
 BEHAVIOR_EXECUTION_TIMEOUT_MS = 2
 
+
+PENALTY_INTRO_DURATION = 5.0
+PENALTY_RESULT_DURATION = 5.0
 # Maximum execution time for each coach (DT) behavior
 COACH_EXECUTION_TIMEOUT_MS = 10

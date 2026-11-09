@@ -316,7 +316,27 @@ def test_load_round_matches_returns_empty_list():
     assert result == []
 
 
-def test_build_round_matches(monkeypatch):
+@pytest.mark.parametrize(
+    "options, expected_penalties",
+    [
+        pytest.param({}, False, id="default"),
+        pytest.param(
+            {"penalties_enabled": False},
+            False,
+            id="disabled",
+        ),
+        pytest.param(
+            {"penalties_enabled": True},
+            True,
+            id="enabled",
+        ),
+    ],
+)
+def test_build_round_matches(
+    monkeypatch,
+    options,
+    expected_penalties,
+):
     db = Mock()
 
     home_roster = SimpleNamespace(id=10, club_id=1)
@@ -351,11 +371,14 @@ def test_build_round_matches(monkeypatch):
         db=db,
         matches=[persisted_match],
         duration_seconds=90,
+        **options,
     )
 
     assert len(result) == 1
 
     match = result[0]
+
+    assert match.penalties_enabled is expected_penalties
 
     assert match.match_id == 100
     assert match.participation_a.club_id == 1
@@ -708,12 +731,14 @@ def make_completed_matches(case):
             state=RuntimeMatchState.FINISHED,
             participation_a=SimpleNamespace(club_id=ids[0], goals=2),
             participation_b=SimpleNamespace(club_id=ids[1], goals=1),
+            winner_club_id=ids[0],
         ),
         SimpleNamespace(
             match_id=1002,
             state=RuntimeMatchState.FINISHED,
             participation_a=SimpleNamespace(club_id=ids[2], goals=0),
             participation_b=SimpleNamespace(club_id=ids[3], goals=0),
+            winner_club_id=None,
         ),
     ]
 
@@ -729,6 +754,7 @@ def assert_round_unmodified(db, case):
         assert match.state == MatchState.POR_COMENZAR
         assert match.home_goals is None
         assert match.away_goals is None
+        assert match.winner_club_id is None
 
     for club_id in case.club_ids:
         participation = db.get(
@@ -757,6 +783,9 @@ def test_complete_round_persists_results_and_standings(
 
     first = round_db.get(PersistedMatch, 1001)
     second = round_db.get(PersistedMatch, 1002)
+
+    assert first.winner_club_id == round_case.club_ids[0]
+    assert second.winner_club_id is None
 
     assert (first.home_goals, first.away_goals) == (2, 1)
     assert (second.home_goals, second.away_goals) == (0, 0)
@@ -1025,6 +1054,7 @@ def make_second_round_matches(case):
                 club_id=case.club_ids[2],
                 goals=2,
             ),
+            winner_club_id=case.club_ids[2],
         ),
     ]
 
@@ -1410,3 +1440,202 @@ async def test_runner_updates_session_only_after_finalization(
     await league_runner.run_league(round_case.league_id)
 
     session_notification.assert_awaited_once_with()
+
+
+@pytest.mark.parametrize("winner_index", [2, 3])
+def test_complete_round_persists_tiebreak_winner(
+    round_db,
+    round_case,
+    winner_index,
+):
+    league = round_db.get(League, round_case.league_id)
+    league.penalties_enabled = True
+    round_db.commit()
+
+    matches = make_completed_matches(round_case)
+    tied_match = matches[1]
+
+    tied_match.participation_a.goals = 1
+    tied_match.participation_b.goals = 1
+
+    winner_id = round_case.club_ids[winner_index]
+    loser_index = 3 if winner_index == 2 else 2
+    loser_id = round_case.club_ids[loser_index]
+
+    tied_match.winner_club_id = winner_id
+
+    complete_round(
+        db=round_db,
+        league_id=round_case.league_id,
+        round_number=1,
+        matches=matches,
+        is_last_round=False,
+    )
+
+    round_db.expire_all()
+
+    saved = round_db.get(PersistedMatch, tied_match.match_id)
+
+    assert saved.state == MatchState.FINALIZADO
+    assert saved.winner_club_id == winner_id
+    assert (saved.home_goals, saved.away_goals) == (1, 1)
+
+    for club_id, points, won, lost in [
+        (winner_id, 3, 1, 0),
+        (loser_id, 0, 0, 1),
+    ]:
+        participation = round_db.get(
+            LeagueParticipation,
+            (round_case.league_id, club_id),
+        )
+        statistics = round_db.get(ClubStatistics, club_id)
+
+        assert participation.points == points
+        assert participation.matches_played == 1
+        assert participation.matches_won == won
+        assert participation.matches_lost == lost
+        assert participation.matches_drawn == 0
+        assert participation.goals_for == 1
+        assert participation.goals_against == 1
+
+        assert statistics.total_points == points
+        assert statistics.matches_played == 1
+        assert statistics.matches_won == won
+        assert statistics.matches_lost == lost
+        assert statistics.matches_drawn == 0
+        assert statistics.goals_for == 1
+        assert statistics.goals_against == 1
+
+
+def test_complete_round_rolls_back_when_tiebreak_has_no_winner(
+    round_db,
+    round_case,
+):
+    league = round_db.get(League, round_case.league_id)
+    league.penalties_enabled = True
+    round_db.commit()
+
+    matches = make_completed_matches(round_case)
+
+    # El primer partido tiene ganador; el segundo empata sin resolver.
+    assert matches[0].winner_club_id is not None
+    assert matches[1].winner_club_id is None
+
+    with pytest.raises(ValueError, match="Match must have a winner"):
+        complete_round(
+            db=round_db,
+            league_id=round_case.league_id,
+            round_number=1,
+            matches=matches,
+            is_last_round=False,
+        )
+
+    assert_round_unmodified(round_db, round_case)
+
+    for club_id in round_case.club_ids:
+        statistics = round_db.get(ClubStatistics, club_id)
+
+        assert statistics.matches_played == 0
+        assert statistics.total_points == 0
+        assert statistics.matches_won == 0
+        assert statistics.matches_drawn == 0
+        assert statistics.matches_lost == 0
+        assert statistics.goals_for == 0
+        assert statistics.goals_against == 0
+
+
+@pytest.mark.asyncio
+async def test_tiebreak_winner_reaches_fixture_and_round_event(
+    monkeypatch,
+    round_db,
+    round_case,
+    runner_event_setup,
+):
+    league = round_db.get(League, round_case.league_id)
+    league.penalties_enabled = True
+    round_db.commit()
+
+    first_round = make_completed_matches(round_case)
+    tied_match = first_round[1]
+    winner_id = round_case.club_ids[3]
+
+    tied_match.participation_a.goals = 1
+    tied_match.participation_b.goals = 1
+    tied_match.winner_club_id = winner_id
+
+    monkeypatch.setattr(
+        league_runner,
+        "build_round_matches",
+        Mock(
+            side_effect=[
+                first_round,
+                make_second_round_matches(round_case),
+            ]
+        ),
+    )
+
+    await league_runner.run_league(round_case.league_id)
+
+    round_db.expire_all()
+    detail = league_runner.get_league_detail(
+        round_db,
+        round_case.league_id,
+    )
+
+    fixture_item = next(
+        item
+        for item in detail.fixture
+        if item.match_id == tied_match.match_id
+    )
+
+    assert fixture_item.winner_club_id == winner_id
+    assert fixture_item.score.local == 1
+    assert fixture_item.score.visitante == 1
+
+    round_event = runner_event_setup.probe.events[0]
+    assert round_event.type == "league_round_finished"
+
+    result = next(
+        item
+        for item in round_event.model_dump(mode="json")["results"]
+        if item["match_id"] == tied_match.match_id
+    )
+
+    assert result["winner_club_id"] == winner_id
+    assert result["score"] == {"local": 1, "visitante": 1}
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "penalties_enabled",
+    [False, True],
+    ids=["disabled", "enabled"],
+)
+async def test_run_league_passes_penalties_option_to_each_round(
+    round_db,
+    round_case,
+    runner_event_setup,
+    penalties_enabled,
+):
+    league = round_db.get(League, round_case.league_id)
+    league.penalties_enabled = penalties_enabled
+    round_db.commit()
+
+    first_round = make_completed_matches(round_case)
+    second_round = make_second_round_matches(round_case)
+
+    if penalties_enabled:
+        # La liga exige un ganador también en el partido empatado.
+        first_round[1].winner_club_id = (
+            first_round[1].participation_a.club_id
+        )
+
+    build = league_runner.build_round_matches
+    build.side_effect = [first_round, second_round]
+
+    await league_runner.run_league(round_case.league_id)
+
+    assert build.call_count == 2
+
+    for build_call in build.call_args_list:
+        assert build_call.args[3] is penalties_enabled

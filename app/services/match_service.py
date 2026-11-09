@@ -10,6 +10,7 @@ from app.game.behavior_worker_pool import BehaviorWorkerPool
 from app.game.behavior_coordinator import BehaviorCoordinator
 from app.game.engine import GameEngine
 from app.game.match_runner import MatchRunner
+from app.game.penalties import PenaltySide
 
 from app.game.active_matches import (
     register_match,
@@ -335,3 +336,43 @@ async def stop_running_matches() -> None:
             *tasks,
             return_exceptions=True,
         )
+
+
+def submit_penalty_choice(
+    db: Session,
+    user_id: int,
+    match_id: int,
+    turn: int,
+    side: PenaltySide,
+) -> None:
+    match = get_match(match_id)
+
+    if match is None:
+        raise LookupError("Match not found")
+
+    club = club_repository.get_by_user_id(db, user_id)
+
+    if club is None:
+        raise PermissionError("User has no club")
+
+    if club.id not in (
+        match.participation_a.club_id,
+        match.participation_b.club_id,
+    ):
+        raise PermissionError(
+            "User is not participating in this match"
+        )
+
+    if match.state != MatchState.IN_PROGRESS:
+        raise ValueError("Match is not in progress")
+
+    session = match.penalty_session
+
+    if session is None:
+        raise ValueError("Match has no active penalty shootout")
+
+    session.submit_choice(
+        club_id=club.id,
+        turn=turn,
+        side=side,
+    )

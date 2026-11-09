@@ -3,6 +3,9 @@ from typing import Protocol, Any
 import time, asyncio
 
 from app.game.models.match import Match, MatchState, MatchSnapshot
+from app.game.models.player_in_match import PlayerInMatch
+from app.game.penalties import PenaltyShootout
+from app.game.penalty_session import PenaltySession
 from app.game.types import CoachCommand, CoachTrigger, Period, Substitution
 from app.game.constants import (
     TIC_DURATION,
@@ -10,6 +13,8 @@ from app.game.constants import (
     HYDRATION_BREAK_DURATION,
     HALFTIME_BREAK_DURATION,
     SUBSTITUTION_EXECUTION_WINDOW,
+    PENALTY_INTRO_DURATION,
+    PENALTY_RESULT_DURATION,
 )
 from app.services.match_websocket_service import (
     match_connection_manager,
@@ -19,6 +24,10 @@ from app.services.match_websocket_service import (
     build_pause_started_message,
     build_substitution_window_closed_message,
     build_pause_finished_message,
+    build_penalty_shootout_started_message,
+    build_penalty_turn_started_message,
+    build_penalty_result_message,
+    build_penalty_shootout_finished_message,
 )
 
 
@@ -52,6 +61,8 @@ class MatchRunner:
         hydration_duration: float = HYDRATION_BREAK_DURATION,
         halftime_duration: float = HALFTIME_BREAK_DURATION,
         execution_window: float = SUBSTITUTION_EXECUTION_WINDOW,
+        penalty_intro_duration: float = PENALTY_INTRO_DURATION,
+        penalty_result_duration: float = PENALTY_RESULT_DURATION,
     ):
         if (
             execution_window < 0
@@ -60,11 +71,20 @@ class MatchRunner:
         ):
             raise ValueError("Invalid break durations")
 
+        if (
+            penalty_intro_duration < 0
+            or penalty_result_duration < 0
+        ):
+            raise ValueError("Invalid penalties duration")
+
         self.behavior_coordinator = behavior_coordinator
         self.game_engine = game_engine
         self.hydration_duration = hydration_duration
         self.halftime_duration = halftime_duration
         self.execution_window = execution_window
+        self.penalty_intro_duration = penalty_intro_duration
+        self.penalty_result_duration = penalty_result_duration
+
 
     # we implemented the execution of a single tick, and then the cycle of the whole match
 
@@ -301,10 +321,114 @@ class MatchRunner:
                 # eeset the tick clock after a scheduled break
                 next_tick_time = time.monotonic()
 
-        # when the match ended, change its state to finished and close ws conections
+        winner_id = None
+
+        if (
+            match.participation_a.goals
+            > match.participation_b.goals
+        ):
+            winner_id = match.participation_a.club_id
+
+        elif (
+            match.participation_a.goals
+            < match.participation_b.goals
+        ):
+            winner_id = match.participation_b.club_id
+
         match.substitution_requests_open = False
+
+        if (
+            winner_id is None
+            and match.penalties_enabled
+        ):
+            await self.run_penalties(
+                match=match,
+                turn_timeout=5.0,
+            )
+        else:
+            match.winner_club_id = winner_id
+
         match.state = MatchState.FINISHED
 
         await match_connection_manager.close_match_connection(match.match_id)
 
         return match
+
+
+    async def run_penalties(
+        self,
+        match: Match,
+        turn_timeout: float,
+    ) -> None:
+        shootout = PenaltyShootout(
+            club_a_id=match.participation_a.club_id,
+            club_b_id=match.participation_b.club_id,
+            kickers_a=_get_penalty_kickers(
+                match.participation_a.players,
+            ),
+            kickers_b=_get_penalty_kickers(
+                match.participation_b.players,
+            ),
+            seed=match.match_id,
+        )
+
+        session = PenaltySession(
+            shootout=shootout,
+            response_timeout=turn_timeout,
+        )
+
+        match.penalty_session = session
+
+        try:
+            await match_connection_manager.broadcast(
+                match.match_id,
+                build_penalty_shootout_started_message(
+                    self.penalty_intro_duration
+                )
+            )
+
+            await asyncio.sleep(self.penalty_intro_duration)
+
+            for _ in range(6):
+                session.open_turn()
+
+                await match_connection_manager.broadcast(
+                    match.match_id,
+                    build_penalty_turn_started_message(session),
+                )
+
+                result = await session.wait_and_resolve()
+
+                await match_connection_manager.broadcast(
+                    match.match_id,
+                    build_penalty_result_message(
+                        result,
+                        self.penalty_result_duration,
+                    ),
+                )
+
+                await asyncio.sleep(self.penalty_result_duration)
+
+            match.winner_club_id = shootout.winner_club_id
+
+            await match_connection_manager.broadcast(
+                match.match_id,
+                build_penalty_shootout_finished_message(shootout),
+            )
+
+        finally:
+            session.accepting_choices = False
+
+
+
+
+def _get_penalty_kickers(
+    players: list[PlayerInMatch],
+) -> tuple[int, ...]:
+    kickers = []
+
+    for player in players:
+        if player.is_on_field:
+            kickers.append(player.player_id)
+
+    return tuple(kickers)

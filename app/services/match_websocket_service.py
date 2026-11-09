@@ -1,7 +1,12 @@
+import asyncio
+
 from fastapi import WebSocket
+from time import monotonic
 
 from app.game.active_matches import get_match
 from app.game.models.match import MatchSnapshot, Match, PauseType
+from app.game.penalties import PenaltyShootout
+from app.game.penalty_session import PenaltySession
 from app.game.types import Assignment, Substitution
 from app.schemas.match_websocket import (
     MatchPlayerState,
@@ -18,14 +23,22 @@ from app.schemas.match_websocket import (
     MatchTeamInfo,
     MatchPlayerInfo,
     MatchInfoMessage,
+    PenaltyShootoutStartedMessage,
+    PenaltyTurnStartedMessage,
+    PenaltyResultMessage,
+    PenaltyHistoryMessage,
+    PenaltyShootoutFinishedMessage,
 )
 
+
+SEND_TIMEOUT_SECONDS = 1.0
 
 class MatchConnectionManager:
     def __init__(self):
         # we relate the match_id with the connections it can have
         self.active_connections: dict[int, list[WebSocket]] = {}
         self.connection_clubs: dict[WebSocket, int | None] = {}
+        self._send_locks: dict[WebSocket, asyncio.Lock] = {}
 
     # since most WS operations use the network, we use await in case it takes a while
     async def connect(
@@ -34,38 +47,78 @@ class MatchConnectionManager:
         websocket: WebSocket,
         client_club_id: int | None = None,
     ) -> None:
-        # accept de ws conection
         await websocket.accept()
 
-        # if there was no connection to that match, we create the empty ws list
-        if match_id not in self.active_connections:
-            self.active_connections[match_id] = []
+        lock = self._send_locks.setdefault(websocket, asyncio.Lock())
 
-        # We save the connection in the respective match_id
-        self.active_connections[match_id].append(websocket)
-        self.connection_clubs[websocket] = client_club_id
+        try:
+            async with asyncio.timeout(SEND_TIMEOUT_SECONDS):
+                async with lock:
+                    self.active_connections.setdefault(match_id, []).append(websocket)
+                    self.connection_clubs[websocket] = client_club_id
 
-        # Si el partido está registrado y activo, enviar match_info y estado_partido inicial
-        match = get_match(match_id)
-        if match is not None:
-            match_info = build_match_info_message(match, my_club_id=client_club_id)
-            await websocket.send_json(match_info.model_dump())
+                    match = get_match(match_id)
+                    if match is None:
+                        return
 
-            initial_snapshot = match.snapshot()
-            initial_state = build_match_state_message(initial_snapshot)
-            filtered_initial_state = filter_match_state_for_client(
-                initial_state,
-                client_club_id=client_club_id,
-                club_a_id=match.participation_a.club_id,
-                club_b_id=match.participation_b.club_id,
-                pending_a=match.participation_a.pending_substitution,
-                pending_b=match.participation_b.pending_substitution,
-            )
-            await websocket.send_json(filtered_initial_state.model_dump())
+                    match_info = build_match_info_message(
+                        match,
+                        my_club_id=client_club_id,
+                    )
+                    await websocket.send_json(match_info.model_dump(mode="json"))
+
+                    initial_state = build_match_state_message(match.snapshot())
+                    filtered_initial_state = filter_match_state_for_client(
+                        initial_state,
+                        client_club_id=client_club_id,
+                        club_a_id=match.participation_a.club_id,
+                        club_b_id=match.participation_b.club_id,
+                        pending_a=match.participation_a.pending_substitution,
+                        pending_b=match.participation_b.pending_substitution,
+                    )
+                    await websocket.send_json(
+                        filtered_initial_state.model_dump(mode="json"),
+                    )
+
+                    session = match.penalty_session
+                    if session is not None:
+                        history_message = build_penalty_history_message(
+                            session.shootout,
+                        )
+
+                        penalty_message = None
+
+                        if match.winner_club_id is not None:
+                            penalty_message = build_penalty_shootout_finished_message(
+                                session.shootout,
+                            )
+                        elif session.accepting_choices:
+                            penalty_message = build_penalty_turn_started_message(
+                                session,
+                            )
+
+                        await websocket.send_json(
+                            history_message.model_dump(mode="json"),
+                        )
+
+                        if penalty_message is not None:
+                            await websocket.send_json(
+                                penalty_message.model_dump(mode="json"),
+                            )
+
+        except (Exception, asyncio.CancelledError):
+            self.disconnect(match_id, websocket)
+            try:
+                async with asyncio.timeout(SEND_TIMEOUT_SECONDS):
+                    await websocket.close()
+            except Exception:
+                pass
+            raise
 
     # given a WS connection and a match_id, we want to disconnect it from it
     def disconnect(self, match_id: int, websocket: WebSocket) -> None:
         self.connection_clubs.pop(websocket, None)
+        self._send_locks.pop(websocket, None)
 
         # we get the ws connections from that match_id
         connections = self.active_connections.get(match_id, [])
@@ -79,6 +132,21 @@ class MatchConnectionManager:
         if not connections:
             self.active_connections.pop(match_id, None)
 
+    async def _send_json(
+        self,
+        match_id: int,
+        websocket: WebSocket,
+        payload: dict,
+    ) -> None:
+        if websocket not in self.active_connections.get(match_id, []):
+            return
+
+        lock = self._send_locks.setdefault(websocket, asyncio.Lock())
+        async with asyncio.timeout(SEND_TIMEOUT_SECONDS):
+            async with lock:
+                if websocket in self.active_connections.get(match_id, []):
+                    await websocket.send_json(payload)
+
     # we want to send message to everyone online
     async def broadcast(
         self,
@@ -90,6 +158,10 @@ class MatchConnectionManager:
             | MatchPauseStartedMessage
             | MatchSubstitutionWindowClosedMessage
             | MatchPauseFinishedMessage
+            | PenaltyShootoutStartedMessage
+            | PenaltyTurnStartedMessage
+            | PenaltyResultMessage
+            | PenaltyShootoutFinishedMessage
         ),
     ) -> None:
 
@@ -123,7 +195,12 @@ class MatchConnectionManager:
                     pending_b=pending_b,
                 )
                 try:
-                    await websocket.send_json(filtered_msg.model_dump())
+                    await self._send_json(
+                        match_id,
+                        websocket,
+                        filtered_msg.model_dump(mode="json"),
+                    )
+
                 except Exception:
                     disconnected.append(websocket)
         elif isinstance(message, MatchCoachChangesMessage):
@@ -139,13 +216,22 @@ class MatchConnectionManager:
                     continue
 
                 try:
-                    await websocket.send_json(filtered_msg.model_dump())
+                    await self._send_json(
+                        match_id,
+                        websocket,
+                        filtered_msg.model_dump(mode="json"),
+                    )
                 except Exception:
                     disconnected.append(websocket)
         else:
             for websocket in connections:
                 try:
-                    await websocket.send_json(message.model_dump())
+                    await self._send_json(
+                        match_id,
+                        websocket,
+                        message.model_dump(mode="json"),
+                    )
+
                 except Exception:
                     disconnected.append(websocket)
 
@@ -160,8 +246,11 @@ class MatchConnectionManager:
 
         for websocket in connections:
             self.connection_clubs.pop(websocket, None)
-            try:    
-                await websocket.close()
+            lock = self._send_locks.pop(websocket, asyncio.Lock())
+            try:
+                async with asyncio.timeout(SEND_TIMEOUT_SECONDS):
+                    async with lock:
+                        await websocket.close()
 
             except Exception:
                 pass
@@ -421,6 +510,81 @@ def build_match_info_message(
 
         players=players,
         
+    )
+
+
+def build_penalty_shootout_started_message(
+    duration: float,
+)-> PenaltyShootoutStartedMessage:
+    if duration < 0:
+        raise ValueError("Invalid penalties duration")
+
+    return PenaltyShootoutStartedMessage(
+        duration=duration,
+    )
+
+
+def build_penalty_turn_started_message(
+    session: PenaltySession,
+) -> PenaltyTurnStartedMessage:
+    if not session.accepting_choices:
+        raise ValueError("Penalty turn is closed")
+
+    if session.deadline is None:
+        raise RuntimeError("Open penalty turn has no deadline")
+
+    shootout = session.shootout
+    kicker_index = shootout.turn // 2
+
+    if shootout.turn % 2 == 0:
+        club_id = shootout.club_a_id
+        kicker = shootout.kickers_a[kicker_index]
+
+    else:
+        club_id = shootout.club_b_id
+        kicker = shootout.kickers_b[kicker_index]
+
+    return PenaltyTurnStartedMessage(
+        turn=shootout.turn + 1,
+        club_id=club_id,
+        kicker=kicker,
+        score_club_a=shootout.score_a,
+        score_club_b=shootout.score_b,
+        remaining_seconds=max(
+            0.0,
+            session.deadline - monotonic(),
+        ),
+    )
+
+
+def build_penalty_result_message(
+    result: dict,
+    duration: float,
+) -> PenaltyResultMessage:
+    return PenaltyResultMessage(**result, duration=duration)
+
+
+def build_penalty_history_message(
+    shootout: PenaltyShootout,
+) -> PenaltyHistoryMessage:
+    return PenaltyHistoryMessage(
+        results=[
+            build_penalty_result_message(result, duration=0)
+            for result in shootout.results
+        ],
+    )
+
+
+def build_penalty_shootout_finished_message(
+    shootout: PenaltyShootout,
+) -> PenaltyShootoutFinishedMessage:
+    if shootout.winner_club_id is None:
+        raise ValueError("Penalty shootout has no winner yet")
+
+    return PenaltyShootoutFinishedMessage(
+        winner_club_id=shootout.winner_club_id,
+        score_club_a=shootout.score_a,
+        score_club_b=shootout.score_b,
     )
 
 
