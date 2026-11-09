@@ -615,6 +615,7 @@ def get_my_league_ids(
         return []
 
     return league_repository.get_active_league_ids_by_club(db, club.id)
+
 def update_league_roster(
     db: Session,
     league_id: int,
@@ -622,7 +623,6 @@ def update_league_roster(
     data: RosterCreate,
 ) -> None:
     try:
-        #get league
         league = league_repository.get_by_id(db=db, league_id=league_id)
 
         if league is None:
@@ -631,13 +631,11 @@ def update_league_roster(
         if league.state != LeagueState.INICIADA:
             raise InvalidLeagueState("League is not in progress")
 
-        # get club
         club = club_repository.get_by_user_id(db, user_id)
 
         if club is None:
             raise LeagueForbidden("User does not have a club")
 
-        # get the respective league participation
         participation = (
             league_participation_repository
             .get_participation_by_club_and_league(
@@ -650,10 +648,8 @@ def update_league_roster(
         if participation is None:
             raise LeagueForbidden("User is not participating in this league")
 
-        # get the respective participation roster
         roster = participation.roster
 
-        # build a temporary roster to compare the new and old players, and verify that they are the same players
         new_players = [
             PlayerOnRoster(
                 player_id=p.player_id,
@@ -663,22 +659,24 @@ def update_league_roster(
             )
             for p in data.players
         ]
-        temporary_roster = Roster(club_id=club.id, formation=data.formation, players=new_players)
 
-        # validate roster
+        temporary_roster = Roster(
+            club_id=club.id,
+            formation=data.formation,
+            players=new_players,
+        )
+
         try:
             temporary_roster.validate_roster()
         except ValueError as error:
             raise InvalidRoster(str(error)) from error
 
-        # verify new players are the same that the old players
         current_ids = {p.player_id for p in roster.players}
         new_ids = {p.player_id for p in new_players}
 
         if current_ids != new_ids:
-            raise InvalidRoster("The roster must contain the samesix players selected for this league")
+            raise InvalidRoster("The roster must contain the same six players selected for this league")
 
-        # validate behaviors
         for p in data.players:
             if p.initial_behavior_id is None:
                 continue
@@ -688,11 +686,20 @@ def update_league_roster(
             if behavior is None:
                 raise InvalidRoster("Behavior does not exist")
 
-            if (not behavior.is_default and behavior.club_id != club.id):
+            if not behavior.is_default and behavior.club_id != club.id:
                 raise InvalidRoster("Behavior does not belong to user's club")
 
-        # now, we can modify the actual roster
+        try:
+            validate_coach_behavior(
+                db=db,
+                club_id=club.id,
+                coach_behavior_id=data.coach_behavior_id,
+            )
+        except ValueError as error:
+            raise InvalidRoster(str(error)) from error
+
         roster.formation = data.formation
+        roster.coach_behavior_id = data.coach_behavior_id
         roster.players = [
             PlayerOnRoster(
                 player_id=p.player_id,
@@ -703,7 +710,6 @@ def update_league_roster(
             for p in data.players
         ]
 
-        # save changes
         db.commit()
 
     except Exception:
