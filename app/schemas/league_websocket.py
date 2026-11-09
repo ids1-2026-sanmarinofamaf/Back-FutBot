@@ -65,3 +65,8 @@ class LeagueFinishedEvent(BaseModel):
     type: Literal["league_finished"] = "league_finished"
     league_id: int = Field(ge=1)
     state: Literal["FINALIZADA"] = "FINALIZADA"
+
+
+class LeagueCancelledEvent(BaseModel):
+    type: Literal["league_cancelled"] = "league_cancelled"
+    league_id: int = Field(ge=1)

@@ -15,6 +15,7 @@ from app.schemas.league_websocket import (
     LeagueRoundStartedEvent,
     LeagueRoundFinishedEvent,
     LeagueFinishedEvent,
+    LeagueCancelledEvent,
 )
 
 
@@ -242,6 +243,7 @@ class LeagueConnectionManager:
             | LeagueRoundStartedEvent
             | LeagueRoundFinishedEvent
             | LeagueFinishedEvent
+            | LeagueCancelledEvent
         ),
     ) -> None:
         league_connections = self.active_connections.get(

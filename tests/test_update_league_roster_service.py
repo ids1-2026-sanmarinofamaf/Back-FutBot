@@ -1,3 +1,4 @@
+
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
@@ -131,6 +132,9 @@ def setup_repositories():
                 club_id=None,
             ),
         ) as mock_get_behavior,
+        patch(
+            "app.services.league_service.validate_coach_behavior",
+        ) as mock_validate_coach,
     ):
         yield SimpleNamespace(
             db=db,
@@ -142,6 +146,7 @@ def setup_repositories():
             get_club=mock_get_club,
             get_participation=mock_get_participation,
             get_behavior=mock_get_behavior,
+            validate_coach=mock_validate_coach,
         )
 
 @pytest.fixture
@@ -213,15 +218,25 @@ def test_update_success_changes_configuration_but_not_players(setup_repositories
         for player in s.roster.players
     }
 
+    payload = make_payload()
+    payload.coach_behavior_id = 7
+
     update_league_roster(
         s.db,
         LEAGUE_ID,
         USER_ID,
-        make_payload(),
+        payload,
     )
 
     assert s.roster.id == ROSTER_ID
     assert s.roster.formation == Formation.OFFENSIVE
+    assert s.roster.coach_behavior_id == 7
+
+    s.validate_coach.assert_called_once_with(
+        db=s.db,
+        club_id=CLUB_ID,
+        coach_behavior_id=7,
+    )
 
     assert {
         player.player_id
@@ -283,11 +298,14 @@ def test_get_returns_six_players_and_fields(setup_repositories):
 def test_put_then_get_returns_updated_roster(setup_repositories,):
     s = setup_repositories
 
+    payload = make_payload()
+    payload.coach_behavior_id = 7
+
     update_league_roster(
         s.db,
         LEAGUE_ID,
         USER_ID,
-        make_payload(),
+        payload,
     )
 
     response = get_league_roster(
@@ -297,6 +315,7 @@ def test_put_then_get_returns_updated_roster(setup_repositories,):
     )
 
     assert response.formation == Formation.OFFENSIVE
+    assert response.coach_behavior_id == 7
 
     assert {
         player.player_id
@@ -554,3 +573,55 @@ def test_started_match_keeps_original_roster(setup_started_match):
     # verify the already built match remains unchanged
     assert current_match.participation_a.starters == {1, 2, 3}
     assert current_match.participation_a.formation == Formation.DEFENSIVE
+
+
+def test_update_coach_behavior_invalid(setup_repositories):
+    s = setup_repositories
+
+    payload = make_payload()
+    payload.coach_behavior_id = 999
+
+    s.validate_coach.side_effect = ValueError(
+        "Coach behavior doesn't exist."
+    )
+
+    with pytest.raises(
+        InvalidRoster,
+        match="Coach behavior doesn't exist",
+    ):
+        update_league_roster(
+            db=s.db,
+            league_id=LEAGUE_ID,
+            user_id=USER_ID,
+            data=payload,
+        )
+
+    assert s.roster.coach_behavior_id is None
+    s.db.commit.assert_not_called()
+    s.db.rollback.assert_called_once()
+
+
+def test_update_remove_coach_behavior(setup_repositories):
+    s = setup_repositories
+
+    s.roster.coach_behavior_id = 7
+
+    payload = make_payload()
+    payload.coach_behavior_id = None
+
+    update_league_roster(
+        db=s.db,
+        league_id=LEAGUE_ID,
+        user_id=USER_ID,
+        data=payload,
+    )
+
+    assert s.roster.coach_behavior_id is None
+
+    s.validate_coach.assert_called_once_with(
+        db=s.db,
+        club_id=CLUB_ID,
+        coach_behavior_id=None,
+    )
+
+    s.db.commit.assert_called_once()

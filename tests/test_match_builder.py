@@ -31,6 +31,7 @@ def roster():
         club_id=20,
         formation=Formation.DEFENSIVE,
         players=players,
+        coach_behavior_id=30,
     )
 
 
@@ -144,6 +145,7 @@ def test_create_match_participation(roster, mock_players):
 
     assert participation.club_id == 20
     assert participation.roster_id == 10
+    assert participation.coach_behavior_id == 30
     assert participation.goals == 0
 
     assert len(participation.players) == 6

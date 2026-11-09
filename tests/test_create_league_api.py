@@ -11,6 +11,7 @@ from app.database import SessionLocal
 from app.main import app
 from app.models.behavior import Behavior
 from app.models.club import Club
+from app.models.coach_behavior import CoachBehavior
 from app.models.league import League, LeaguePrivacy, LeagueState
 from app.models.league_participation import LeagueParticipation
 from app.models.player import Player
@@ -54,6 +55,7 @@ def user(db):
     db.query(Roster).delete()
     db.query(Player).delete()
     db.query(Behavior).filter(Behavior.is_default.is_(False)).delete()
+    db.query(CoachBehavior).delete()
     db.query(Club).delete()
     db.query(User).delete()
     db.commit()
@@ -614,3 +616,54 @@ def test_create_league_persists_penalties_option(
 
     assert league is not None
     assert league.penalties_enabled is expected
+
+
+COACH_CODE = "def coach():\n    return []\n"
+
+
+# the roster keeps the coach behavior sent in the body
+def test_create_league_saves_coach_behavior_in_roster(user, db, players, behavior):
+    coach_behavior = CoachBehavior(club_id=user.club.id, name="Coach", code=COACH_CODE)
+    db.add(coach_behavior)
+    db.commit()
+
+    body = valid_body(players, behavior)
+    body["roster"]["coach_behavior_id"] = coach_behavior.id
+
+    response = post_league(body)
+
+    assert response.status_code == 201
+    db.expire_all()
+    participation = (
+        db.query(LeagueParticipation)
+        .filter(LeagueParticipation.league_id == response.json()["id_liga"])
+        .one()
+    )
+    assert participation.roster.coach_behavior_id == coach_behavior.id
+
+
+# a coach behavior of another club returns 400 and nothing is saved
+def test_create_league_coach_behavior_of_other_club_returns_400(user, db, players, behavior):
+    other_user = User(
+        email="other-coach@mail.com",
+        hash_passwd="test_hash",
+        club=Club(name="other-coach-club"),
+    )
+    db.add(other_user)
+    db.flush()
+    foreign_coach_behavior = CoachBehavior(
+        club_id=other_user.club.id,
+        name="Coach",
+        code=COACH_CODE,
+    )
+    db.add(foreign_coach_behavior)
+    db.commit()
+
+    body = valid_body(players, behavior)
+    body["roster"]["coach_behavior_id"] = foreign_coach_behavior.id
+
+    response = post_league(body)
+
+    assert response.status_code == 400
+    assert response.json()["detail"] == "Coach behavior doesn't exist."
+    assert_nothing_saved(db)

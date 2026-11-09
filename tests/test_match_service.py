@@ -50,7 +50,10 @@ async def test_two_matches_use_one_shared_pool(
     await asyncio.gather(*tuple(match_service._running_match_tasks))
 
     pool_factory.assert_called_once_with(size=6, timeout_ms=100)
-    assert pool.register_match.call_args_list == [call(10, []), call(11, [])]
+    assert pool.register_match.call_args_list == [
+        call(10, [], None),
+        call(11, [], None),
+    ]
     assert coordinator_factory.call_args_list == [
         call(pool, match_id=10),
         call(pool, match_id=11),
@@ -215,6 +218,7 @@ def test_start_match_releases_resources_if_initialization_fails(
     worker_pool.register_match.assert_called_once_with(
         50,
         behaviors,
+        None,
     )
 
     worker_pool.release_match.assert_called_once_with(50)
@@ -439,3 +443,19 @@ async def test_start_match_preserves_original_return_value(
     assert match_id == 102
 
     await asyncio.gather(*tuple(match_service._running_match_tasks))
+
+
+def test_start_match_forwards_coach_behaviors(monkeypatch):
+    start_match_task = MagicMock()
+    monkeypatch.setattr(match_service, "start_match_task", start_match_task)
+
+    match = make_match(10)
+    coach_behaviors = ["coach"]
+
+    assert match_service.start_match(
+        match,
+        [],
+        coach_behaviors=coach_behaviors,
+    ) == 10
+
+    assert start_match_task.call_args.kwargs["coach_behaviors"] == coach_behaviors

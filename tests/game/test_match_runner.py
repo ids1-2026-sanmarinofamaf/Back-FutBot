@@ -1,4 +1,4 @@
-
+import asyncio
 import copy
 
 import pytest
@@ -329,7 +329,7 @@ async def test_run_match_does_not_accumulate_tick_drift(
     monkeypatch.setattr(
         match_runner_module,
         "asyncio",
-        SimpleNamespace(sleep=clock.sleep),
+        SimpleNamespace(sleep=clock.sleep, to_thread=asyncio.to_thread),
     )
 
     monkeypatch.setattr(
@@ -406,7 +406,7 @@ async def test_match_does_not_catch_up_ticks_after_break(
     monkeypatch.setattr(
         match_runner_module,
         "asyncio",
-        SimpleNamespace(sleep=clock.sleep),
+        SimpleNamespace(sleep=clock.sleep, to_thread=asyncio.to_thread),
     )
 
     monkeypatch.setattr(

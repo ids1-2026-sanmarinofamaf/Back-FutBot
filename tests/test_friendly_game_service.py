@@ -15,6 +15,7 @@ def valid_friendly_game_data():
 
     data.roster = MagicMock()
     data.roster.formation = Formation.OFFENSIVE
+    data.roster.coach_behavior_id = None
     data.roster.players = [
         MagicMock(
             player_id=1,
@@ -207,6 +208,88 @@ def test_rejects_incomplete_roster(
         ValueError,
         match="A roster must have exactly 6 players",
     ):
+        create_friendly_game(
+            db=db,
+            user_id=5,
+            data=valid_friendly_game_data,
+        )
+
+    db.commit.assert_not_called()
+    db.rollback.assert_called_once()
+
+
+@patch("app.services.friendly_game_service.validate_coach_behavior")
+@patch("app.services.friendly_game_service.club_repository")
+@patch("app.services.friendly_game_service.player_repository")
+@patch("app.services.friendly_game_service.behavior_repository")
+@patch("app.services.friendly_game_service.roster_repository")
+@patch("app.services.friendly_game_service.friendly_game_repository")
+def test_create_friendly_game_saves_coach_behavior_in_roster(
+    mock_friendly_game_repository,
+    mock_roster_repository,
+    mock_behavior_repository,
+    mock_player_repository,
+    mock_club_repository,
+    mock_validate_coach_behavior,
+    valid_friendly_game_data,
+):
+    db = MagicMock()
+    valid_friendly_game_data.roster.coach_behavior_id = 7
+
+    club = MagicMock()
+    club.id = 1
+    mock_club_repository.get_by_user_id.return_value = club
+
+    player = MagicMock()
+    player.club_id = 1
+    mock_player_repository.get_by_id.return_value = player
+
+    behavior = MagicMock()
+    behavior.club_id = 1
+    behavior.is_default = False
+    mock_behavior_repository.get_by_id.return_value = behavior
+
+    _, result_roster = create_friendly_game(
+        db=db,
+        user_id=5,
+        data=valid_friendly_game_data,
+    )
+
+    mock_validate_coach_behavior.assert_called_once_with(db, 1, 7)
+    assert result_roster.coach_behavior_id == 7
+    db.commit.assert_called_once()
+
+
+@patch("app.services.friendly_game_service.validate_coach_behavior")
+@patch("app.services.friendly_game_service.club_repository")
+@patch("app.services.friendly_game_service.player_repository")
+@patch("app.services.friendly_game_service.behavior_repository")
+def test_rejects_roster_with_invalid_coach_behavior(
+    mock_behavior_repository,
+    mock_player_repository,
+    mock_club_repository,
+    mock_validate_coach_behavior,
+    valid_friendly_game_data,
+):
+    db = MagicMock()
+    valid_friendly_game_data.roster.coach_behavior_id = 7
+
+    club = MagicMock()
+    club.id = 1
+    mock_club_repository.get_by_user_id.return_value = club
+
+    player = MagicMock()
+    player.club_id = 1
+    mock_player_repository.get_by_id.return_value = player
+
+    behavior = MagicMock()
+    behavior.club_id = 1
+    behavior.is_default = False
+    mock_behavior_repository.get_by_id.return_value = behavior
+
+    mock_validate_coach_behavior.side_effect = ValueError("Coach behavior doesn't exist.")
+
+    with pytest.raises(ValueError, match="Coach behavior doesn't exist."):
         create_friendly_game(
             db=db,
             user_id=5,
