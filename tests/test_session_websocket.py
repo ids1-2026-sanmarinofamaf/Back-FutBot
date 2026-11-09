@@ -22,6 +22,7 @@ from app.database import SessionLocal
 from app.main import app
 from app.models.club import Club
 from app.models.user import User
+from app.models.league import League, LeaguePrivacy, LeagueState
 
 # Email distinto al de test_auth.py para que los tests no se pisen entre sí
 EMAIL = "ws@mail.com"
@@ -78,7 +79,57 @@ def test_connect_with_valid_token_receives_welcome(user):
     # websocket_connect abre la conexión; el "with" la cierra solo al salir del bloque
     with client.websocket_connect(ws_url(token)) as ws:
         # Lo primero que hace el endpoint al conectar es mandar el estado actual de los partidos amistosos
-        assert ws.receive_json() == {"friendly_games": []}
+        assert ws.receive_json() == {
+            "friendly_games": [],
+            "leagues": [],
+        }
+
+
+def test_connect_receives_available_league(user):
+    db = SessionLocal()
+
+    league = League(
+        name="Liga Argentina",
+        match_duration=10,
+        max_clubs=8,
+        state=LeagueState.POR_COMENZAR,
+        privacy=LeaguePrivacy.PRIVADA,
+        password_hash="secret_hash",
+        creator_id=user.id,
+    )
+
+    db.add(league)
+    db.commit()
+    db.refresh(league)
+
+    league_id = league.id
+
+    try:
+        token = create_access_token(user.email)
+
+        with client.websocket_connect(ws_url(token)) as ws:
+            payload = ws.receive_json()
+
+        assert payload == {
+            "friendly_games": [],
+            "leagues": [
+                {
+                    "league_id": league_id,
+                    "name": "Liga Argentina",
+                    "current_participants": 0,
+                    "capacity": 8,
+                    "privacy": "PRIVADA",
+                    "state": "POR_COMENZAR",
+                }
+            ],
+        }
+
+        assert "password_hash" not in payload["leagues"][0]
+
+    finally:
+        db.delete(league)
+        db.commit()
+        db.close()
 
 
 def test_connected_user_is_registered_in_manager(user):

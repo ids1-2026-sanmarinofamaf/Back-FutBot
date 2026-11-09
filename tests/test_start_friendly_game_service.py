@@ -2,16 +2,19 @@ import asyncio
 
 import pytest
 
+from types import SimpleNamespace
 from unittest.mock import (
     AsyncMock,
     MagicMock,
     patch,
     call,
+    Mock,
 )
 
 from app.models.friendly_game import FriendlyGameState
 from app.models.friendly_game_participation import FriendlyGameRole
 
+from app.services import friendly_game_service
 from app.services.friendly_game_service import (
     start_friendly_game,
     _finish_friendly_game,
@@ -70,6 +73,7 @@ def test_start_friendly_game_success(
     mock_start_match,
 ):
     db = MagicMock()
+    db.execute.return_value.scalar_one.return_value = 50
 
     (
         friendly_game,
@@ -97,7 +101,6 @@ def test_start_friendly_game_success(
     behaviors = [MagicMock(), MagicMock()]
 
     mock_load_match_behaviors.return_value = behaviors
-    mock_start_match.return_value = 50
 
     result = asyncio.run(
         start_friendly_game(
@@ -164,7 +167,8 @@ def test_start_friendly_game_success(
         state=FriendlyGameState.JUGANDO,
     )
 
-    db.commit.assert_called_once()
+    assert db.commit.call_count == 2
+    assert friendly_game.match_id == 50
 
 @patch("app.services.friendly_game_service.friendly_game_repository")
 def test_start_friendly_game_not_found(
@@ -432,3 +436,36 @@ def test_finish_friendly_game_sets_finalizado(
 
     db.commit.assert_called_once()
     db.rollback.assert_not_called()
+
+
+def test_create_match_participation_delegates_to_builder(monkeypatch):
+    db = Mock()
+
+    roster = Mock()
+    expected_participation = Mock()
+
+    friendly_participation = SimpleNamespace(
+        roster=roster,
+    )
+
+    builder = Mock(return_value=expected_participation)
+
+    monkeypatch.setattr(
+        friendly_game_service,
+        "create_match_participation",
+        builder,
+    )
+
+    result = friendly_game_service._create_match_participation(
+        db=db,
+        friendly_participation=friendly_participation,
+        mirror_position=True,
+    )
+
+    assert result is expected_participation
+
+    builder.assert_called_once_with(
+        db=db,
+        roster=roster,
+        mirror_position=True,
+    )

@@ -1,6 +1,7 @@
 from app.game import primitives
 from app.game.models.behavior_definition import BehaviorDefinition
-from app.game.models.runtime_behavior import RuntimeBehavior
+from app.game.models.runtime_behavior import RuntimeBehavior, RuntimeCoachBehavior
+from app.game.types import CoachTrigger
 
 
 class BehaviorCompilationError(Exception):
@@ -9,14 +10,21 @@ class BehaviorCompilationError(Exception):
 
 class BehaviorCompiler:
     """
-    Compile behavior source code into an executable RuntimeBehavior.
+    Compile behavior source code into an executable RuntimeBehavior
+    (entrypoint "play") or RuntimeCoachBehavior (entrypoint "coach").
     """
 
     def compile(
         self,
         behavior: BehaviorDefinition,
-    ) -> RuntimeBehavior:
-        namespace = self._build_namespace()
+        entrypoint: str = "play",
+    ) -> RuntimeBehavior | RuntimeCoachBehavior:
+        if entrypoint == "play":
+            namespace = self._build_player_namespace()
+        elif entrypoint == "coach":
+            namespace = self._build_coach_namespace()
+        else:
+            raise ValueError(f"Unknown entrypoint {entrypoint!r}")
 
         try:
             exec(behavior.code, namespace)
@@ -25,19 +33,25 @@ class BehaviorCompiler:
                 f"Could not compile behavior {behavior.id}"
             ) from exc
 
-        play = namespace.get("play")
+        function = namespace.get(entrypoint)
 
-        if not callable(play):
+        if not callable(function):
             raise BehaviorCompilationError(
-                f"Behavior {behavior.id} does not define a callable play()"
+                f"Behavior {behavior.id} does not define a callable {entrypoint}()"
+            )
+
+        if entrypoint == "coach":
+            return RuntimeCoachBehavior(
+                id=behavior.id,
+                coach=function,
             )
 
         return RuntimeBehavior(
             id=behavior.id,
-            play=play,
+            play=function,
         )
 
-    def _build_namespace(self) -> dict:
+    def _build_player_namespace(self) -> dict:
         return {
             "self": primitives.self,
             "ball": primitives.ball,
@@ -63,4 +77,25 @@ class BehaviorCompiler:
             "move": primitives.move,
             "kick": primitives.kick,
             "wait": primitives.wait,
+        }
+
+    def _build_coach_namespace(self) -> dict:
+        return {
+            "ball": primitives.ball,
+            "score": primitives.score,
+            "match_time_remaining": primitives.match_time_remaining,
+            "current_period": primitives.current_period,
+            "period_time_remaining": primitives.period_time_remaining,
+            "teammates": primitives.teammates,
+            "opponents": primitives.opponents,
+            "distance": primitives.distance,
+            "direction_to": primitives.direction_to,
+            "CoachTrigger": CoachTrigger,
+            "current_behavior": primitives.current_behavior,
+            "assign": primitives.assign,
+            "substitute": primitives.substitute,
+            "bench": primitives.bench,
+            "can_substitute": primitives.can_substitute,
+            "trigger": primitives.trigger,
+            "available_behaviors": primitives.available_behaviors,
         }

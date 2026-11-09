@@ -42,7 +42,7 @@ async def websocket_endpoint(
         # El servidor manda inmediatamente el estado completo.
         await (
             session_websocket_service
-            .send_friendly_games_to_connection(
+            .send_session_snapshot_to_connection(
                 websocket=websocket,
                 db=db,
             )

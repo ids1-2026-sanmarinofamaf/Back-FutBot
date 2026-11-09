@@ -9,6 +9,7 @@ from app.models.user import User
 from app.models.club import Club
 from app.models.behavior import Behavior
 from app.models.roster import Roster, Formation
+from app.models.coach_behavior import CoachBehavior
 from app.models.player_on_roster import PlayerOnRoster, RosterSlot
 
 
@@ -38,6 +39,7 @@ def session():
             Club.__table__,
             Behavior.__table__,
             Base.metadata.tables["players"],
+            CoachBehavior.__table__,
             Roster.__table__,
             PlayerOnRoster.__table__,
         ],
@@ -239,3 +241,24 @@ def test_default_behavior_cannot_belong_to_club(session, club):
 
     with pytest.raises(IntegrityError):
         session.commit()
+
+
+def test_behavior_repository_delete(session, club):
+    from app.repositories import behavior_repository
+
+    behavior = Behavior(
+        name="Para Borrar",
+        code=BEHAVIOR_CODE,
+        club=club,
+        is_default=False,
+    )
+    behavior_repository.save(session, behavior)
+    session.commit()
+
+    assert behavior.id is not None
+    assert behavior_repository.get_by_id(session, behavior.id) is not None
+
+    behavior_repository.delete(session, behavior)
+    session.commit()
+
+    assert behavior_repository.get_by_id(session, behavior.id) is None

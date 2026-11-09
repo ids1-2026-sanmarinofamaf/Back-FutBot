@@ -1,0 +1,121 @@
+
+from sqlalchemy import select, func
+from sqlalchemy.orm import Session, selectinload
+
+from app.models.league import League, LeagueState
+from app.models.league_participation import LeagueParticipation
+
+# to verify that the league exists
+def get_by_id(
+    db: Session,
+    league_id: int,
+) -> League | None:
+    return db.get(League, league_id)
+
+
+# 
+def  get_by_id_for_update(
+    db: Session,
+    league_id: int,
+) -> League | None:
+    return db.scalar(
+        select(League)
+        .where (League.id == league_id)
+        .with_for_update()
+    )
+    
+
+def update_state(
+    db: Session,
+    league: League,
+    state: LeagueState,
+) -> None:
+    league.state = state
+    db.flush()
+
+
+def delete(
+    db: Session,
+    league: League,
+) -> None:
+    db.delete(league)
+    db.flush()
+
+
+def create(db: Session, league: League):
+    # use flush instead of commit to keep transaction control outside this function, so we can rollback later
+    db.add(league)
+    db.flush()
+    db.refresh(league)  # Recarga el objeto desde la base
+    return league
+
+
+def count_participations(
+    db: Session,
+    league_id: int,
+) -> int:
+    return db.scalar(
+        select(func.count())
+        .select_from(LeagueParticipation)
+        .where(
+            LeagueParticipation.league_id
+            == league_id,
+        )
+    ) or 0
+
+
+def get_visible_leagues(
+    db:Session,
+) -> list[League]:
+    return list(
+        db.scalars(
+            select(League)
+            .options(
+                selectinload(League.league_participations),
+            )
+            .where(
+                League.state.in_(
+                    [
+                        LeagueState.POR_COMENZAR,
+                        LeagueState.INICIADA,
+                    ]
+                )
+            )
+            .order_by(League.id)
+        ).all()
+    )
+
+
+def get_started_leagues_ids(db: Session) -> list[int]:
+    return list(
+        db.scalars(
+            select(League.id)
+            .where(
+                League.state == LeagueState.INICIADA
+            )
+            .order_by(League.id)
+        ).all()
+    )
+
+
+def get_active_league_ids_by_club(
+    db: Session,
+    club_id: int,
+) -> list[int]:
+
+    res = (
+        select(LeagueParticipation.league_id)
+        .join(
+            League,
+            LeagueParticipation.league_id == League.id
+        )
+        .where(
+            LeagueParticipation.club_id == club_id,
+            League.state.in_([
+                LeagueState.POR_COMENZAR,
+                LeagueState.INICIADA
+            ])
+        )
+    )
+
+    return list(db.scalars(res).all())

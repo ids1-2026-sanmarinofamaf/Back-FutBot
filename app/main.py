@@ -1,41 +1,84 @@
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI
-from app.api import auth, users, friendly_games, sessions_websocket
-
-
+from fastapi import FastAPI, Request, status
+from fastapi.exceptions import RequestValidationError
+from fastapi.exception_handlers import request_validation_exception_handler
+from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import text
 
 from app.database import engine
-from app.api import friendly_games, players
-from app.api import behaviors
 
-
+from app.api import (
+    auth,
+    users,
+    friendly_games,
+    players,
+    sessions_websocket,
+    matches,
+    behaviors,
+    behavior_preview,
+    coach_behaviors,
+    leagues,
+    ranking,
+    clubs,
+)
 
 from app.api.friendly_game_websocket import router as friendly_game_websocket_router
 from app.api.match_websocket import router as match_websocket_router
+from app.api.behavior_preview_websocket import router as behavior_preview_websocket_router
+from app.api.league_websocket import router as league_websocket_router
+
+from app.services.league_runner import stop_league_runners
+from app.services.startup_service import (
+    recover_interrupted_games,
+    recover_interrupted_leagues,
+)
+from app.services.match_service import (
+    initialize_worker_pool,
+    shutdown_worker_pool,
+    stop_running_matches,
+)
+from app.services.behavior_preview_service import stop_running_previews
 
 
 
-
-# Se ejecuta una vez al arrancar la app y una vez al apagar
-from fastapi.middleware.cors import CORSMiddleware
-
-# Runs once when the app starts and once when it shuts down
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # 1. STARTUP: runs before the server accepts requests
     with engine.connect() as connection:
         connection.execute(text("SELECT 1"))
-    yield
-    # 2. SHUTDOWN: runs while the server is shutting down (Ctrl+C, deploy, etc.)
-    engine.dispose()
+
+    recover_interrupted_games()
+    initialize_worker_pool()
+
+    try:
+        recover_interrupted_leagues()
+        yield
+    finally:
+        await stop_league_runners()
+        await stop_running_matches()
+        await stop_running_previews()
+        shutdown_worker_pool()
+        engine.dispose()
+
 
 app = FastAPI(lifespan=lifespan)
 
+
+# these POST endpoints must answer 400 on an invalid body; every other endpoint keeps FastAPI's default 422
+BAD_REQUEST_ON_INVALID_BODY = {"/leagues", "/clubes/me/coach_behaviors"}
+
+
+@app.exception_handler(RequestValidationError)
+async def validation_exception_handler(request: Request, exc: RequestValidationError):
+    response = await request_validation_exception_handler(request, exc)
+    if request.method == "POST" and request.url.path in BAD_REQUEST_ON_INVALID_BODY:
+        response.status_code = status.HTTP_400_BAD_REQUEST
+    return response
+
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # tu origen de Vite
+    allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -45,14 +88,20 @@ app.include_router(auth.router)
 app.include_router(users.router)
 app.include_router(sessions_websocket.router)
 app.include_router(friendly_game_websocket_router)
+app.include_router(behavior_preview.router)
 app.include_router(behaviors.router)
+app.include_router(coach_behaviors.router)
+app.include_router(leagues.router)
+app.include_router(ranking.router)
+app.include_router(league_websocket_router)
+app.include_router(clubs.router)
+app.include_router(friendly_games.router)
+app.include_router(players.router)
+app.include_router(matches.router)
+app.include_router(match_websocket_router)
+app.include_router(behavior_preview_websocket_router)
 
 
 @app.get("/")
 def root():
-    return{"message": "FutBot backend running"}
-
-
-app.include_router(friendly_games.router)
-app.include_router(players.router)
-app.include_router(match_websocket_router)
+    return {"message": "FutBot backend running"}

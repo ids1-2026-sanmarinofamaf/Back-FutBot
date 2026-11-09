@@ -398,3 +398,71 @@ def test_join_accepts_default_behavior(
     assert participation.id == 40
     assert roster.id == 20
     db.commit.assert_called_once()
+
+
+@patch("app.services.friendly_game_service.validate_coach_behavior")
+def test_join_saves_coach_behavior_in_roster(
+    mock_validate_coach_behavior,
+    repos,
+    valid_join_data,
+):
+    db = MagicMock()
+    valid_join_data.roster.coach_behavior_id = 7
+
+    club, friendly_game = configure_joinable_game(repos)
+
+    player = MagicMock()
+    player.club_id = club.id
+    repos.player.get_by_id.return_value = player
+
+    behavior = MagicMock()
+    behavior.club_id = club.id
+    repos.behavior.get_by_id.return_value = behavior
+
+    _, result_roster = asyncio.run(
+        join_friendly_game(
+            db=db,
+            friendly_game_id=friendly_game.id,
+            user_id=5,
+            data=valid_join_data,
+        )
+    )
+
+    mock_validate_coach_behavior.assert_called_once_with(db, club.id, 7)
+    assert result_roster.coach_behavior_id == 7
+    db.commit.assert_called_once()
+
+
+@patch("app.services.friendly_game_service.validate_coach_behavior")
+def test_join_rejects_invalid_coach_behavior(
+    mock_validate_coach_behavior,
+    repos,
+    valid_join_data,
+):
+    db = MagicMock()
+    valid_join_data.roster.coach_behavior_id = 7
+
+    club, _ = configure_joinable_game(repos)
+
+    player = MagicMock()
+    player.club_id = club.id
+    repos.player.get_by_id.return_value = player
+
+    behavior = MagicMock()
+    behavior.club_id = club.id
+    repos.behavior.get_by_id.return_value = behavior
+
+    mock_validate_coach_behavior.side_effect = ValueError("Coach behavior doesn't exist.")
+
+    with pytest.raises(InvalidRoster, match="Coach behavior doesn't exist."):
+        asyncio.run(
+            join_friendly_game(
+                db=db,
+                friendly_game_id=30,
+                user_id=5,
+                data=valid_join_data,
+            )
+        )
+
+    db.commit.assert_not_called()
+    db.rollback.assert_called_once()

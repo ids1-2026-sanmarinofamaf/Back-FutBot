@@ -9,6 +9,7 @@ from app.database import Base
 from app.models.user import User
 from app.models.club import Club
 from app.models.roster import Roster, Formation
+from app.models.coach_behavior import CoachBehavior
 from app.models.friendly_game import FriendlyGame, FriendlyGameState
 from app.models.friendly_game_participation import (
     FriendlyGameParticipation,
@@ -29,6 +30,7 @@ def session():
         tables=[
             User.__table__,
             Club.__table__,
+            CoachBehavior.__table__,
             Roster.__table__,
             FriendlyGame.__table__,
             FriendlyGameParticipation.__table__,
@@ -49,6 +51,7 @@ def session():
                 FriendlyGameParticipation.__table__,
                 FriendlyGame.__table__,
                 Roster.__table__,
+                CoachBehavior.__table__,
                 Club.__table__,
                 User.__table__,
             ],

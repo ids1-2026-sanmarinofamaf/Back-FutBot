@@ -1,5 +1,5 @@
 from sqlalchemy.orm import Session, joinedload, selectinload
-from sqlalchemy import select, func
+from sqlalchemy import select, func, update
 
 from app.models.friendly_game import (
     FriendlyGame,
@@ -120,3 +120,17 @@ def get_visible_friendly_games(
             .order_by(FriendlyGame.id)
         ).all()
     )
+
+# finalize fg that were started but interrupted
+def finalize_interrupted_games(db: Session) -> int:
+    result = db.execute(
+        update(FriendlyGame)
+        .where(
+            FriendlyGame.state == FriendlyGameState.JUGANDO
+        )
+        .values(
+            state=FriendlyGameState.FINALIZADO
+        )
+    )
+
+    return result.rowcount

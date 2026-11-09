@@ -1,10 +1,16 @@
-from dataclasses import dataclass
+
+from dataclasses import dataclass, field
 from enum import Enum
 
 from app.game.models.ball import Ball, BallSnapshot
 from app.game.models.match_participation import MatchParticipation
 from app.game.models.player_in_match import PlayerInMatchSnapshot
-from app.game.types import Side
+from app.game.penalty_session import PenaltySession
+from app.game.types import Side, Period, CoachTrigger, Assignment, Substitution
+from typing import Literal
+
+
+PauseType = Literal["hydration", "halftime"]
 
 class MatchState(str, Enum):
     NOT_STARTED = "not_started"
@@ -27,6 +33,16 @@ class MatchSnapshot:
 
     last_conceding_side: Side | None
 
+    current_period: Period = Period.FIRST_QUARTER
+    side_a: Side = Side.LEFT
+    side_b: Side = Side.RIGHT
+    is_paused: bool = False
+    pause_type: PauseType | None = None
+    substitution_window_open: bool = True
+
+    winner_club_id: int | None = None
+
+
 @dataclass  # non-persistent class
 class Match:
     match_id: int   # it will be used for WebSockets.
@@ -36,11 +52,30 @@ class Match:
 
     duration_ticks: int  # total duration of the match expressed in simulation ticks
 
+    # coach triggers generated during the current tick, as (club_id, trigger)
+    pending_coach_triggers: list[tuple[int, CoachTrigger]] = field(default_factory=list)
+
     current_tick: int = 0
 
     last_conceding_side: Side | None = None
 
     state: MatchState = MatchState.NOT_STARTED
+
+    current_period: Period = Period.FIRST_QUARTER # actual period
+
+    side_a: Side = Side.LEFT
+    side_b: Side = Side.RIGHT
+
+    substitution_requests_open: bool = True # it is set to true as long as substitutions can be planned.
+    is_paused: bool = False
+    pause_type: PauseType | None = None
+
+    winner_club_id: int | None = None
+
+    penalties_enabled: bool = False
+
+    penalty_session: PenaltySession | None = None
+
 
     def snapshot(self) -> MatchSnapshot:  # returns a copy of match in the state it was in when made
         return MatchSnapshot(
@@ -62,5 +97,137 @@ class Match:
             score_a=self.participation_a.goals,
             score_b=self.participation_b.goals,
 
-            last_conceding_side=self.last_conceding_side
+            last_conceding_side=self.last_conceding_side,
+
+            current_period=self.current_period,
+            side_a=self.side_a,
+            side_b=self.side_b,
+
+            is_paused=self.is_paused,
+            pause_type=self.pause_type,
+            substitution_window_open=self.substitution_requests_open,
+
+            winner_club_id=self.winner_club_id,
         )
+
+    def get_participation(self, club_id: int) -> MatchParticipation | None:
+        if self.participation_a.club_id == club_id:
+            return self.participation_a
+
+        if self.participation_b.club_id == club_id:
+            return self.participation_b
+
+        return None
+
+    # applies the pending manual changes and coach assignments of both clubs;
+    # returns the applied coach assignments, as club_id -> assignments
+    def apply_pending_behavior_changes(self) -> dict[int, list[Assignment]]:
+        return {
+            participation.club_id: participation.apply_pending_behavior_changes()
+            for participation in (self.participation_a, self.participation_b)
+        }
+
+    def plan_substitution(
+        self,
+        club_id: int,
+        player_out_id: int,
+        player_in_id: int,
+        from_coach: bool = False,
+    ) -> None:
+
+        # validations related to the match
+        if self.state != MatchState.IN_PROGRESS:
+            raise ValueError("Match is not in progress")
+
+        if not self.substitution_requests_open:
+            raise ValueError("Substitution planning is closed")
+
+        if self.participation_a.club_id == club_id:
+            participation = self.participation_a
+        elif self.participation_b.club_id == club_id:
+            participation = self.participation_b
+        else:
+            raise PermissionError("Club is not participating")
+
+        # we call the `plan substitution` method of `match participation` to carry it out
+        participation.plan_substitution(
+            player_out_id=player_out_id,
+            player_in_id=player_in_id,
+            period=self.current_period,
+            from_coach=from_coach,
+        )
+
+    # method designed to be called later by the process that sets up the breaks
+    # returns the executed coach substitutions, as (club_id, substitution)
+    def close_and_execute_substitutions(self) -> list[tuple[int, Substitution]]:
+
+        if self.state != MatchState.IN_PROGRESS:
+            raise ValueError("Match is not in progress")
+
+        if not self.substitution_requests_open:
+            return []
+
+        # when we are executing a substitution, we close de requests
+        self.substitution_requests_open = False
+
+        period = self.current_period
+        executed_coach_substitutions = []
+
+        # execute the substitution
+        for participation in (self.participation_a, self.participation_b):
+            pending = participation.pending_substitution
+
+            if participation.execute_pending_substitution(period) and pending.from_coach:
+                executed_coach_substitutions.append(
+                    (
+                        participation.club_id,
+                        Substitution(pending.player_out_id, pending.player_in_id),
+                    )
+                )
+
+        return executed_coach_substitutions
+
+    # method designed to be called later by the process that sets up the breaks
+    def start_next_period(self, next_period: Period) -> None:
+
+        if self.substitution_requests_open:
+            raise ValueError("Previous window is still open")
+
+        if next_period.value != self.current_period.value + 1:
+            raise ValueError("Invalid period transition")
+
+        self.current_period = next_period
+
+        self.participation_a.pending_substitution = None
+        self.participation_b.pending_substitution = None
+
+        self.substitution_requests_open = (next_period != Period.FOURTH_QUARTER)
+
+        self.register_period_start_triggers()
+
+    # both coaches are triggered when a period starts, including the first one
+    def register_period_start_triggers(self) -> None:
+        self.pending_coach_triggers.append(
+            (self.participation_a.club_id, CoachTrigger.PERIOD_START)
+        )
+        self.pending_coach_triggers.append(
+            (self.participation_b.club_id, CoachTrigger.PERIOD_START)
+        )
+
+    def switch_sides(self) -> None:
+        self.side_a, self.side_b = self.side_b, self.side_a
+        self.last_conceding_side = None
+
+    # receives a SIDE, and returns the match participation contained within that SIDE
+    # it will be used to determine which team scored a goal.
+    def participation_defending(
+        self,
+        side: Side,
+    ) -> MatchParticipation:
+        if self.side_a == side:
+            return self.participation_a
+
+        if self.side_b == side:
+            return self.participation_b
+
+        raise ValueError("Invalid defending side")

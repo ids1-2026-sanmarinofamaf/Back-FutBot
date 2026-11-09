@@ -39,7 +39,7 @@ class FriendlyGameSessionItem(BaseModel):
     current_participants: int
     capacity: int = 2
     state: FriendlyGameState
-
+    match_id: int | None = None
 
 class FriendlyGamesSessionPayload(BaseModel):
     friendly_games: list[FriendlyGameSessionItem]

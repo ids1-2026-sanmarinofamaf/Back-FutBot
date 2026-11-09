@@ -11,18 +11,20 @@ from app.models.friendly_game_participation import FriendlyGameRole
 
 from app.game.models.match import Match
 from app.game.models.match_participation import MatchParticipation
-from app.game.models.player_in_match import PlayerInMatch
 from app.game.models.ball import Ball
 
-from app.game.formations import FORMATION_POSITIONS
 from app.game.constants import FIELD_WIDTH, FIELD_HEIGHT, TICS_PER_SECOND
 
 from app.services.match_service import (
     load_match_behaviors,
+    load_match_coach_behaviors,
+    load_match_available_behaviors,
     start_match,
 )
 
+from app.services.match_builder import create_match_participation
 from app.services import session_websocket_service
+from app.services.coach_behavior_service import validate_coach_behavior
 
 from app.repositories import (
     friendly_game_repository,
@@ -30,6 +32,7 @@ from app.repositories import (
     player_repository,
     behavior_repository,
     club_repository,
+    match_repository,
 )
 from app.services.friendly_game_websocket_service import (
     friendly_game_connection_manager,
@@ -44,83 +47,19 @@ class FriendlyGameNotFoundError(Exception):
 class FriendlyGameForbiddenError(Exception):
     pass
 
-# helper for create playerInMatch
-def _create_player_in_match(
-    db: Session,
-    player_on_roster: PlayerOnRoster,
-    formation,
-    mirror_position: bool,
-) -> PlayerInMatch:
-    # obtain the player, which is useful for the PACSS
-    player = player_repository.get_by_id(db,player_on_roster.player_id)
-
-    if player is None:
-        raise ValueError("Player does not exist")
-
-    # substitutes do not have a starting field position
-    if not player_on_roster.is_starter:
-        starting_position = None
-        position = (0.0, 0.0)
-
-    else:
-        starting_position = FORMATION_POSITIONS[formation][player_on_roster.slot]
-
-        # FORMATION_POSITIONS defines one side of the field.
-        # The second team uses the mirrored coordinate.
-        if mirror_position:
-            starting_position = (
-                FIELD_WIDTH - starting_position[0],
-                starting_position[1],
-            )
-
-        position = starting_position
-    # build the playerInMatch
-    return PlayerInMatch(
-        player_id=player.id,
-
-        position=position,
-        velocity=(0.0, 0.0),
-
-        starting_position=starting_position,
-
-        power=player.power,
-        agility=player.agility,
-        control=player.control,
-        speed=player.speed,
-        strength=player.strength,
-
-        current_behavior_id=(
-            player_on_roster.initial_behavior_id
-            if player_on_roster.is_starter
-            else None
-        ),
-
-        is_on_field=player_on_roster.is_starter,
-    )
 
 def _create_match_participation(
     db: Session,
     friendly_participation,
     mirror_position: bool,
 ) -> MatchParticipation:
-
-    roster = friendly_participation.roster
-
-    players = [
-        _create_player_in_match(
-            db=db,
-            player_on_roster=player_on_roster,
-            formation=roster.formation,
-            mirror_position=mirror_position,
-        )
-        for player_on_roster in roster.players
-    ]
-
-    return MatchParticipation(
-        club_id=friendly_participation.club_id,
-        roster_id=friendly_participation.roster_id,
-        players=players,
+    return create_match_participation(
+        db=db,
+        roster=friendly_participation.roster,
+        mirror_position=mirror_position,
     )
+
+
 class FriendlyGameNotFound(Exception):
     pass
 
@@ -152,7 +91,8 @@ def create_friendly_game(db: Session, user_id: int, data: FriendlyGameCreate):
         # create roster object with the data
         roster = Roster(
             club_id=club.id,
-            formation=data.roster.formation
+            formation=data.roster.formation,
+            coach_behavior_id=data.roster.coach_behavior_id,
         )
 
         roster.players = [
@@ -187,6 +127,7 @@ def create_friendly_game(db: Session, user_id: int, data: FriendlyGameCreate):
                 if not behavior.is_default and behavior.club_id != club.id:
                     raise ValueError("Behavior does not belong to user's club")
 
+        validate_coach_behavior(db, club.id, data.roster.coach_behavior_id)
 
         # save roster on db
         roster_repository.save(db,roster)
@@ -299,16 +240,31 @@ async def start_friendly_game(
             velocity=(0.0, 0.0),
         )
 
-        # match id is assigned by active_matches.
+        # get a globally unique match ID from the database.
+        match_id = match_repository.get_next_match_id(db)
+
         match = Match(
-            match_id=0,
+            match_id=match_id,
             participation_a=match_participation_a,
             participation_b=match_participation_b,
             ball=ball,
             duration_ticks=friendly_game.duration * TICS_PER_SECOND,
         )
+
         # load in memory the behaviors of the 2 clubs
         behaviors = load_match_behaviors(
+            db=db,
+            match=match,
+        )
+
+        # load in memory the DT of each club, if any
+        coach_behaviors = load_match_coach_behaviors(
+            db=db,
+            match=match,
+        )
+
+        # load in memory the behaviors each DT can assign
+        load_match_available_behaviors(
             db=db,
             match=match,
         )
@@ -334,10 +290,11 @@ async def start_friendly_game(
 
         try:
             # start the match execution in background
-            match_id = start_match(
+            start_match(
                 match=match,
                 behaviors=behaviors,
                 on_finished=on_finished,
+                coach_behaviors=coach_behaviors,
             )
 
         except Exception:
@@ -351,6 +308,10 @@ async def start_friendly_game(
 
             db.commit()
             raise
+
+        # Save the match ID associated with the friendly game.
+        friendly_game.match_id = match_id
+        db.commit()
 
 
         # the match is already running.
@@ -465,6 +426,7 @@ async def join_friendly_game(
         roster = Roster(
             club_id=club.id,
             formation=data.roster.formation,
+            coach_behavior_id=data.roster.coach_behavior_id,
         )
 
         roster.players = [
@@ -513,6 +475,11 @@ async def join_friendly_game(
                     raise InvalidRoster(
                         "Behavior does not belong to user's club"
                     )
+
+        try:
+            validate_coach_behavior(db, club.id, data.roster.coach_behavior_id)
+        except ValueError as error:
+            raise InvalidRoster(str(error))
 
         roster_repository.save(
             db=db,

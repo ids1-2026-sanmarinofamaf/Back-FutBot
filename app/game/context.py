@@ -6,7 +6,7 @@ and exposed to Behavior API primitives.
 from contextvars import ContextVar
 from dataclasses import dataclass
 
-from .types import BallState, PlayerState, Position, Period, Side
+from .types import BallState, PlayerState, Position, Period, Side, CoachTrigger
 
 
 @dataclass
@@ -32,16 +32,45 @@ class BehaviorContext:
     max_kick_force: float
 
 
+@dataclass
+class CoachContext:
+    # same field names as BehaviorContext, so the shared primitives
+    # (ball, score, teammates, ...) work for both contexts
+    teammates: list[PlayerState]
+    opponents: list[PlayerState]
+    ball: BallState
+
+    my_team_score: int
+    opponent_score: int
+
+    current_period: Period
+    side: Side
+    match_time_remaining: float
+    period_time_remaining: float
+
+    trigger: CoachTrigger
+
+    # names of the behaviors the club can assign
+    available_behaviors: list[str]
+    # behavior name currently assigned to each on-field teammate
+    current_behaviors: dict[int, str | None]
+
+    # ids of the club's substitutes
+    bench: list[int]
+    # whether a substitution requested now by the coach could be accepted
+    can_substitute: bool
+
+
 # Context-local storage for the BehaviorContext of the current play() execution.
 # It is kept private so the rest of the application only interacts through
 # get_current_context(), set_current_context(), and clear_current_context().
-_current_context: ContextVar[BehaviorContext | None] = ContextVar(
+_current_context: ContextVar[BehaviorContext | CoachContext | None] = ContextVar(
     "behavior_context",
     default=None,
 )
 
 
-def get_current_context() -> BehaviorContext:
+def get_current_context() -> BehaviorContext | CoachContext:
     """
     Return the BehaviorContext associated with the current play() execution.
 
@@ -59,7 +88,7 @@ def get_current_context() -> BehaviorContext:
     return context
 
 
-def set_current_context(context: BehaviorContext) -> None:
+def set_current_context(context: BehaviorContext | CoachContext) -> None:
     """
     Set the BehaviorContext for the current play() execution.
 

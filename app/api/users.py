@@ -14,7 +14,11 @@ router = APIRouter(prefix="/users", tags=["users"])
 
 @router.get("/me")
 def read_users_me(current_user: Annotated[User, Depends(get_current_user)]) -> UserOut:
-    return UserOut(user_name=current_user.club.name, user_email=current_user.email)
+    return UserOut(
+        user_name=current_user.club.name,
+        user_email=current_user.email,
+        user_id=str(current_user.id)
+    )
 
 
 @router.post("", status_code=status.HTTP_201_CREATED)
@@ -23,4 +27,4 @@ def register_user(body: UserCreate, db: Annotated[Session, Depends(get_db)]) -> 
         user = user_service.register_user(db, body)
     except user_service.EmailAlreadyRegistered:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Email already registered")
-    return UserOut(user_name=user.club.name, user_email=user.email)
+    return UserOut(user_name=user.club.name, user_email=user.email, user_id=str(user.id))
