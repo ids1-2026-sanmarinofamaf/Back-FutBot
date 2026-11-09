@@ -43,3 +43,17 @@ def update_my_club(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Club not found"
         )
+
+@router.get("/{id}", response_model=ClubOut)
+def get_club_by_id(
+    id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user) # verify user is identified
+):
+    try:
+        return club_service.get_club_by_id(db, id)
+    except club_service.ClubNotFound:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Club not found"
+        )
